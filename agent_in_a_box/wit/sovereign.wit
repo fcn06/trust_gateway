@@ -1,0 +1,349 @@
+package sovereign:gateway;
+
+// ============================================================================
+// HYBRID ARCHITECTURE WIT CONTRACT
+// Pivoted from DIDComm v2 to OpenMLS + HTTP Gateway + Ledgerless DID Exchange
+// ============================================================================
+
+interface common-types {
+    // --- OpenMLS Message Envelope ---
+    // Replaces the old plain-didcomm record.
+    // All inter-user payloads are OpenMLS-encrypted.
+    record mls-message {
+        group-id: string,         // OpenMLS group identifier
+        epoch: u64,               // MLS epoch number
+        sender-target-id: string, // Opaque TargetID of the sender (for routing replies)
+        ciphertext: list<u8>,     // OpenMLS ciphertext (application message or handshake)
+        content-type: string,     // "application/mls-application" | "application/mls-welcome" | "application/mls-commit"
+    }
+
+    // Multi-tenant context: injected into request pipelines for tenant scoping
+    record tenant-context {
+        tenant-id: string,
+        tier: string,       // "basic" | "pro" | "compliance" | "telco" | "insurance"
+        status: string,     // "active" | "suspended" | "deleted"
+    }
+
+    enum permission {
+        chat,
+        discovery,
+        appointment,
+        payment,
+        agent,
+    }
+
+    enum connection-status {
+        pending,
+        active,
+        blocked,
+    }
+
+    record connection-policy {
+        did: string,
+        alias: string,
+        created-at: s64,
+        permissions: list<permission>,
+        status: connection-status,
+    }
+
+    // --- DID Document (Ledgerless) ---
+    // Exchanged directly during mutual connection handshake.
+    // No public ledger or DHT registry.
+    record did-document {
+        id: string,                             // The DID (e.g. did:twin:z<hex>)
+        authentication-keys: list<string>,      // Serialized verification methods (JSON)
+        service-endpoints: list<service-endpoint>,
+        created-at: s64,
+    }
+
+    record service-endpoint {
+        id: string,         // e.g. "did:twin:z...#messaging"
+        %type: string,      // e.g. "MessagingGateway"
+        endpoint: string,   // HTTP URL via Global Gateway (includes opaque TargetID)
+    }
+
+    // --- Connection Handshake ---
+    // Used during the Ledgerless Handshake protocol.
+    record connection-request {
+        initiator-did-doc: did-document,
+        mls-welcome: list<u8>,       // OpenMLS Welcome message bytes
+        mls-key-package: list<u8>,   // Initiator's MLS KeyPackage for the receiver to add
+        nonce: string,               // Anti-replay nonce
+        signature: list<u8>,         // Ed25519 signature of (nonce + welcome hash)
+    }
+
+    record connection-response {
+        responder-did-doc: did-document,
+        mls-commit: list<u8>,        // OpenMLS Commit acknowledging group membership
+        nonce: string,
+        signature: list<u8>,
+    }
+
+    // === UCAN Delegation Types (Unchanged) ===
+
+    record capability {
+        %resource: string,
+        action: string,
+    }
+
+    record ucan-token {
+        issuer: string,
+        audience: string,
+        capabilities: list<capability>,
+        expiry: u64,
+        proof-chain: list<string>,
+        token-id: string,
+    }
+
+    record action-request {
+        request-id: string,
+        tool-name: string,
+        human-summary: string,
+        payload-hash: string,
+        expires-at: u64,
+    }
+
+    record action-response {
+        request-id: string,
+        approved: bool,
+        signature: option<list<u8>>,
+    }
+
+    record connection-grant {
+        customer-pairwise-did: string,
+        service-did: string,
+        active-ucan: string,
+        thread-id: string,
+        connected-at: s64,
+    }
+}
+
+// ============================================================================
+// INTERFACES
+// ============================================================================
+
+// --- Delegation (Unchanged) ---
+
+interface delegation {
+    use common-types.{capability, ucan-token, action-request, action-response};
+
+    validate-ucan: func(token: string, required-resource: string, required-action: string) -> result<string, string>;
+    create-action-request: func(tool-name: string, args-hash: string, summary: string) -> action-request;
+    verify-action-response: func(response: action-response, expected-hash: string, user-pubkey: list<u8>) -> result<bool, string>;
+}
+
+// --- Identity (WebAuthn — Unchanged) ---
+
+interface identity {
+    record auth-session {
+        user-id: string,
+        nkey-seed: string,
+    }
+    
+    authenticate: func(id: string) -> auth-session;
+
+    // WebAuthn Registration
+    start-registration: func(username: string) -> string;
+    finish-registration: func(session-id: string, response: string) -> bool;
+
+    // WebAuthn Login
+    start-login: func(username: string) -> string;
+    finish-login: func(session-id: string, response: string) -> string;
+
+    // Process a global login request arriving via NATS
+    process-global-login: func(assertion: list<u8>) -> result<bool, string>;
+}
+
+// --- Vault (Pivoted: DIDComm removed, DID Document added) ---
+
+interface vault {
+    use common-types.{did-document};
+
+    // === DID Management ===
+    create-identity: func(user-id: string) -> string;
+    create-peer-identity: func(user-id: string) -> string;
+    sign-message: func(did: string, message: list<u8>) -> list<u8>;
+    get-active-did: func(user-id: string) -> string;
+    set-active-did: func(user-id: string, did: string) -> result<bool, string>;
+    list-identities: func(user-id: string) -> list<string>;
+    resolve-did-to-user-id: func(did: string) -> string;
+
+    // === Master Seed Management ===
+    generate-master-seed: func(user-id: string, derivation-path: string) -> result<bool, string>;
+    derive-link-nkey: func(user-id: string) -> result<string, string>;
+    unlock-vault: func(user-id: string, derivation-path: string) -> result<bool, string>;
+    is-unlocked: func(user-id: string) -> bool;
+    get-hmac-secret: func(user-id: string) -> list<u8>;
+
+    // === JIT Routing ===
+    encrypt-routing-token: func(routing-key: string, target-id: string) -> result<string, string>;
+
+    // === Agent Delegation (V5) ===
+    issue-session-jwt: func(
+        subject: string,
+        scope: list<string>,
+        user-did: string,
+        ttl-seconds: u32,
+        tenant-id: string
+    ) -> result<string, string>;
+    verify-session-jwt: func(jwt: string) -> result<string, string>;
+
+    // === Connection Model (V6) ===
+    create-service-did: func(tenant-id: string) -> result<string, string>;
+
+    // === NEW: DID Document Generation ===
+    // Builds and signs a DID Document for the user's active DID,
+    // including authentication keys and service endpoints.
+    create-did-document: func(user-id: string, gateway-url: string, target-id: string) -> result<string, string>;
+}
+
+// --- OpenMLS Session Management (NEW) ---
+
+interface mls-session {
+    // Create a new MLS group for 1:1 or group messaging
+    create-group: func(group-id: string, creator-did: string) -> result<list<u8>, string>;
+
+    // Generate a KeyPackage for this user (needed before others can add them)
+    generate-key-package: func(did: string) -> result<list<u8>, string>;
+
+    // Add a member to an existing group using their KeyPackage
+    // Returns (Welcome bytes, Commit bytes)  
+    add-member: func(group-id: string, invitee-key-package: list<u8>) -> result<tuple<list<u8>, list<u8>>, string>;
+
+    // Process an incoming Welcome message (joins a group)
+    process-welcome: func(welcome-bytes: list<u8>) -> result<string, string>;
+
+    // Process an incoming Commit message (updates group state)
+    process-commit: func(group-id: string, commit-bytes: list<u8>) -> result<bool, string>;
+
+    // Encrypt an application message for the group
+    encrypt-message: func(group-id: string, plaintext: list<u8>) -> result<list<u8>, string>;
+
+    // Decrypt an incoming application message
+    decrypt-message: func(group-id: string, ciphertext: list<u8>) -> result<list<u8>, string>;
+}
+
+// --- Contact Store (NEW — Ledgerless DID Document Storage) ---
+
+interface contact-store {
+    use common-types.{did-document};
+
+    // Store a peer's DID Document (received during handshake)
+    store-contact: func(did-doc: did-document) -> result<bool, string>;
+
+    // Retrieve a stored DID Document by DID
+    get-contact: func(did: string) -> option<did-document>;
+
+    // List all stored contacts
+    list-contacts: func() -> list<did-document>;
+
+    // Remove a contact
+    delete-contact: func(did: string) -> result<bool, string>;
+}
+
+// --- Messaging (Pivoted: MLS instead of DIDComm) ---
+
+interface messaging-sender {
+    use common-types.{mls-message};
+    // Send an MLS-encrypted message via HTTP egress to the Global Gateway
+    send: func(msg: mls-message) -> result<string, string>;
+}
+
+interface messaging-handler {
+    use common-types.{mls-message};
+    // Handle an incoming MLS message (called by Host after receiving from Gateway)
+    handle-incoming: func(msg: mls-message) -> result<bool, string>;
+}
+
+// --- HTTP Egress (NEW — Host-provided for Wasm components) ---
+
+interface http-egress {
+    // POST an encrypted payload to the Global Gateway for delivery
+    // target-id: Opaque TargetID (Base64) of the recipient
+    // payload: The full serialized message bytes
+    // Returns the HTTP response status or error
+    post-to-gateway: func(target-id: string, payload: list<u8>) -> result<string, string>;
+}
+
+// --- ACL (Unchanged) ---
+
+interface acl {
+    use common-types.{permission, connection-policy, connection-status};
+    
+    check-permission: func(owner: string, subject: string, perm: permission) -> bool;
+    update-policy: func(owner: string, policy: connection-policy) -> result<bool, string>;
+    get-policies: func(owner: string) -> list<connection-policy>;
+}
+
+// --- Persistence (Unchanged) ---
+
+interface persistence {
+    get: func(key: string) -> option<list<u8>>;
+    set: func(key: string, value: list<u8>);
+    list-keys: func() -> list<string>;
+    get-house-salt: func() -> list<u8>;
+}
+
+// ============================================================================
+// WORLDS
+// ============================================================================
+
+world identity-server {
+    import vault;
+    export identity;
+}
+
+world ssi-vault {
+    import persistence;
+    export vault;
+    export delegation;
+}
+
+world mls-session-component {
+    import persistence;
+    export mls-session;
+}
+
+world contact-store-component {
+    import persistence;
+    export contact-store;
+}
+
+world messaging-service {
+    import vault;
+    import acl;
+    import delegation;
+    import mls-session;
+    import messaging-sender;
+    export messaging-handler; 
+}
+
+world acl-store {
+    import persistence;
+    import vault;
+    export acl;
+}
+
+world agent-in-a-box {
+    import identity;
+    import vault;
+    import delegation;
+    import mls-session;
+    import contact-store;
+    import messaging-sender;
+    import messaging-handler;
+    import http-egress;
+    import acl;
+}
+
+world host-orchestrator {
+    import identity;
+    import vault;
+    import delegation;
+    import mls-session;
+    import contact-store;
+    import messaging-sender;
+    import messaging-handler;
+    import http-egress;
+    import acl;
+}

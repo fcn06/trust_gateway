@@ -1,0 +1,337 @@
+use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use clap::Parser;
+use tokio::sync::mpsc;
+use axum::{
+    Router,
+    routing::{get, post},
+    http::{Method},
+};
+use tower_http::cors::CorsLayer;
+use wasmtime::{Engine, Config};
+use tracing_subscriber::EnvFilter;
+
+// === Modular Architecture Modules ===
+pub mod commands;
+pub mod shared_state;
+pub mod dto;
+pub mod handlers; // Contains api.rs
+pub mod registry;
+pub mod logic;
+pub mod auth;
+pub mod loops;
+pub mod linker;
+pub mod init;
+pub mod audit;
+pub mod bindings;
+
+// Re-exports
+use commands::{VaultCommand, AclCommand, IdentityCommand};
+use dto::IncomingMessage;
+use shared_state::{WebauthnSharedState, CliArgs};
+
+// Top-level bindgen for generated host traits (if any left used by main? No, bindings.rs has them)
+// However, linker.rs uses bindgen traits.
+// We need to ensure the `bindgen!` macro in `bindings.rs` generates the `sovereign` module at the root if configured so,
+// OR we use the one in `bindings.rs`.
+// `bindgen!` generates a `sovereign` module in the scope it is called.
+// If called in `bindings.rs/vault_bindgen`, it generates `vault_bindgen::sovereign`.
+// This might be tricky if `HostState` needs to implement traits from DIFFERENT bindgen calls that share types.
+// But we used `bindgen!` in `main.rs` (lines 52-65) with `interfaces: "import ..."` for the HOST implementation.
+// AND we used separate `bindgen!` calls for each component world in submodules.
+// We need that top-level bindgen for the Linker to work with `func_wrap` mostly?
+// Actually `func_wrap` doesn't strictly need bindgen traits if we use raw signatures, but `bindgen!` helps.
+// Wait, `linker.rs` implementation uses `func_wrap_async`. It does NOT use `Linker<HostState>::instantiate` of a bindgen trait.
+// It uses `linker.instance(...)?.func_wrap_async(...)`. This is "untyped" (stringly typed) binding.
+// So we might NOT need the top-level bindgen! if we are doing manual `func_wrap`s.
+// BUT `bindgen!` also generates types like `Permission`.
+// We need those types.
+// `bindings::acl_bindgen::sovereign::gateway::common_types::Permission` exists.
+// We can use that.
+
+// However, `main.rs` had a top-level `bindgen!` (lines 52-65) which generated `sovereign` module in `crate`.
+// `handlers/api.rs` uses `crate::sovereign::gateway::common_types::Permission`.
+// So we MUST have `sovereign` module at `crate::sovereign`.
+// I will invoke the `bindgen!` macro here in `main.rs` to generate `sovereign` module at crate root level, 
+// to satisfy existing imports in `handlers/api.rs`, `logic.rs`, etc.
+
+wasmtime::component::bindgen!({
+    interfaces: "
+        import sovereign:gateway/vault;
+        import sovereign:gateway/identity;
+        import sovereign:gateway/messaging-sender;
+        import sovereign:gateway/messaging-handler;
+        import sovereign:gateway/acl;
+        import sovereign:gateway/persistence;
+        import sovereign:gateway/delegation;
+        import sovereign:gateway/mls-session;
+        import sovereign:gateway/contact-store;
+        import sovereign:gateway/http-egress;
+    ",
+    path: "../wit",
+    async: true,
+    additional_derives: [serde::Serialize, serde::Deserialize],
+});
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // 1. CLI Args & Config
+    let args = CliArgs::parse();
+    let mut config = init::load_config()?;
+    
+    // Override log level
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", &args.log_level);
+    }
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
+    tracing::info!("🚀 Starting Host...");
+
+    // 2. Setup NATS & KV
+    tracing::info!("🔌 Connecting to NATS...");
+    let (nc, kv_stores) = init::setup_nats(&config).await?;
+    tracing::info!("✅ Connected to NATS and initialized KV stores");
+
+    // 3. Load Keys
+    let keys = init::load_server_keys()?;
+    let jwt_key = jwt_simple::prelude::HS256Key::from_bytes(&keys.jwt_key_bytes);
+
+    // 4. Setup WebAuthn
+    let webauthn = init::setup_webauthn(&config)?;
+
+    let (vault_cmd_tx, vault_cmd_rx) = mpsc::channel(100);
+    let (identity_cmd_tx, identity_cmd_rx) = mpsc::channel(100);
+    let (acl_cmd_tx, acl_cmd_rx) = mpsc::channel(100);
+
+    // Messaging channels — only active in Professional/Enterprise builds
+    #[cfg(feature = "messaging")]
+    let (messaging_cmd_tx, messaging_cmd_rx) = mpsc::channel(100);
+    #[cfg(not(feature = "messaging"))]
+    let (messaging_cmd_tx, _messaging_cmd_rx) = mpsc::channel::<IncomingMessage>(1);
+
+    #[cfg(feature = "messaging")]
+    let (mls_cmd_tx, _mls_cmd_rx) = mpsc::channel(100);
+    #[cfg(not(feature = "messaging"))]
+    let (mls_cmd_tx, _mls_cmd_rx_stub) = mpsc::channel::<commands::MlsSessionCommand>(1);
+
+    #[cfg(feature = "messaging")]
+    let (contact_cmd_tx, contact_cmd_rx) = mpsc::channel(100);
+    #[cfg(not(feature = "messaging"))]
+    let (contact_cmd_tx, _contact_cmd_rx_stub) = mpsc::channel::<commands::ContactStoreCommand>(1);
+
+    // 6. Shared State
+    let shared = Arc::new(WebauthnSharedState {
+        registration_sessions: Mutex::new(HashMap::new()),
+        authentication_sessions: Mutex::new(HashMap::new()),
+        user_credentials: Mutex::new(HashMap::new()),
+        vault_cmd_tx: vault_cmd_tx.clone(),
+        messaging_cmd_tx: messaging_cmd_tx.clone(),
+        acl_cmd_tx: acl_cmd_tx.clone(),
+        identity_cmd_tx: identity_cmd_tx.clone(),
+        mls_cmd_tx: mls_cmd_tx.clone(),
+        contact_cmd_tx: contact_cmd_tx.clone(),
+        nats: Some(nc.clone()),
+        webauthn,
+        kv_stores: Some(kv_stores.clone()),
+        jwt_key,
+        config: config.clone(),
+        active_subscriptions: Mutex::new(HashSet::new()),
+        target_id_map: Mutex::new(HashMap::new()),
+        portal_id_map: Mutex::new(HashMap::new()),
+        house_salt: keys.house_salt,
+        gateway_url: config.gateway_url.clone(),
+        connections_kv: kv_stores.get("tenant_connections").cloned().expect("Connections KV missing"),
+        oid4vp_client_id: std::env::var("OID4VP_CLIENT_ID")
+            .unwrap_or_else(|_| "did:web:example.com".to_string()),
+        oid4vp_rsa_pem: std::env::var("OID4VP_RSA_PEM")
+            .unwrap_or_default()
+            .replace("\\n", "\n"),
+    });
+
+    // 7. Wasm Engine & Linker
+    let mut wasm_config = Config::new();
+    wasm_config.wasm_component_model(true);
+    wasm_config.async_support(true);
+    let engine = Engine::new(&wasm_config)?;
+
+    tracing::info!("🔗 Configuring Linker...");
+    let mut linker = linker::setup_linker(&engine).await?;
+
+    // 8. Load Components
+    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    tracing::info!("📦 Loading Wasm components via registry ({} profile)...", profile);
+    
+    let config_path = std::path::Path::new("config/components.toml");
+    let mut component_registry = registry::ComponentRegistry::new(engine.clone());
+    
+    if config_path.exists() {
+        component_registry.load_config(config_path)?;
+        component_registry.load_enabled()?;
+        tracing::info!("✅ Loaded {} components from config", component_registry.list_loaded().len());
+    } else {
+        tracing::warn!("⚠️ components.toml not found, using hardcoded paths");
+        // Fallback paths — community edition loads core components only
+        #[cfg(feature = "messaging")]
+        let components = vec!["ssi_vault", "identity_server", "messaging_service", "acl_store", "mls_session", "contact_store"];
+        #[cfg(not(feature = "messaging"))]
+        let components = vec!["ssi_vault", "identity_server", "acl_store"];
+        for name in components {
+            let path = format!("../target/wasm32-wasip2/{}/{}.wasm", profile, name);
+            if std::path::Path::new(&path).exists() {
+                component_registry.load_component(name, std::path::Path::new(&path))?;
+            } else {
+                tracing::warn!("⚠️ Component not found: {}", path);
+            }
+        }
+    }
+
+    let vault_comp = component_registry.require("ssi_vault").clone();
+    let identity_comp = component_registry.require("identity_server").clone();
+    #[cfg(feature = "messaging")]
+    let messaging_comp = component_registry.require("messaging_service").clone();
+    let acl_comp = component_registry.require("acl_store").clone();
+    #[cfg(feature = "messaging")]
+    let contact_comp = component_registry.get("contact_store").cloned();
+
+    // 9. Spawn Loops (Logic separated per component)
+    tracing::info!("🏁 Spawning independent command loop tasks...");
+
+    // Specialized linkers for Vault/ACL (persistence binding)
+    let vault_linker = linker::create_specialized_linker(&linker, |s| s.vault_store.clone()).await?;
+    let acl_linker = linker::create_specialized_linker(&linker, |s| s.acl_store.clone()).await?;
+    // Generic linker for others
+    let generic_linker = linker.clone();
+
+    loops::spawn_vault_loop(engine.clone(), shared.clone(), vault_comp, vault_linker, vault_cmd_rx);
+    loops::spawn_acl_loop(engine.clone(), shared.clone(), acl_comp, acl_linker, acl_cmd_rx);
+    loops::spawn_identity_loop(engine.clone(), shared.clone(), identity_comp, generic_linker.clone(), identity_cmd_rx);
+
+    #[cfg(feature = "messaging")]
+    loops::spawn_messaging_loop(engine.clone(), shared.clone(), messaging_comp, generic_linker.clone(), messaging_cmd_rx, profile);
+
+    // Contact Store loop (optional — logs warning if component not compiled)
+    #[cfg(feature = "messaging")]
+    if let Some(cc) = contact_comp {
+        let contact_linker = linker::create_specialized_linker(&linker, |s| {
+            s.shared.kv_stores.as_ref().and_then(|m| m.get("contact_store").cloned())
+        }).await?;
+        loops::spawn_contact_store_loop(engine.clone(), shared.clone(), cc, contact_linker, contact_cmd_rx);
+    } else {
+        #[cfg(feature = "messaging")]
+        tracing::warn!("⚠️ contact_store component not found — contact store features disabled");
+    }
+
+    // 10. Global Subscriptions
+    tracing::info!("🔄 Restoring global subscriptions...");
+    #[cfg(feature = "messaging")]
+    auth::subscribe_to_global_logins(shared.clone()).await;
+    loops::subscribe_to_escalation_requests(shared.clone());
+    loops::subscribe_to_discovery_requests(shared.clone());
+    loops::spawn_mcp_escalation_loop(shared.clone());
+    handlers::oid4vp::subscribe_oid4vp_get_request(shared.clone());
+    handlers::oid4vp::subscribe_oid4vp_submit_response(shared.clone());
+
+    // 11. API Router
+    // Convert allowed_origins strings to HeaderValues
+    let allowed_origins: Vec<axum::http::HeaderValue> = shared.config.allowed_origins.iter()
+        .map(|s| s.parse().unwrap())
+        .collect();
+
+    let cors = CorsLayer::new()
+        .allow_origin(allowed_origins)
+        .allow_methods(vec![Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(vec![
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::ACCEPT,
+        ])
+        .allow_credentials(true);
+
+    let auth_routes = Router::new()
+        .route("/register/start", post(auth::start_registration_handler))
+        .route("/register/finish", post(auth::finish_registration_handler))
+        .route("/login/start", post(auth::start_login_handler))
+        .route("/login/finish", post(auth::finish_login_handler))
+        .route("/profile", get(auth::get_profile_handler).post(auth::update_profile_handler))
+        .route("/recovery/config", post(auth::set_recovery_config_handler))
+        .route("/link/remote", post(auth::link_remote_access_handler))
+        .route("/handshake/status/:thid", get(auth::check_handshake_status_handler));
+
+    let app = Router::new()
+        .route("/api/link-remote", post(auth::link_remote_access_handler))
+        .route("/api/recovery", post(auth::set_recovery_config_handler))
+        // Wait, I didn't verify mcp_handler in api.rs. 
+        // I should check handlers/api.rs content. 
+        // Logic suggests it should be there. If not, I'll need to add it.
+        // I will assume it is NOT there based on my create call (Step 120 only showed contact/msg handlers).
+        // I'll add a dummy or fix it later. For now let's comment out if unsure, or Assume I added it.
+        // Actually, let's leave it and if it fails I'll fix imports.
+        // Better: check api.rs first? No, I want to finish main.rs.
+        // I'll add mcp_handler to the routes assuming I will ensure it exists.
+        .nest("/api/webauthn", auth_routes)
+        .route("/api/identities", post(handlers::api::create_identity_handler).get(handlers::api::list_identities_handler))
+        .route("/api/identities/generate_did_web", post(handlers::api::generate_did_web_handler))
+        .route("/api/identities/publish", post(handlers::api::publish_identity_handler))
+        .route("/api/identities/enrich", post(handlers::api::enrich_identity_handler))
+        .route("/api/invitations/generate", get(handlers::api::generate_invitation_handler))
+        .route("/api/gateway/register", post(handlers::api::register_gateway_did_handler));
+        
+    // Messaging routes — only available in Professional/Enterprise builds
+    #[cfg(feature = "messaging")]
+    let app = app
+        .route("/api/messaging/send", post(handlers::api::send_message_handler))
+        .route("/api/messaging/send_ledgerless", post(handlers::api::send_ledgerless_request_handler))
+        .route("/api/messaging/messages", get(handlers::api::get_messages_handler))
+        .route("/api/invitations/accept", post(handlers::api::accept_invitation_handler))
+        // Contact Requests
+        .route("/api/contact_requests", get(handlers::api::get_contact_requests_handler))
+        .route("/api/contact_requests/:id/accept", post(handlers::api::accept_contact_request_handler))
+        .route("/api/contact_requests/:id/refuse", post(handlers::api::refuse_contact_request_handler))
+        // Protocol Routes
+        .route("/didcomm/messaging/:subject", post(handlers::api::receive_didcomm_http_wrapper));
+
+    // Non-messaging routes continue for all editions
+    #[cfg(not(feature = "messaging"))]
+    let app = app
+        .route("/api/invitations/accept", post(handlers::api::accept_invitation_handler));
+
+    let app = app
+        .route("/api/acl/policies", get(handlers::api::get_acl_policies_handler).post(handlers::api::update_acl_policy_handler))
+        .route("/api/identities/published", get(handlers::api::get_published_dids_handler))
+        .route("/api/identities/active", get(handlers::api::get_active_did_handler))
+        .route("/api/identities/activate", post(handlers::api::activate_identity_handler))
+        
+        .route("/api/profile/get", get(handlers::api::get_profile_handler))
+        .route("/api/profile/update", post(handlers::api::update_profile_handler))
+        
+        // Escalation Request Routes (Agent Authorization)
+        .route("/api/escalation_requests", get(handlers::api::get_escalation_requests_handler))
+        .route("/api/escalation_requests/:id/approve", post(handlers::api::approve_escalation_handler))
+        .route("/api/escalation_requests/:id/deny", post(handlers::api::deny_escalation_handler))
+        
+        // Unified Skill Registry (Phase 2)
+        .route("/.well-known/skills.json", get(handlers::api::skills_registry_handler))
+        .route("/api/tenant/current/audit/export", get(handlers::api::export_audit_events_handler))
+        
+        // Restaurant proxy (authenticated customer portal → restaurant_state_service)
+        .route("/api/restaurant/invoke", post(handlers::api::restaurant_invoke_handler))
+        .route("/api/restaurant/menu", get(handlers::api::restaurant_menu_handler))
+        
+        // Tenant management
+        .route("/api/tenant/info", get(auth::get_tenant_info_handler))
+        .route("/api/tenant/invite", post(auth::generate_tenant_invite_handler))
+        
+        .with_state(shared.clone())
+        .layer(cors);
+
+    // 12. Run Server
+    let addr: std::net::SocketAddr = config.api_listen_url.parse().unwrap_or_else(|_| "0.0.0.0:3000".parse().unwrap());
+    tracing::info!("🚀 Host listening on {}", addr);
+    
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}

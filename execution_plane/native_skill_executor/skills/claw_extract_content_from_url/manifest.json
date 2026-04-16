@@ -1,0 +1,28 @@
+{
+  "name": "claw_extract_content_from_url",
+  "description": "Extracts full text content, articles, and video transcripts from a given URL. Fully supports extracting transcripts directly from YouTube video URLs.",
+  "script": "run.sh",
+  "interpreter": "bash",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "The URL of the webpage to extract content from."
+      }
+    },
+    "required": [
+      "url"
+    ]
+  },
+  "env": {},
+  "tags": [
+    "scraper",
+    "url",
+    "extract",
+    "parsejet"
+  ],
+  "category": "extraction",
+  "priority_hint": "native",
+  "procedure_type": "atomic"
+}

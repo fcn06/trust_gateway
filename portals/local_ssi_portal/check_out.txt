@@ -1,0 +1,401 @@
+    Checking local_ssi_portal v0.1.0 (/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal)
+warning: unused import: `prelude::*`
+ --> src/auth.rs:3:20
+  |
+3 | use wasm_bindgen::{prelude::*, JsCast};
+  |                    ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/identities.rs:22:20
+   |
+22 |     let base_url = store_value(base_url);
+   |                    ^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/identities.rs:23:17
+   |
+23 |     let token = store_value(token);
+   |                 ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/messaging.rs:23:20
+   |
+23 |     let base_url = store_value(base_url);
+   |                    ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/messaging.rs:24:17
+   |
+24 |     let token = store_value(token);
+   |                 ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/acl.rs:18:17
+   |
+18 |     let token = store_value(token);
+   |                 ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/acl.rs:21:20
+   |
+21 |     let base_url = store_value(base_url);
+   |                    ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/invitations.rs:17:22
+   |
+17 |     let base_url_v = store_value(base_url);
+   |                      ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/invitations.rs:18:19
+   |
+18 |     let token_v = store_value(token);
+   |                   ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/contact_requests.rs:24:20
+   |
+24 |     let base_url = store_value(base_url);
+   |                    ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/contact_requests.rs:25:17
+   |
+25 |     let token = store_value(token);
+   |                 ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/profile.rs:14:20
+   |
+14 |     let base_url = store_value(base_url);
+   |                    ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/profile.rs:15:17
+   |
+15 |     let token = store_value(token);
+   |                 ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/self_service.rs:21:20
+   |
+21 |     let base_url = store_value(base_url);
+   |                    ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/self_service.rs:22:17
+   |
+22 |     let token = store_value(token);
+   |                 ^^^^^^^^^^^
+
+warning: use of deprecated function `leptos::prelude::store_value`: This function is being removed to conform to Rust idioms. Please use `StoredValue::new()` or `StoredValue::new_local()` instead.
+  --> src/pages/login.rs:22:20
+   |
+22 |     let api_base = store_value(base_url);
+   |                    ^^^^^^^^^^^
+
+warning: unused variable: `username`
+  --> src/pages/identities.rs:12:5
+   |
+12 |     username: String, 
+   |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_username`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `username`
+  --> src/pages/messaging.rs:12:5
+   |
+12 |     username: String, 
+   |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_username`
+
+warning: unused variable: `identities`
+  --> src/pages/contact_requests.rs:13:5
+   |
+13 |     identities: ReadSignal<Vec<EnrichedIdentity>>
+   |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_identities`
+
+error[E0382]: use of moved value: `base_url`
+   --> src/pages/escalation_requests.rs:238:18
+    |
+ 15 |     base_url: String,
+    |     -------- move occurs because `base_url` has type `std::string::String`, which does not implement the `Copy` trait
+...
+232 |                 <div class="animate-in fade-in slide-in-from-bottom-4 duration-500 pt-4">
+    |                  --- value moved into closure here
+233 |                     <ContactRequestsSection base_url=base_url.clone() token=token.clone() identities=identities />
+    |                                                      -------- variable moved due to use in closure
+...
+238 |                 <div class="animate-in fade-in slide-in-from-bottom-4 duration-500 pt-4">
+    |                  ^^^ value used here after move
+239 |                     <InvitationsSection base_url=base_url.clone() token=token.clone() />
+    |                                                  -------- use occurs due to use in closure
+
+error[E0382]: use of moved value: `token`
+   --> src/pages/escalation_requests.rs:238:18
+    |
+ 16 |     token: String,
+    |     ----- move occurs because `token` has type `std::string::String`, which does not implement the `Copy` trait
+...
+232 |                 <div class="animate-in fade-in slide-in-from-bottom-4 duration-500 pt-4">
+    |                  --- value moved into closure here
+233 |                     <ContactRequestsSection base_url=base_url.clone() token=token.clone() identities=identities />
+    |                                                                             ----- variable moved due to use in closure
+...
+238 |                 <div class="animate-in fade-in slide-in-from-bottom-4 duration-500 pt-4">
+    |                  ^^^ value used here after move
+239 |                     <InvitationsSection base_url=base_url.clone() token=token.clone() />
+    |                                                                         ----- use occurs due to use in closure
+
+error[E0525]: expected a closure that implements the `FnMut` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:119:9
+    |
+119 |           move |_| {
+    |           ^^^^^^^^ this closure implements `FnOnce`, not `FnMut`
+...
+122 |                   send_fn(rec.clone(), compose_text.get());
+    |                   ------- closure is `FnOnce` because it moves the variable `send_fn` out of its environment
+...
+129 | /     view! {
+130 | |         <div class="h-full flex flex-col space-y-4">
+131 | |             <div class="flex items-center justify-between px-2">
+132 | |                 <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+...   |
+253 | |                                             on:click=on_send_new
+    | |                                             -- required by a bound introduced by this call
+...   |
+345 | |         </div>
+346 | |     }
+    | |_____- the requirement to implement `FnMut` derives from here
+    |
+    = note: required for `HtmlElement<Button, (Class<&str>,), ({closure@inbox.rs:256:46},)>` to implement `leptos::prelude::OnAttribute<click, {closure@src/pages/inbox.rs:119:9: 119:17}>`
+    = note: the full name for the type has been written to '/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal/target/wasm32-unknown-unknown/debug/deps/local_ssi_portal-08921a9241e6cbba.long-type-15147221474482851674.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0525]: expected a closure that implements the `Fn` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:213:30
+    |
+129 | /     view! {
+130 | |         <div class="h-full flex flex-col space-y-4">
+131 | |             <div class="flex items-center justify-between px-2">
+132 | |                 <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+...   |
+213 | |                             <div class="flex-1 flex flex-col p-6 space-y-6">
+    | |                              ^^^ this closure implements `FnOnce`, not `Fn`
+...   |
+253 | |                                             on:click=on_send_new
+    | |                                                      ----------- closure is `FnOnce` because it moves the variable `on_send_new` out of its environment
+...   |
+345 | |         </div>
+346 | |     }
+    | |_____- the requirement to implement `Fn` derives from here
+    |
+    = note: required for `TypedChildrenFn<HtmlElement<Div, (Class<&str>,), ((..., ...),)>>` to implement `ToChildren<{closure@src/pages/inbox.rs:213:30: 213:33}>`
+    = note: the full name for the type has been written to '/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal/target/wasm32-unknown-unknown/debug/deps/local_ssi_portal-08921a9241e6cbba.long-type-1748027558396834238.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0525]: expected a closure that implements the `FnMut` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:110:9
+    |
+110 |           move |_| {
+    |           ^^^^^^^^ this closure implements `FnOnce`, not `FnMut`
+111 |               if let Some(tid) = selected_thread.get() {
+112 |                   send_fn(tid, compose_text.get());
+    |                   ------- closure is `FnOnce` because it moves the variable `send_fn` out of its environment
+...
+271 | /                                 view! {
+272 | |                                     <div class="flex-1 overflow-y-auto p-4 space-y-6 flex flex-col justify-end">
+273 | |                                         <div class="flex-1 space-y-4 pr-2">
+274 | |                                             <div class="text-center pb-4 border-b border-slate-800">
+...   |
+321 | |                                                 on:click=on_send_reply.clone()
+    | |                                                 -- required by a bound introduced by this call
+...   |
+328 | |                                     </div>
+329 | |                                 }
+    | |_________________________________- the requirement to implement `FnMut` derives from here
+    |
+    = note: required for `leptos::html::HtmlElement<Button, (Class<&str>,), (leptos::tachys::html::InertElement,)>` to implement `leptos::prelude::OnAttribute<click, {closure@src/pages/inbox.rs:110:9: 110:17}>`
+
+error[E0525]: expected a closure that implements the `Fn` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:155:18
+    |
+129 | /     view! {
+130 | |         <div class="h-full flex flex-col space-y-4">
+131 | |             <div class="flex items-center justify-between px-2">
+132 | |                 <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+...   |
+155 | |                 <div class="flex-1 flex gap-4 overflow-hidden h-full pb-6">
+    | |                  ^^^ this closure implements `FnOnce`, not `Fn`
+...   |
+253 | |                                             on:click=on_send_new
+    | |                                                      ----------- closure is `FnOnce` because it moves the variable `on_send_new` out of its environment
+...   |
+345 | |         </div>
+346 | |     }
+    | |_____- the requirement to implement `Fn` derives from here
+    |
+    = note: required for `TypedChildrenFn<HtmlElement<Div, (Class<&str>,), ((..., ...),)>>` to implement `ToChildren<{closure@src/pages/inbox.rs:155:18: 155:21}>`
+    = note: the full name for the type has been written to '/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal/target/wasm32-unknown-unknown/debug/deps/local_ssi_portal-08921a9241e6cbba.long-type-1217959919403668131.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0525]: expected a closure that implements the `Fn` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:129:5
+    |
+129 | /     view! {
+130 | |         <div class="h-full flex flex-col space-y-4">
+131 | |             <div class="flex items-center justify-between px-2">
+132 | |                 <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+...   |
+321 | |                                                 on:click=on_send_reply.clone()
+    | |                                                          ------------- closure is `FnOnce` because it moves the variable `on_send_reply` out of its environment
+...   |
+345 | |         </div>
+346 | |     }
+    | |     ^
+    | |     |
+    | |_____this closure implements `FnOnce`, not `Fn`
+    |       the requirement to implement `Fn` derives from here
+    |
+    = note: required for `TypedChildrenFn<{closure@src/pages/inbox.rs:264:30: 264:37}>` to implement `ToChildren<{closure@src/pages/inbox.rs:129:5: 346:6}>`
+    = note: this error originates in the macro `view` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0525]: expected a closure that implements the `FnMut` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:119:9
+    |
+ 16 | ) -> impl IntoView {
+    |      ------------- the requirement to implement `FnMut` derives from here
+...
+119 |         move |_| {
+    |         ^^^^^^^^ this closure implements `FnOnce`, not `FnMut`
+...
+122 |                 send_fn(rec.clone(), compose_text.get());
+    |                 ------- closure is `FnOnce` because it moves the variable `send_fn` out of its environment
+    |
+    = note: required for `{closure@src/pages/inbox.rs:119:9: 119:17}` to implement `EventCallback<MouseEvent>`
+    = note: required for `On<click, {closure@src/pages/inbox.rs:119:9: 119:17}>` to implement `leptos::attr::Attribute`
+    = note: 1 redundant requirement hidden
+    = note: required for `(Class<&str>, On<click, {closure@inbox.rs:119:9}>, Attr<..., ...>)` to implement `leptos::attr::Attribute`
+    = note: required for `HtmlElement<Button, (Class<&str>, On<click, {closure@...}>, ...), ...>` to implement `leptos::prelude::Render`
+    = note: 9 redundant requirements hidden
+    = note: required for `HtmlElement<Div, (Class<&str>,), ((InertElement, ...),)>` to implement `leptos::prelude::Render`
+    = note: required for `HtmlElement<Div, (Class<&str>,), ((InertElement, ...),)>` to implement `leptos::IntoView`
+note: required by a bound in `leptos::prelude::Show`
+   --> /home/fred/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/leptos-0.8.15/src/show.rs:21:8
+    |
+ 10 | pub fn Show<W, C>(
+    |        ---- required by a bound in this function
+...
+ 21 |     C: IntoView + 'static,
+    |        ^^^^^^^^ required by this bound in `Show`
+    = note: the full name for the type has been written to '/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal/target/wasm32-unknown-unknown/debug/deps/local_ssi_portal-08921a9241e6cbba.long-type-1158009366010224813.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0525]: expected a closure that implements the `FnMut` trait, but this closure only implements `FnOnce`
+   --> src/pages/inbox.rs:110:9
+    |
+ 16 | ) -> impl IntoView {
+    |      ------------- the requirement to implement `FnMut` derives from here
+...
+110 |         move |_| {
+    |         ^^^^^^^^ this closure implements `FnOnce`, not `FnMut`
+111 |             if let Some(tid) = selected_thread.get() {
+112 |                 send_fn(tid, compose_text.get());
+    |                 ------- closure is `FnOnce` because it moves the variable `send_fn` out of its environment
+    |
+    = note: required for `{closure@src/pages/inbox.rs:110:9: 110:17}` to implement `EventCallback<MouseEvent>`
+    = note: required for `On<click, {closure@src/pages/inbox.rs:110:9: 110:17}>` to implement `leptos::attr::Attribute`
+    = note: required for `{closure@src/pages/inbox.rs:264:30: 264:37}` to implement `leptos::prelude::Render`
+    = note: required for `{closure@src/pages/inbox.rs:264:30: 264:37}` to implement `leptos::IntoView`
+note: required by a bound in `leptos::prelude::Show`
+   --> /home/fred/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/leptos-0.8.15/src/show.rs:21:8
+    |
+ 10 | pub fn Show<W, C>(
+    |        ---- required by a bound in this function
+...
+ 21 |     C: IntoView + 'static,
+    |        ^^^^^^^^ required by this bound in `Show`
+
+error[E0277]: the trait bound `HtmlElement<Div, (Class<&str>,), ((InertElement, ...),)>: IntoView` is not satisfied
+   --> src/pages/inbox.rs:129:5
+    |
+129 | /     view! {
+130 | |         <div class="h-full flex flex-col space-y-4">
+131 | |             <div class="flex items-center justify-between px-2">
+132 | |                 <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+...   |
+345 | |         </div>
+346 | |     }
+    | |_____^ the trait `RenderHtml` is not implemented for `HtmlElement<Div, (Class<&str>,), ((InertElement, ...),)>`
+    |
+    = help: the trait `RenderHtml` is implemented for `leptos::html::HtmlElement<E, At, Ch>`
+    = note: required for `HtmlElement<Div, (Class<&str>,), ((InertElement, ...),)>` to implement `leptos::IntoView`
+    = note: required for `ShowProps<{closure@inbox.rs:212:36}, HtmlElement<Div, (...,), ...>>` to implement `leptos::prelude::Props`
+    = note: the full name for the type has been written to '/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal/target/wasm32-unknown-unknown/debug/deps/local_ssi_portal-08921a9241e6cbba.long-type-7347529606206929044.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+    = note: this error originates in the macro `view` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `View<(HtmlElement<Div, (Class<&str>,), (...,)>, ...)>: RenderHtml` is not satisfied
+   --> src/pages/inbox.rs:129:5
+    |
+129 | /     view! {
+130 | |         <div class="h-full flex flex-col space-y-4">
+131 | |             <div class="flex items-center justify-between px-2">
+132 | |                 <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+...   |
+345 | |         </div>
+346 | |     }
+    | |_____^ the trait `RenderHtml` is not implemented for `View<(HtmlElement<Div, (Class<&str>,), (...,)>, ...)>`
+    |
+    = help: the trait `RenderHtml` is implemented for `leptos::prelude::View<T>`
+    = note: required for `{closure@src/pages/inbox.rs:264:30: 264:37}` to implement `RenderHtml`
+    = note: required for `{closure@src/pages/inbox.rs:264:30: 264:37}` to implement `leptos::IntoView`
+    = note: required for `ShowProps<{closure@inbox.rs:263:36}, {closure@inbox.rs:264:30}>` to implement `leptos::prelude::Props`
+    = note: the full name for the type has been written to '/home/fred/Agents_Projects/Antigravity/codebase/agent_in_a_box/local_ssi_portal/target/wasm32-unknown-unknown/debug/deps/local_ssi_portal-08921a9241e6cbba.long-type-330123286562386673.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+    = note: this error originates in the macro `view` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `base_url`
+  --> src/pages/integrations.rs:16:5
+   |
+16 |     base_url: String,
+   |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_base_url`
+
+warning: unused variable: `token`
+  --> src/pages/integrations.rs:17:5
+   |
+17 |     token: String,
+   |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_token`
+
+warning: unused variable: `provider_clone`
+  --> src/pages/integrations.rs:43:25
+   |
+43 |                     let provider_clone = provider.to_string();
+   |                         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_provider_clone`
+
+warning: unused variable: `config`
+  --> src/components/header.rs:10:5
+   |
+10 |     config: ReadSignal<PortalConfig>,
+   |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `active_section`
+  --> src/components/header.rs:11:5
+   |
+11 |     active_section: ReadSignal<String>,
+   |     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_active_section`
+
+warning: unused variable: `show_mobile_menu`
+  --> src/components/header.rs:13:5
+   |
+13 |     show_mobile_menu: ReadSignal<bool>,
+   |     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_show_mobile_menu`
+
+Some errors have detailed explanations: E0277, E0382, E0525.
+For more information about an error, try `rustc --explain E0277`.
+warning: `local_ssi_portal` (bin "local_ssi_portal") generated 25 warnings
+error: could not compile `local_ssi_portal` (bin "local_ssi_portal") due to 11 previous errors; 25 warnings emitted

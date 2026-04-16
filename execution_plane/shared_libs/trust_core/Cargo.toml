@@ -1,0 +1,17 @@
+[package]
+name = "trust_core"
+version = "0.1.0"
+edition = "2021"
+description = "Canonical domain types and traits for the Sovereign Trust & Approval Gateway"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+async-trait = "0.1"
+thiserror = "1.0"
+anyhow = "1.0"

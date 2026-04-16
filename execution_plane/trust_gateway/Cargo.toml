@@ -1,0 +1,57 @@
+[package]
+name = "trust_gateway"
+version = "0.1.0"
+edition = "2021"
+description = "Sovereign Trust Gateway — policy-driven action governance with HTTP + NATS dual-listener"
+
+[[bin]]
+name = "trust_gateway"
+path = "src/main.rs"
+
+[dependencies]
+# Domain types and policy engine from agent_in_a_box workspace
+trust_core = { path = "../shared_libs/trust_core" }
+trust_policy = { path = "../shared_libs/trust_policy" }
+identity_context = { path = "../shared_libs/identity_context" }
+ssi_mcp_runtime = { path = "../shared_libs/ssi_mcp_runtime" }
+configuration={git = "https://github.com/fcn06/swarm_commons.git"}
+rmcp = { version = "1.3", features = ["client", "client-side-sse", "auth", "transport-streamable-http-client-reqwest"] }
+
+
+
+# Web framework
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# Messaging
+async-nats = "0.37"
+
+# HTTP client (for connector dispatch)
+reqwest = { version = "0.13", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# JWT (for session validation and ExecutionGrant issuance)
+jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
+
+# Utilities
+uuid = { version = "1.0", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+base64 = "0.22"
+async-stream = "0.3"
+async-trait = "0.1"
+toml = "0.8"

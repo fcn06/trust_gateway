@@ -1,0 +1,36 @@
+[package]
+name = "public_gateway"
+version = "0.1.0"
+edition = "2021"
+description = "HTTP to NATS bridge for DIDComm service endpoints"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-nats = "0.40"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.6", features = ["cors"] }
+anyhow = "1"
+x25519-dalek = { version = "2.0", features = ["static_secrets", "getrandom"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+base64 = "0.21"
+hex = "0.4"
+rand = "0.8"
+dotenvy = "0.15"
+uuid = { version = "1.0", features = ["v4"] }
+ssi_crypto = { path = "../../../agent_in_a_box/ssi_crypto" }
+chrono = "0.4"
+hmac = "0.12"
+
+tokio-tungstenite = "0.24"
+futures = "0.3"
+ed25519-dalek = "2.1"
+
+reqwest = { version = "0.11", features = ["json"] }
+
+[dev-dependencies]

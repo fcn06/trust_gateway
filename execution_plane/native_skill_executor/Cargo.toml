@@ -1,0 +1,39 @@
+[package]
+name = "native_skill_executor"
+version = "0.1.0"
+edition = "2021"
+description = "Native Skill Executor (Claw) — dynamic CLI skill runner with ExecutionGrant validation"
+
+[[bin]]
+name = "native_skill_executor"
+path = "src/main.rs"
+
+[dependencies]
+# Domain types and grant validation
+trust_core = { path = "../shared_libs/trust_core" }
+
+# Web framework
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# JWT validation
+jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+glob = "0.3"
+async-nats = "0.38"
+futures = "0.3"

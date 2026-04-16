@@ -1,0 +1,6 @@
+/target/
+**/target/
+**/*.wasm
+**/.env
+*.log
+.DS_Store

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "tenant_registry",
+    "tenant_context",
+    "global_domain/public_gateway"
+]

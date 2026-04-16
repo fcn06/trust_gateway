@@ -1,0 +1,193 @@
+# ─────────────────────────────────────────────────────────────
+# Trust Gateway Policy Configuration
+#
+# Replaces the old policy.json safe_tools array with
+# attribute-based, priority-ordered rules.
+#
+# Rules are evaluated in priority order (lowest number first).
+# First match wins.
+#
+# Effects:
+#   allow           — action proceeds immediately
+#   deny            — action is blocked
+#   require_approval — action requires human approval (tier1/tier2)
+#   require_proof    — action requires OID4VP verifiable presentation (tier3)
+#
+# Corrected OID4VP flow: The USER (holder) presents proof,
+# the gateway (verifier) checks it.
+# ─────────────────────────────────────────────────────────────
+
+# ── Tier 0: Auto-Allow ────────────────────────────────────
+
+[[rules]]
+id = "read-actions-auto-allow"
+priority = 10
+operation_kinds = ["read"]
+effect = "allow"
+
+[[rules]]
+id = "claw-native-tools-allow"
+priority = 15
+action_names = ["claw_hello_world", "claw_weather", "read_skill", "claw_extract_content_from_url"]
+effect = "allow"
+
+[[rules]]
+id = "mcp-search-allow"
+priority = 16
+action_names = ["vp_search"]
+categories = ["vp", "search"]
+effect = "allow"
+
+# ── Tier 1: Portal Click ──────────────────────────────────
+
+[[rules]]
+id = "calendar-create-needs-approval"
+priority = 20
+action_names = ["google_calendar_create_event", "google.calendar.event.create"]
+effect = "require_approval"
+tier = "tier1"
+reason = "Calendar event creation requires portal approval"
+
+[[rules]]
+id = "shopify-order-update"
+priority = 21
+action_names = ["shopify_order_update"]
+effect = "require_approval"
+tier = "tier1"
+reason = "Order modifications require portal approval"
+
+# ── Tier 2: Re-Authentication ─────────────────────────────
+
+[[rules]]
+id = "refund-above-100eur"
+priority = 30
+action_names = ["shopify_order_refund_create"]
+min_amount = "100.00 EUR"
+effect = "require_approval"
+tier = "tier2"
+reason = "Refunds above €100 require re-authentication"
+
+# ── Tier 3: OID4VP Verified Presentation ──────────────────
+# The USER presents proof via their wallet.
+# The gateway verifies the presented credential.
+
+[[rules]]
+id = "payout-change-needs-proof"
+priority = 40
+tags = ["payout_change"]
+effect = "require_proof"
+proof_type = "openid4vp"
+required_claims = ["role:finance_approver"]
+reason = "Changing payout details requires the user to present proof of finance authorization"
+
+[[rules]]
+id = "identity-change-needs-proof"
+priority = 41
+tags = ["identity_change"]
+effect = "require_proof"
+proof_type = "openid4vp"
+required_claims = ["role:legal_representative"]
+reason = "Modifying legal entity data requires the user to present proof of legal authority"
+
+[[rules]]
+id = "large-refund-needs-proof"
+priority = 42
+action_names = ["shopify_order_refund_create"]
+min_amount = "500.00 EUR"
+effect = "require_proof"
+proof_type = "openid4vp"
+required_claims = ["role:senior_customer_service"]
+reason = "Refunds above €500 require the user to present proof of senior authority"
+
+# ── Restaurant Use Case Rules ─────────────────────────────
+# Frictionless ordering with sovereign identity governance.
+
+# Read operations & drafting are frictionless for any connected DID
+[[rules]]
+id = "restaurant-guest-read-draft"
+priority = 50
+action_names = ["restaurant_menu_read", "restaurant_basket_add", "restaurant_basket_remove"]
+effect = "allow"
+
+# Staff can list all orders freely (read operation)
+[[rules]]
+id = "restaurant-staff-orders-list"
+priority = 51
+action_names = ["restaurant_orders_list"]
+effect = "allow"
+
+# Submitting an order requires Staff Action (Cook / Confirm)
+[[rules]]
+id = "restaurant-order-submit"
+priority = 52
+action_names = ["restaurant_order_submit"]
+effect = "require_approval"
+tier = "tier1"
+reason = "Restaurant staff must confirm kitchen availability and table assignment."
+
+# Staff confirming an order also requires approval (double-check)
+[[rules]]
+id = "restaurant-order-confirm"
+priority = 53
+action_names = ["restaurant_order_confirm"]
+effect = "require_approval"
+tier = "tier1"
+reason = "Kitchen staff must acknowledge the order before preparation."
+
+# System can auto-generate payment, but only AFTER order is staff-confirmed
+[[rules]]
+id = "restaurant-payment-link"
+priority = 54
+action_names = ["restaurant_payment_link_create"]
+effect = "allow"
+
+# High-risk financial operations require Manager proof
+[[rules]]
+id = "restaurant-refund-auth"
+priority = 55
+action_names = ["restaurant_order_refund"]
+effect = "require_proof"
+proof_type = "openid4vp"
+required_claims = ["role:restaurant_manager"]
+reason = "Refunds require manager cryptographic signature."
+
+# ── PicoClaw Source-Specific Rules ────────────────────────
+# These rules apply only to actions proposed by PicoClaw.
+# PicoClaw is treated as a less-trusted external planner.
+# The fail-closed default deny at priority 999 ensures no
+# PicoClaw action can execute without explicit permission.
+
+[[rules]]
+id = "picoclaw-read-allow"
+priority = 100
+source_types = ["picoclaw"]
+action_names = ["vp_search"]
+categories = ["vp", "search"]
+operation_kinds = ["read"]
+effect = "allow"
+
+[[rules]]
+id = "picoclaw-write-approval"
+priority = 110
+source_types = ["picoclaw"]
+operation_kinds = ["create", "update", "delete"]
+effect = "require_approval"
+tier = "tier1"
+reason = "PicoClaw-originated write actions require portal approval"
+
+[[rules]]
+id = "picoclaw-transfer-proof"
+priority = 120
+source_types = ["picoclaw"]
+operation_kinds = ["transfer"]
+effect = "require_proof"
+proof_type = "openid4vp"
+required_claims = ["role:finance_approver"]
+reason = "PicoClaw-originated transfer actions require proof of authority"
+
+[[rules]]
+id = "picoclaw-default-deny"
+priority = 999
+source_types = ["picoclaw"]
+effect = "deny"
+reason = "Unclassified PicoClaw actions are denied by default (fail-closed)"

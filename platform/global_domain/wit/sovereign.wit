@@ -1,0 +1,231 @@
+package sovereign:gateway;
+
+interface common-types {
+    record plain-didcomm {
+        id: string,
+        %type: string,
+        %from: option<string>,
+        to: option<list<string>>,
+        thid: option<string>,
+        body: string, // JSON string
+        created-time: option<s64>,
+        expires-time: option<s64>,
+        status: option<string>,
+    }
+
+    enum permission {
+        chat,
+        discovery,
+        appointment,
+        payment,
+    }
+
+    enum connection-status {
+        pending,
+        active,
+        blocked,
+    }
+
+    record connection-policy {
+        did: string,
+        alias: string,
+        created-at: s64,
+        permissions: list<permission>,
+        status: connection-status,
+    }
+
+    // Blueprint-specified: Registration Cookie structure
+    record registration-cookie {
+        account-id: string,         // NATS Account ID
+        link-public-key: string,    // Link Public Key (Base64)
+        relay-url: string,          // Relay Endpoint URL
+        user-id-hash: option<string>, // Hashed User Nickname (for UI display)
+    }
+
+    // Blueprint-specified: Auth Challenge for WebAuthn
+    record auth-challenge {
+        challenge-bytes: list<u8>,
+        rp-id: string,
+    }
+}
+
+interface identity {
+    record auth-session {
+        user-id: string,
+        nkey-seed: string,
+    }
+    
+    authenticate: func(id: string) -> auth-session;
+
+    // WebAuthn Registration
+    start-registration: func(username: string) -> string; // returns JSON options
+    finish-registration: func(session-id: string, response: string) -> bool;
+
+    // WebAuthn Login
+    start-login: func(username: string) -> string; // returns JSON options
+    finish-login: func(session-id: string, response: string) -> string; // returns JWT
+
+    // Blueprint: Process a global login request arriving via NATS
+    process-global-login: func(assertion: list<u8>) -> result<bool, string>;
+}
+
+interface vault {
+    // Generate a new DID:key
+    create-identity: func(user-id: string) -> string;
+    
+    // Sign a message
+    sign-message: func(did: string, message: list<u8>) -> list<u8>;
+
+    // Get active DID for user
+    get-active-did: func(user-id: string) -> string;
+
+    // Set active DID for user
+    set-active-did: func(user-id: string, did: string) -> result<bool, string>;
+
+    // Pack a signed message (DIDComm)
+    pack-signed: func(sender: string, receiver: string, payload: string) -> string;
+    
+    // Verify and unpack a signed message
+    verify-signed: func(envelope: string) -> string;
+    
+    // List all managed DIDs for a user
+    list-identities: func(user-id: string) -> list<string>;
+
+    // Resolve a DID back to its owner user-id
+    resolve-did-to-user-id: func(did: string) -> string;
+
+    // === Blueprint Master Seed Functions ===
+    
+    // Generate the Master Seed (only on first registration)
+    // Returns true if seed generated, false if already exists
+    // derivation-path: Provided by client/server (e.g. from WebAuthn) to derive the encryption key
+    generate-master-seed: func(user-id: string, derivation-path: string) -> result<bool, string>;
+    
+    // Derive a Link NKey from the Master Seed for NATS authentication
+    // Returns the public key in Base64 format
+    derive-link-nkey: func(user-id: string) -> result<string, string>;
+    
+    // Unlock the Vault after successful WebAuthn assertion
+    // derivation-path is used for future hardware binding
+    unlock-vault: func(user-id: string, derivation-path: string) -> result<bool, string>;
+    
+    // Check if vault is currently unlocked for user
+    is-unlocked: func(user-id: string) -> bool;
+    
+    // Get the HMAC secret derived from Master Seed for subject obfuscation
+    get-hmac-secret: func(user-id: string) -> list<u8>;
+
+    // === Sovereign Recovery Beacon ===
+    record beacon-config {
+        subject: string,
+        key: list<u8>,
+        account-id: string,
+        relay-url: string,
+        node-id: string,
+    }
+
+    // Set the recovery credentials (stores encrypted in vault)
+    set-recovery-secret: func(user-id: string, nickname: string, secret: string) -> result<bool, string>;
+    
+    // Get the derived beacon configuration (subject and encryption key)
+    // Returns none if recovery is not configured
+    get-beacon-config: func(user-id: string) -> result<option<beacon-config>, string>;
+
+    // Get all beacon configs for all users (for NATS bridge)
+    get-all-beacon-configs: func() -> result<list<beacon-config>, string>;
+
+    // === JIT Routing ===
+    
+    // Encrypt a routing token for JIT routing to a gateway
+    // routing-key: Gateway's X25519 public key (Base64)
+    // target-id: The target routing identifier (node_id.category.target_id)
+    // Returns: Base64-encoded encrypted token
+    encrypt-routing-token: func(routing-key: string, target-id: string) -> result<string, string>;
+}
+
+interface messaging-sender {
+    use common-types.{plain-didcomm};
+    // Send a message via Host/NATS
+    send: func(msg: plain-didcomm) -> result<string, string>;
+}
+
+interface beacon-sender {
+    publish-beacon: func(subject: string, payload: list<u8>) -> result<bool, string>;
+}
+
+interface messaging-handler {
+    use common-types.{plain-didcomm};
+    // Handle incoming message (called by Host)
+    handle-incoming: func(msg: plain-didcomm) -> result<bool, string>;
+}
+
+interface acl {
+    use common-types.{permission, connection-policy, connection-status};
+    
+    check-permission: func(owner: string, subject: string, perm: permission) -> bool;
+    update-policy: func(owner: string, policy: connection-policy) -> result<bool, string>;
+    get-policies: func(owner: string) -> list<connection-policy>;
+}
+
+interface persistence {
+    get: func(key: string) -> option<list<u8>>;
+    set: func(key: string, value: list<u8>);
+    list-keys: func() -> list<string>;
+    get-house-salt: func() -> list<u8>;
+}
+
+world identity-server {
+    import vault;
+    export identity;
+}
+
+world ssi-vault {
+    import persistence;
+    export vault;
+}
+
+world nats-bridge {
+    import identity;
+    import vault;
+    import beacon-sender;
+    export run: func();
+}
+
+world mcp-tools {
+    import vault;
+    export handle-request: func(request: string) -> string;
+}
+
+interface gateway {
+    // UI Calls this to handle an action
+    handle-command: func(command: string, args: string) -> string;
+}
+
+world messaging-service {
+    import vault;
+    import acl;
+    import messaging-sender;
+    export messaging-handler; 
+}
+
+world acl-store {
+    import persistence;
+    import vault;
+    export acl;
+}
+
+world agent-in-a-box {
+    import identity;
+    import vault;
+    import messaging-sender;
+    import messaging-handler;
+    import acl;
+}
+
+world host-orchestrator {
+    import identity;
+    import vault;
+    import messaging-sender;
+    import messaging-handler;
+    import acl;
+}

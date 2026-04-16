@@ -1,0 +1,17 @@
+{
+    "webauthn_rp_id": "localhost",
+    "webauthn_rp_origin": "http://localhost:8080",
+    "webauthn_rp_extra_origins": ["http://127.0.0.1:8080", "http://localhost:8083", "http://127.0.0.1:8083"],
+    "api_listen_url": "0.0.0.0:3000",
+    "service_gateway_base_url": "http://localhost:3002/ingress",
+    "gateway_did": "did:twin:gateway_local",
+    "global_relay_domain": "localhost:3002",
+    "mcp_server_nats_url": "nats://127.0.0.1:4222",
+    "nats_global_domain_url": "nats://127.0.0.1:4222",
+    "allowed_origins": [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:8083",
+        "http://127.0.0.1:8083"
+    ]
+}

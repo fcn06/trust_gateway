@@ -1,0 +1,21 @@
+[package]
+name = "acl_store"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.46.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hmac = "0.12"
+sha2 = "0.10"
+chacha20poly1305 = "0.10"
+getrandom = { version = "0.2", features = ["js"] }
+hex = "0.4"
+hkdf = "0.12"
+
+[package.metadata.component]
+package = "sovereign:acl-store"

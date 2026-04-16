@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "trust_gateway",
+    "native_skill_executor",
+    "connector_mcp_server",
+    "vp_mcp_server",
+    "shared_libs/trust_core",
+    "shared_libs/trust_policy",
+    "shared_libs/identity_context",
+]
+

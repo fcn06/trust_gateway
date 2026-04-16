@@ -1,0 +1,6 @@
+# Trunk configuration
+# Disable subresource integrity to prevent hash mismatch issues during development
+
+[build]
+# Disable SRI (Subresource Integrity) hashing
+no_sri = true

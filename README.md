@@ -57,6 +57,47 @@ effect = "require_approval"
 tier = "tier1"
 ```
 
+### Trust Gateway Execution Routing
+
+The Trust Gateway uniformly normalizes all inbound requests (HTTP, NATS, MCP), validates cryptographic identity, evaluates policy, and routes actions to specialized execution servers:
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐  
+│                      TRUST GATEWAY (port 3060)                      │  
+│                                                                     │  
+│  - Transport Normalizer    (HTTP, MCP, NATS -> ProposedAction)      │  
+│  - Identity Context Extractor (parses _meta & validates JWTs)       │  
+│  - Tool Registry Provider  (aggregates executors autonomously)      │  
+│  - Policy Engine           (Evaluates TOML, dry-run Simulator)      │  
+│  - Standalone Approval API (/v1/approvals/* via JetStream)          │  
+│                                                                     │  
+│  -> IF ALLOWED: Mints ExecutionGrant JWT (HMAC-SHA256, 30s TTL)     │  
+└─────────────────────────────────┬───────────────────────────────────┘  
+                                  │ Connector Router (Retries + Breakers)
+                 ┌────────────────┼────────────────┐
+                 ▼                ▼                ▼
+┌─────────────────┐ ┌───────────────┐ ┌─────────────────────────┐
+│ connector_mcp   │ │ vp_mcp_server │ │ native_skill_executor   │
+│ (port 3050)     │ │ (Streamable)  │ │ (port 3070)             │
+│                 │ │               │ │                         │
+│ - OAuth APIs    │ │ - OID4VP      │ │ - /skills API           │
+│ - Stripe,       │ │   Verification│ │ - /invoke API           │
+│   Shopify       │ │               │ │                         │
+└─────────────────┘ └───────────────┘ │  ┌────────────────────────┐ │
+                                      │  │ /skills/ folder        │ │
+                                      │  │ ├ claw_weather/        │ │
+                                      │  │ ├ claw_extract_content_│ │
+                                      │  │ │ from_url/            │ │
+                                      │  │ └ notion/ (Bash)       │ │
+                                      │  └──────────┬─────────────┘ │
+                                      │             │ OS Spawn      │
+                                      │  ┌──────────▼─────────────┐ │
+                                      │  │ ISOLATED OS PROCESS    │ │
+                                      │  │ (stdout / stderr raw)  │ │
+                                      │  └────────────────────────┘ │
+                                      └─────────────────────────────┘
+```
+
 ### Native Skill Execution Flow ("The Claw Method")
 
 This details how the `native_skill_executor` locally processes requests from the Gateway by spawning bounded, isolated CLI actions:

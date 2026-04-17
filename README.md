@@ -89,7 +89,7 @@ tier = "tier1"
 
 This repository contains the **Open-Core Community Edition**. It provides the full execution loop, Trust Gateway, and WebAuthn identity system.
 
-For enterprise-grade messaging (**OpenMLS**), managed P2P transit (**Twin Mediator**), and advanced contact enrichment, check out our [Professional Tier](https://lianxi.io/).
+Enterprise-grade solution in preparation.
 
 ---
 

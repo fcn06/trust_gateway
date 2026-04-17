@@ -44,6 +44,60 @@ execution_plane/    — Trust Gateway, policy engine, and connectors
 agents/             — SSI Agent (MCP runtime) providing decentralized identity
 ```
 
+### Trust Policy Engine (`policy.toml`)
+
+An attribute-based, priority-ordered rules engine evaluated by the Trust Gateway. Rules are evaluated in priority order. With external extensions, `match_source_type` boundaries filter explicit external swarm logic:
+
+```toml
+[[rules]]
+name = "external_swarm_require_approval"
+match_source_type = "external_swarm"
+match_operation = ["create", "update", "delete", "transfer"]
+effect = "require_approval"
+tier = "tier1"
+```
+
+### Native Skill Execution Flow ("The Claw Method")
+
+This details how the `native_skill_executor` locally processes requests from the Gateway by spawning bounded, isolated CLI actions:
+
+```text
+┌─────────────────────────────────────────────────────┐  
+│               TRUST GATEWAY (port 3060)             │  
+│  Validates Request & issues ExecutionGrant JWT      │  
+└────────────────────┬────────────────────────────────┘  
+                     │ HTTP POST /invoke
+                     │ Payload: { skill_id, args, token }
+┌────────────────────▼────────────────────────────────┐  
+│         NATIVE SKILL EXECUTOR (port 3070)           │  
+│                                                     │  
+│  1. Token Validation: Checks HMAC ExecutionGrant    │  
+│  2. Registry Lookup: Matches `skill_id` to path     │  
+│  3. Env Setup: Injects bounded environment vars     │  
+│                                                     │  
+│  ┌─────────────────────────────────────────────────────┐  │  
+│  │ Local `/skills/` Configuration Map                  │  │  
+│  │                                                     │  │  
+│  │ ├── /claw_extract_content_from_url/                 │  │  
+│  │ │    ├── manifest.json (LLM schema)                 │  │  
+│  │ │    └── run.sh (POST to parsejet.com)              │  │  
+│  │ │                                                   │  │  
+│  │ └── /claw_weather/                                  │  │  
+│  │      ├── manifest.json                              │  │  
+│  │      └── run.sh (Bash Script)                       │  │  
+│  └───────────────────────┬─────────────────────────────┘  │  
+│                          │ `tokio::process::Command`      │  
+│  ┌───────────────────────▼─────────────────────────────┐  │  
+│  │    ISOLATED OS PROCESS (Subprocess Spawn)           │  │  
+│  │  - Receives: `args` via command line/stdin          │  │  
+│  │  - Runs: e.g., `bash run.sh <args>`                 │  │  
+│  │  - Captures: `stdout` and `stderr`                  │  │  
+│  └───────────────────────┬─────────────────────────────┘  │  
+└──────────────────────────┼────────────────────────────────┘  
+                           │ Raw JSON Output Result returned
+                           ▼
+```
+
 ## Quick Start
 
 ```bash
@@ -51,7 +105,8 @@ agents/             — SSI Agent (MCP runtime) providing decentralized identity
 # cargo install --locked trunk
 # rustup target add wasm32-unknown-unknown
 
-make dev
+make
+./start_dev.sh
 ```
 
 ## Building
@@ -93,6 +148,14 @@ curl -X POST http://127.0.0.1:3060/v1/actions/propose \
     }
   }'
 ```
+
+## Security note: The `JWT_SECRET`
+
+The `JWT_SECRET` is the shared signing secret used by the execution plane to secure operations. Specifically:
+- **Minting**: When a tool call request successfully clears the Policy Engine (or is manually approved by a human), the **Trust Gateway** mints an `ExecutionGrant` JWT indicating the action is approved. It signs this grant using HMAC-SHA256 and the `JWT_SECRET`.
+- **Validation**: The Trust Gateway passes this token downstream to executors (such as the `connector_mcp_server` and `native_skill_executor`). These executors read the exact same `JWT_SECRET` to verify the HMAC signature before authorizing the actual execution.
+
+This process enables a Zero Trust execution environment where downstream components cryptographically verify that the Trust Gateway explicitly authorized all sensitive operations.
 
 ## License
 

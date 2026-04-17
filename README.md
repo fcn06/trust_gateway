@@ -35,13 +35,13 @@ The Trust Gateway decouples **intelligence** (the LLM) from **capability** (the 
 Plaintext  
 User Intent → Host Orchestrator → Execution Orchestrator → TRUST GATEWAY → Specialized Executors
 
-### **1\. The Decision Point (Port 3060\)**
+### **1. The Decision Point (Port 3060)**
 
-The Gateway evaluates the policy.toml and extracts identity context from incoming \_meta payloads. It doesn't just route; it **validates authority**.
+The Gateway evaluates the policy.toml and extracts identity context from incoming _meta payloads. It doesn't just route; it **validates authority**.
 
-### **2\. "The Claw" (Native Skill Execution)**
+### **2. "The Claw" (Native Skill Execution)**
 
-The native\_skill\_executor (Port 3070\) spawns bounded, isolated sub-processes. It’s a "bring your own script" model for AI capabilities.
+The native_skill_executor (Port 3070) spawns bounded, isolated sub-processes. It’s a "bring your own script" model for AI capabilities.
 
 ---
 
@@ -50,38 +50,38 @@ The native\_skill\_executor (Port 3070\) spawns bounded, isolated sub-processes.
 ### **Prerequisites**
 
 * **Rust** 1.75+  
-* **NATS Server** (with JetStream enabled: nats-server \-js)  
-* **Trunk** (for the Web UI: cargo install \--locked trunk)
+* **NATS Server** (with JetStream enabled: nats-server -js)  
+* **Trunk** (for the Web UI: cargo install --locked trunk)
 
 ### **Setup**
-
-Bash  
-\# Clone and build  
-git clone https://github.com/fcn06/trust\_gateway.git  
-cd trust\_gateway  
+```bash
+# Clone and build  
+git clone https://github.com/fcn06/trust_gateway.git  
+cd trust_gateway  
 make build
 
-\# Start the full stack (Gateway, Host, Executors)  
-./start\_dev.sh
-
+# Start the full stack (Gateway, Host, Executors)  
+./start_dev.sh
+```
 ---
 
 ## **⚙️ Configuration**
 
 The Gateway is configured via config/policy.toml. Rules are evaluated in priority order (lowest number first).
 
-Ini, TOML  
-\[\[rules\]\]  
-name \= "protect\_financial\_ops"  
-match\_source\_type \= "external\_swarm"  
-match\_operation \= \["transfer", "delete"\]  
-effect \= "require\_approval"  
-tier \= "tier1"
+```toml
+[[rules]]  
+name = "protect_financial_ops"  
+match_source_type = "external_swarm"  
+match_operation = ["transfer", "delete"]  
+effect = "require_approval"  
+tier = "tier1"
+```
 
 ### **Critical Environment Variables**
 
-* JWT\_SECRET: Shared secret used to sign **Execution Grants**. If an executor receives a call without a valid HMAC signature from this secret, it refuses to run.  
-* NATS\_URL: The backbone for real-time audit logs and approval requests.
+* JWT_SECRET: Shared secret used to sign **Execution Grants**. If an executor receives a call without a valid HMAC signature from this secret, it refuses to run.  
+* NATS_URL: The backbone for real-time audit logs and approval requests.
 
 ---
 

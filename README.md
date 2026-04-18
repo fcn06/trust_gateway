@@ -86,6 +86,48 @@ tier = "tier1"
 
 ---
 
+### **Native Skill Execution Flow ("The Claw Method")**
+
+This details how the `native_skill_executor` locally processes requests from the Gateway by spawning bounded, isolated CLI actions:
+
+```text
+┌─────────────────────────────────────────────────────┐  
+│               TRUST GATEWAY (port 3060)             │  
+│  Validates Request & issues ExecutionGrant JWT      │  
+└────────────────────┬────────────────────────────────┘  
+                     │ HTTP POST /invoke
+                     │ Payload: { skill_id, args, token }
+┌────────────────────▼────────────────────────────────┐  
+│         NATIVE SKILL EXECUTOR (port 3070)           │  
+│                                                     │  
+│  1. Token Validation: Checks HMAC ExecutionGrant    │  
+│  2. Registry Lookup: Matches `skill_id` to path     │  
+│  3. Env Setup: Injects bounded environment vars     │  
+│                                                     │  
+│  ┌─────────────────────────────────────────────────────┐  │  
+│  │ Local `/skills/` Configuration Map                  │  │  
+│  │                                                     │  │  
+│  │ ├── /claw_extract_content_from_url/                 │  │  
+│  │ │    ├── manifest.json (LLM schema)                 │  │  
+│  │ │    └── run.sh (POST to parsejet.com)              │  │  
+│  │ │                                                   │  │  
+│  │ └── /claw_weather/                                  │  │  
+│  │      ├── manifest.json                              │  │  
+│  │      └── run.sh (Bash Script)                       │  │  
+│  └───────────────────────┬─────────────────────────────┘  │  
+│                          │ `tokio::process::Command`      │  
+│  ┌───────────────────────▼─────────────────────────────┐  │  
+│  │    ISOLATED OS PROCESS (Subprocess Spawn)           │  │  
+│  │  - Receives: `args` via command line/stdin          │  │  
+│  │  - Runs: e.g., `bash run.sh <args>`                 │  │  
+│  │  - Captures: `stdout` and `stderr`                  │  │  
+│  └───────────────────────┬─────────────────────────────┘  │  
+└──────────────────────────┼────────────────────────────────┘  
+                           │ Raw JSON Output Result returned
+                           ▼
+```
+
+
 ## **🤝 Community vs. Professional**
 
 This repository contains the **Open-Core Community Edition**. It provides the full execution loop, Trust Gateway, and WebAuthn identity system.

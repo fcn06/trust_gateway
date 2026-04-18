@@ -111,9 +111,9 @@ This details how the `native_skill_executor` locally processes requests from the
 │  │ │    ├── manifest.json (LLM schema)                 │  │  
 │  │ │    └── run.sh (POST to parsejet.com)              │  │  
 │  │ │                                                   │  │  
-│  │ └── /claw_weather/                                  │  │  
-│  │      ├── manifest.json                              │  │  
-│  │      └── run.sh (Bash Script)                       │  │  
+│  └── /claw_weather/                                  │  │  
+│        ├── manifest.json                              │  │  
+│        └── run.sh (Bash Script)                       │  │  
 │  └───────────────────────┬─────────────────────────────┘  │  
 │                          │ `tokio::process::Command`      │  
 │  ┌───────────────────────▼─────────────────────────────┐  │  
@@ -133,34 +133,39 @@ This details how the `native_skill_executor` locally processes requests from the
 
 For an external agent or swarm to operate within the governed environment, it follows a simple **Discover → Propose → Execute** loop.
 
-### **1. Discover Tools**
-External agents can fetch a flat, **MCP-compatible** list of all available tools (aggregated from the Host and VP MCP servers).
+### **Option A: The MCP Way (Recommended)**
+The Trust Gateway implements the **Model Context Protocol (MCP)** over SSE. This is the easiest way for agents like PicoClaw to connect.
 
-```bash
-curl http://localhost:3060/v1/tools/list
-```
+1.  **Connect**: Establish an MCP session at `http://localhost:3060/v1/mcp/sse`.
+2.  **Operate**: Use standard MCP `tools/list` and `tools/call`. The Gateway handles the governance transparently.
 
-### **2. Propose an Action**
-To engage an action, the agent sends a proposal. The Gateway requires a **Bearer JWT** (identity context) to identify the requester and apply the correct policies.
+### **Option B: The REST Way**
+For direct integration without an MCP client:
 
-```bash
-curl -X POST http://localhost:3060/v1/actions/propose \
-  -H "Authorization: Bearer <your_session_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "action_name": "google.calendar.event.create",
-    "arguments": { "summary": "Strategy Meeting", "start": "2025-09-01T10:00:00Z" }
-  }'
-```
+1.  **Discover Tools**:
+    ```bash
+    curl http://localhost:3060/v1/tools/list
+    ```
+2.  **Propose an Action**:
+    Include a **Bearer JWT** (identity context) to identify the requester and apply the correct policies.
+    ```bash
+    curl -X POST http://localhost:3060/v1/actions/propose \
+      -H "Authorization: Bearer <your_session_jwt>" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "action_name": "google.calendar.event.create",
+        "arguments": { "summary": "Strategy Meeting", "start": "2025-09-01T10:00:00Z" }
+      }'
+    ```
 
-### **3. Governance in Practice**
-When a proposal is received, the Gateway triggers the **Governance Pipeline**:
-*   **Identity Resolution:** Extracts the Actor's DID and Tenant ID from the JWT.
+### **Governance in Practice**
+When a proposal is received (via MCP, REST, or NATS), the Gateway triggers the **Governance Pipeline**:
+*   **Identity Resolution:** Extracts the Actor's DID and Tenant ID.
 *   **Policy Evaluation:** Matches the action against `policy.toml`. 
-    *   **Allow:** The Gateway issues a short-lived **Execution Grant** and dispatches the call to the appropriate executor.
-    *   **Require Approval:** The action is paused. A request is sent to the human-in-the-loop (via NATS/Web UI). The agent receives a `pending_approval` status and can poll for results.
-    *   **Deny:** The action is blocked immediately with a reason (e.g., "Unauthorized operation").
-*   **Audit Trail:** Every step (Proposal, Evaluation, Decision, Execution) is logged to a tamper-evident, NATS-backed audit log for full traceability.
+    *   **Allow:** The Gateway issues a short-lived **Execution Grant** and dispatches the call.
+    *   **Require Approval:** The action is paused for manual human-in-the-loop approval.
+    *   **Deny:** The action is blocked with a clear reason.
+*   **Audit Trail:** Every step is logged to a tamper-evident, NATS-backed audit log.
 
 ---
 

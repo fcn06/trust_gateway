@@ -50,7 +50,7 @@ The native_skill_executor (Port 3070) spawns bounded, isolated sub-processes. It
 ### **Prerequisites**
 
 * **Rust** 1.75+  
-* **Wasmtime
+* **Wasmtime**
 * **NATS Server** (with JetStream enabled: nats-server -js)  
 * **Trunk** (for the Web UI: cargo install --locked trunk)
 

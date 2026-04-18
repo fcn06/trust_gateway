@@ -127,6 +127,42 @@ This details how the `native_skill_executor` locally processes requests from the
                            ▼
 ```
 
+---
+
+## **🕹️ Interacting with the Gateway**
+
+For an external agent or swarm to operate within the governed environment, it follows a simple **Discover → Propose → Execute** loop.
+
+### **1. Discover Tools**
+External agents can fetch a flat, **MCP-compatible** list of all available tools (aggregated from the Host and VP MCP servers).
+
+```bash
+curl http://localhost:3060/v1/tools/list
+```
+
+### **2. Propose an Action**
+To engage an action, the agent sends a proposal. The Gateway requires a **Bearer JWT** (identity context) to identify the requester and apply the correct policies.
+
+```bash
+curl -X POST http://localhost:3060/v1/actions/propose \
+  -H "Authorization: Bearer <your_session_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action_name": "google.calendar.event.create",
+    "arguments": { "summary": "Strategy Meeting", "start": "2025-09-01T10:00:00Z" }
+  }'
+```
+
+### **3. Governance in Practice**
+When a proposal is received, the Gateway triggers the **Governance Pipeline**:
+*   **Identity Resolution:** Extracts the Actor's DID and Tenant ID from the JWT.
+*   **Policy Evaluation:** Matches the action against `policy.toml`. 
+    *   **Allow:** The Gateway issues a short-lived **Execution Grant** and dispatches the call to the appropriate executor.
+    *   **Require Approval:** The action is paused. A request is sent to the human-in-the-loop (via NATS/Web UI). The agent receives a `pending_approval` status and can poll for results.
+    *   **Deny:** The action is blocked immediately with a reason (e.g., "Unauthorized operation").
+*   **Audit Trail:** Every step (Proposal, Evaluation, Decision, Execution) is logged to a tamper-evident, NATS-backed audit log for full traceability.
+
+---
 
 ## **🤝 Community vs. Professional**
 
@@ -139,4 +175,3 @@ Enterprise-grade solution in preparation.
 ## **📜 License**
 
 Licensed under the **Apache License 2.0**. Use it, build on it, and help us make AI execution safe for everyone.
-

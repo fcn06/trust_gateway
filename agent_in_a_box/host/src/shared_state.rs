@@ -31,8 +31,8 @@ pub struct HostConfig {
     pub mcp_server_nats_url: String,
     #[serde(default = "default_nats_url")]
     pub nats_global_domain_url: String,
-    #[serde(default)]
-    pub allowed_origins: Vec<String>,
+    #[serde(default = "default_allowed_origins")]
+    pub allowed_origins: String,
     #[serde(default = "default_ssi_agent_endpoint")]
     pub ssi_agent_endpoint: String,
     #[serde(default = "default_agent_jwt_ttl")]
@@ -75,6 +75,9 @@ pub struct HostConfig {
 
 fn default_connector_mcp_url() -> String {
     "http://127.0.0.1:3050".to_string()
+}
+fn default_allowed_origins() -> String {
+    "http://localhost:8080,http://localhost:8083".to_string()
 }
 fn default_skill_executor_url() -> String {
     "http://127.0.0.1:3070".to_string()

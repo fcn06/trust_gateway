@@ -16,8 +16,16 @@ export JWT_SECRET="${JWT_SECRET:-dev-secret-only-for-local-testing}"
 export LLM_MCP_API_KEY="${LLM_MCP_API_KEY:-}"
 export LLM_A2A_API_KEY="${LLM_A2A_API_KEY:-}"
 
-# Define community edition globally
-export EDITION="community"
+# Define edition globally (default to professional since user requested)
+export EDITION="${EDITION:-professional}"
+
+if [[ "$EDITION" == "professional" ]]; then
+    export CARGO_FEATURES="--features messaging"
+    echo "💼 Selected Edition: Professional"
+else
+    export CARGO_FEATURES=""
+    echo "🌍 Selected Edition: Community"
+fi
 
 # Verify prerequisites
 if ! command -v trunk &> /dev/null; then
@@ -47,7 +55,7 @@ echo "Starting Trust Gateway..."
 GATEWAY_PID=$!
 
 echo "Starting Agent in a Box Host..."
-(cd agent_in_a_box/host && cargo run --release --bin host) &
+(cd agent_in_a_box/host && cargo run --release ${CARGO_FEATURES} --bin host) &
 HOST_PID=$!
 
 echo "Starting Local SSI Portal..."

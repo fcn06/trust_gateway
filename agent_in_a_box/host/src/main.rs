@@ -190,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
     let vault_comp = component_registry.require("ssi_vault").clone();
 
     #[cfg(feature = "messaging")]
-    let messaging_comp = component_registry.require("messaging_service").clone();
+    let messaging_comp = component_registry.get("messaging_service").cloned();
     let acl_comp = component_registry.require("acl_store").clone();
     #[cfg(feature = "messaging")]
     let contact_comp = component_registry.get("contact_store").cloned();
@@ -209,7 +209,11 @@ async fn main() -> anyhow::Result<()> {
 
 
     #[cfg(feature = "messaging")]
-    loops::spawn_messaging_loop(engine.clone(), shared.clone(), messaging_comp, generic_linker.clone(), messaging_cmd_rx, profile);
+    if let Some(comp) = messaging_comp {
+        loops::spawn_messaging_loop(engine.clone(), shared.clone(), comp, generic_linker.clone(), messaging_cmd_rx, profile);
+    } else {
+        tracing::warn!("⚠️ messaging_service component not found — messaging features disabled");
+    }
 
     // Contact Store loop (optional — logs warning if component not compiled)
     #[cfg(feature = "messaging")]
@@ -235,8 +239,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 11. API Router
     // Convert allowed_origins strings to HeaderValues
-    let allowed_origins: Vec<axum::http::HeaderValue> = shared.config.allowed_origins.iter()
-        .map(|s| s.parse().unwrap())
+    let allowed_origins: Vec<axum::http::HeaderValue> = shared.config.allowed_origins
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
         .collect();
 
     let cors = CorsLayer::new()

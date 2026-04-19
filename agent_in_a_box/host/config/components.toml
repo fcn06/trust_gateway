@@ -17,3 +17,18 @@ enabled = false
 name = "acl_store"
 path = "../target/wasm32-wasip2/release/acl_store.wasm"
 enabled = true
+
+[[component]]
+name = "messaging_service"
+path = "../target/wasm32-wasip2/release/messaging_service.wasm"
+enabled = true
+
+[[component]]
+name = "mls_session"
+path = "../target/wasm32-wasip2/release/mls_session.wasm"
+enabled = true
+
+[[component]]
+name = "contact_store"
+path = "../target/wasm32-wasip2/release/contact_store.wasm"
+enabled = true

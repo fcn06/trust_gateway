@@ -6,8 +6,6 @@ members = [
     "ssi_vault",
     "ssi_crypto",
 ]
-# Messaging crates are Professional-tier only; dead crates excluded permanently.
-exclude = ["messaging_service", "contact_store", "mls_session"]
 
 [workspace.dependencies]
 anyhow = "1.0"

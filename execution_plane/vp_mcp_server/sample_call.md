@@ -26,7 +26,7 @@ curl -X POST "http://localhost:3001/message?sessionId=SESSION_ID" \
     "params": {
       "name": "list_files",
       "arguments": {
-        "path": "<YOUR-PATH>",
+        "path": "<YOUR-DEFAULT-PATH>",
         "_meta": {
           "X-Envelope": "PLACEHOLDER_VP_JWT_HERE",
           "X-Instruction": "PLACEHOLDER_INSTRUCTION_STRING"

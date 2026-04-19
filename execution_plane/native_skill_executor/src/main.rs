@@ -42,9 +42,9 @@ struct Args {
     #[arg(long, env = "SKILLS_DIR", default_value = "skills")]
     skills_dir: String,
 
-    /// JWT signing secret (must match trust_gateway)
+    /// JWT signing secret (must match trust_gateway) — REQUIRED
     #[arg(long, env = "JWT_SECRET")]
-    jwt_secret: Option<String>,
+    jwt_secret: String,
 
     /// Execution timeout in seconds
     #[arg(long, env = "EXEC_TIMEOUT", default_value = "30")]
@@ -57,6 +57,10 @@ struct Args {
     /// Skill rescan interval in seconds (0 = disabled)
     #[arg(long, env = "RESCAN_INTERVAL", default_value = "60")]
     rescan_interval: u64,
+
+    /// Comma-separated list of allowed CORS origins (default: http://localhost:8080)
+    #[arg(long, env = "ALLOWED_ORIGINS", default_value = "http://localhost:8080")]
+    allowed_origins: String,
 }
 
 /// Shared state for the executor.
@@ -115,9 +119,7 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(ExecutorState {
         skill_registry,
-        grant_validator: grant_validator::GrantValidator::new(
-            args.jwt_secret.as_deref().unwrap_or("dev-secret-change-me"),
-        ),
+        grant_validator: grant_validator::GrantValidator::new(&args.jwt_secret),
         exec_timeout: std::time::Duration::from_secs(args.exec_timeout),
         nats: nats_client.clone(),
     });
@@ -158,8 +160,12 @@ async fn main() -> Result<()> {
         tracing::info!("✅ Skill rescan task started (every {}s)", args.rescan_interval);
     }
 
+    let allowed_origins: Vec<axum::http::HeaderValue> = args.allowed_origins
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
+        .allow_origin(allowed_origins)
         .allow_methods(vec![Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(vec![
             axum::http::header::AUTHORIZATION,
@@ -215,7 +221,11 @@ async fn invoke_handler(
             }
         }
     } else {
-        tracing::warn!("⚠️ No execution grant provided — running without grant validation");
+        tracing::error!("🚫 No execution grant provided — rejecting execution");
+        return Json(executor::InvokeResponse::error(
+            &req.action_id.unwrap_or_default(),
+            "Execution denied: no ExecutionGrant JWT provided. All invocations must include a valid grant from the Trust Gateway.".to_string(),
+        ));
     }
 
     // 2. Resolve skill

@@ -88,6 +88,10 @@ struct Args {
     /// Enable tool registry hot-reload
     #[arg(long, env = "ENABLE_HOT_RELOAD", default_value_t = false)]
     enable_hot_reload: bool,
+
+    /// Comma-separated list of allowed CORS origins
+    #[arg(long, env = "ALLOWED_ORIGINS", default_value = "http://localhost:8080,http://localhost:8083")]
+    allowed_origins: String,
 }
 
 #[tokio::main]
@@ -232,6 +236,10 @@ async fn main() -> Result<()> {
             std::time::Duration::from_secs(300), // 5-minute TTL
         )),
         circuit_breakers,
+        allowed_origins: args.allowed_origins.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
     });
 
     // Spawn NATS listener (backward compat with mcp_nats_bridge)

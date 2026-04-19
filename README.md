@@ -1,4 +1,4 @@
-# **Sovereign AI Governance Infrastructure (Community Edition)**
+# **AI Agents Trust Gateway (Community Edition)**
 
 **Let AI agents operate business tools without losing control.**
 

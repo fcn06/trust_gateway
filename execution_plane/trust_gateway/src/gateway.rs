@@ -37,6 +37,8 @@ pub struct GatewayState {
     pub tool_registry: Option<router::ToolRegistry>,
     /// WS1.2: Per-connector circuit breakers for resilience.
     pub circuit_breakers: std::collections::HashMap<String, router::CircuitBreaker>,
+    /// Allowed CORS origins (configurable via ALLOWED_ORIGINS env var).
+    pub allowed_origins: Vec<String>,
 }
 
 /// The payload received from the ssi_agent via NATS (backward compat).

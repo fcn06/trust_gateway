@@ -23,8 +23,12 @@ use crate::gateway::{GatewayState, GatewayResponse, ProposeActionRequest};
 
 /// Build the Axum router with all gateway routes.
 pub fn build_router(state: Arc<GatewayState>) -> Router {
+    let allowed_origins: Vec<axum::http::HeaderValue> = state.allowed_origins
+        .iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
+        .allow_origin(allowed_origins)
         .allow_methods(vec![Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
         .allow_headers(vec![
             axum::http::header::AUTHORIZATION,

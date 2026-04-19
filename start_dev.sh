@@ -40,18 +40,11 @@ trap cleanup EXIT
 if [[ "${1:-}" != "--skip-build" ]]; then
     echo "🔨 Building WASM components and services..."
     (cd agent_in_a_box && make build)
-    
-    echo "🔨 Building connector_mcp_server..."
-    (cd execution_plane/connector_mcp_server && cargo build --release)
 fi
 
 echo "Starting Trust Gateway..."
 (cd execution_plane/trust_gateway && cargo run --release --bin trust_gateway) &
 GATEWAY_PID=$!
-
-echo "Starting Connector MCP Server..."
-(cd execution_plane/connector_mcp_server && ../target/release/connector_mcp_server) &
-CONNECTOR_PID=$!
 
 echo "Starting Agent in a Box Host..."
 (cd agent_in_a_box/host && cargo run --release --bin host) &
@@ -64,10 +57,9 @@ PORTAL_PID=$!
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  Lianxi Community Edition is running!"
-echo "  - Trust Gateway:      http://127.0.0.1:3060"
-echo "  - Connector MCP:      http://127.0.0.1:3050"
-echo "  - Host:               http://127.0.0.1:3000"
-echo "  - Local Portal:       http://127.0.0.1:8080"
+echo "  - Trust Gateway:  http://127.0.0.1:3060"
+echo "  - Host:           http://127.0.0.1:3000"
+echo "  - Local Portal:   http://127.0.0.1:8080"
 echo "═══════════════════════════════════════════════════"
 echo ""
 

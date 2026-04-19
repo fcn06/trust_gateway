@@ -460,17 +460,6 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "base64urlsafedata"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18b3d30abb74120a9d5267463b9e0045fdccc4dd152e7249d966612dc1721384"
-dependencies = [
- "base64 0.21.7",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "base64urlsafedata"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f7f6be94fa637132933fd0a68b9140bcb60e3d46164cb68e82a2bb8d102b3a"
@@ -2720,24 +2709,6 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
-
-[[package]]
-name = "identity_server"
-version = "0.1.0"
-dependencies = [
- "base64 0.21.7",
- "ed25519-dalek",
- "getrandom 0.2.17",
- "hex",
- "jwt-simple",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "tracing",
- "uuid",
- "webauthn-rs-proto 0.4.9",
- "wit-bindgen 0.46.0",
-]
 
 [[package]]
 name = "idna"
@@ -7394,7 +7365,7 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fafcf13f7dc1fb292ed4aea22cdd3757c285d7559e9748950ee390249da4da6b"
 dependencies = [
- "base64urlsafedata 0.5.4",
+ "base64urlsafedata",
  "openssl",
  "openssl-sys",
  "serde",
@@ -7408,7 +7379,7 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b24d082d3360258fefb6ffe56123beef7d6868c765c779f97b7a2fcf06727f8"
 dependencies = [
- "base64urlsafedata 0.5.4",
+ "base64urlsafedata",
  "serde",
  "tracing",
  "url",
@@ -7423,7 +7394,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15784340a24c170ce60567282fb956a0938742dbfbf9eff5df793a686a009b8b"
 dependencies = [
  "base64 0.21.7",
- "base64urlsafedata 0.5.4",
+ "base64urlsafedata",
  "der-parser",
  "hex",
  "nom",
@@ -7439,20 +7410,8 @@ dependencies = [
  "url",
  "uuid",
  "webauthn-attestation-ca",
- "webauthn-rs-proto 0.5.4",
+ "webauthn-rs-proto",
  "x509-parser",
-]
-
-[[package]]
-name = "webauthn-rs-proto"
-version = "0.4.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d24e638361a63ba5c0a0be6a60229490fcdf33740ed63df5bb6bdb627b52a138"
-dependencies = [
- "base64urlsafedata 0.1.3",
- "serde",
- "serde_json",
- "url",
 ]
 
 [[package]]
@@ -7462,7 +7421,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16a1fb2580ce73baa42d3011a24de2ceab0d428de1879ece06e02e8c416e497c"
 dependencies = [
  "base64 0.21.7",
- "base64urlsafedata 0.5.4",
+ "base64urlsafedata",
  "serde",
  "serde_json",
  "url",

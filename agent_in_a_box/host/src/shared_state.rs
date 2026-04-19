@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use wasmtime_wasi::{WasiCtx, ResourceTable};
 use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration, Webauthn};
 
-use crate::commands::{VaultCommand, AclCommand, IdentityCommand, MlsSessionCommand, ContactStoreCommand};
+use crate::commands::{VaultCommand, AclCommand, MlsSessionCommand, ContactStoreCommand};
 use crate::dto::IncomingMessage;
 
 
@@ -107,7 +107,7 @@ pub struct WebauthnSharedState {
     pub vault_cmd_tx: tokio::sync::mpsc::Sender<VaultCommand>,
     pub messaging_cmd_tx: tokio::sync::mpsc::Sender<IncomingMessage>,
     pub acl_cmd_tx: tokio::sync::mpsc::Sender<AclCommand>,
-    pub identity_cmd_tx: tokio::sync::mpsc::Sender<IdentityCommand>,
+
     pub mls_cmd_tx: tokio::sync::mpsc::Sender<MlsSessionCommand>,
     pub contact_cmd_tx: tokio::sync::mpsc::Sender<ContactStoreCommand>,
     pub nats: Option<async_nats::Client>,
@@ -133,7 +133,7 @@ impl WebauthnSharedState {
         vault_cmd_tx: tokio::sync::mpsc::Sender<VaultCommand>,
         messaging_cmd_tx: tokio::sync::mpsc::Sender<IncomingMessage>,
         acl_cmd_tx: tokio::sync::mpsc::Sender<AclCommand>,
-        identity_cmd_tx: tokio::sync::mpsc::Sender<IdentityCommand>,
+
         mls_cmd_tx: tokio::sync::mpsc::Sender<MlsSessionCommand>,
         contact_cmd_tx: tokio::sync::mpsc::Sender<ContactStoreCommand>,
         nats: Option<async_nats::Client>,
@@ -151,7 +151,7 @@ impl WebauthnSharedState {
             vault_cmd_tx,
             messaging_cmd_tx,
             acl_cmd_tx,
-            identity_cmd_tx,
+
             mls_cmd_tx,
             contact_cmd_tx,
             nats,
@@ -180,7 +180,7 @@ pub struct HostState {
     pub wasi: WasiCtx,
     pub table: ResourceTable,
     pub vault: Option<wasmtime::component::Instance>,
-    pub identity: Option<wasmtime::component::Instance>,
+
     pub messaging: Option<wasmtime::component::Instance>,
     pub acl: Option<wasmtime::component::Instance>,
     pub mls_session: Option<wasmtime::component::Instance>,

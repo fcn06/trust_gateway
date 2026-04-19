@@ -175,6 +175,19 @@ impl SkillRegistry {
         let contents = std::fs::read_to_string(manifest_path)?;
         let manifest: SkillManifest = serde_json::from_str(&contents)?;
 
+        // ── Security: Interpreter allow-list ────────────────────
+        // Only allow known safe interpreters. This prevents malicious
+        // manifests from running arbitrary binaries.
+        const ALLOWED_INTERPRETERS: &[&str] = &[
+            "bash", "sh", "python3", "python", "node", "deno", "ruby",
+        ];
+        if !ALLOWED_INTERPRETERS.contains(&manifest.interpreter.as_str()) {
+            anyhow::bail!(
+                "Interpreter '{}' is not in the allow-list {:?}",
+                manifest.interpreter, ALLOWED_INTERPRETERS
+            );
+        }
+
         let script_path = skill_dir.join(&manifest.script);
         if !script_path.exists() {
             anyhow::bail!(
@@ -184,10 +197,23 @@ impl SkillRegistry {
             );
         }
 
+        // ── Security: Path traversal prevention ─────────────────
+        // Canonicalize both paths and verify the script stays within
+        // the skill directory. Prevents manifest.script = "../../etc/passwd".
+        let canonical_script = script_path.canonicalize()?;
+        let canonical_dir = skill_dir.canonicalize()?;
+        if !canonical_script.starts_with(&canonical_dir) {
+            anyhow::bail!(
+                "Script path '{}' escapes skill directory '{}' — possible path traversal",
+                canonical_script.display(),
+                canonical_dir.display()
+            );
+        }
+
         Ok(LoadedSkill {
             manifest,
             dir: skill_dir.to_path_buf(),
-            script_path: script_path.canonicalize()?,
+            script_path: canonical_script,
         })
     }
 

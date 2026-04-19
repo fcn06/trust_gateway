@@ -26,7 +26,7 @@ pub mod audit;
 pub mod bindings;
 
 // Re-exports
-use commands::{VaultCommand, AclCommand, IdentityCommand};
+use commands::{VaultCommand, AclCommand};
 use dto::IncomingMessage;
 use shared_state::{WebauthnSharedState, CliArgs};
 
@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     let webauthn = init::setup_webauthn(&config)?;
 
     let (vault_cmd_tx, vault_cmd_rx) = mpsc::channel(100);
-    let (identity_cmd_tx, identity_cmd_rx) = mpsc::channel(100);
+
     let (acl_cmd_tx, acl_cmd_rx) = mpsc::channel(100);
 
     // Messaging channels — only active in Professional/Enterprise builds
@@ -129,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
         vault_cmd_tx: vault_cmd_tx.clone(),
         messaging_cmd_tx: messaging_cmd_tx.clone(),
         acl_cmd_tx: acl_cmd_tx.clone(),
-        identity_cmd_tx: identity_cmd_tx.clone(),
+
         mls_cmd_tx: mls_cmd_tx.clone(),
         contact_cmd_tx: contact_cmd_tx.clone(),
         nats: Some(nc.clone()),
@@ -174,9 +174,9 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("⚠️ components.toml not found, using hardcoded paths");
         // Fallback paths — community edition loads core components only
         #[cfg(feature = "messaging")]
-        let components = vec!["ssi_vault", "identity_server", "messaging_service", "acl_store", "mls_session", "contact_store"];
+        let components = vec!["ssi_vault", "messaging_service", "acl_store", "mls_session", "contact_store"];
         #[cfg(not(feature = "messaging"))]
-        let components = vec!["ssi_vault", "identity_server", "acl_store"];
+        let components = vec!["ssi_vault", "acl_store"];
         for name in components {
             let path = format!("../target/wasm32-wasip2/{}/{}.wasm", profile, name);
             if std::path::Path::new(&path).exists() {
@@ -188,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let vault_comp = component_registry.require("ssi_vault").clone();
-    let identity_comp = component_registry.require("identity_server").clone();
+
     #[cfg(feature = "messaging")]
     let messaging_comp = component_registry.require("messaging_service").clone();
     let acl_comp = component_registry.require("acl_store").clone();
@@ -206,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
 
     loops::spawn_vault_loop(engine.clone(), shared.clone(), vault_comp, vault_linker, vault_cmd_rx);
     loops::spawn_acl_loop(engine.clone(), shared.clone(), acl_comp, acl_linker, acl_cmd_rx);
-    loops::spawn_identity_loop(engine.clone(), shared.clone(), identity_comp, generic_linker.clone(), identity_cmd_rx);
+
 
     #[cfg(feature = "messaging")]
     loops::spawn_messaging_loop(engine.clone(), shared.clone(), messaging_comp, generic_linker.clone(), messaging_cmd_rx, profile);

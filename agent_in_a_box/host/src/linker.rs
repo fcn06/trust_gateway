@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use anyhow::{Result, Context};
 
 use crate::shared_state::HostState;
-use crate::commands::{VaultCommand, AclCommand, IdentityCommand, MlsSessionCommand, ContactStoreCommand};
+use crate::commands::{VaultCommand, AclCommand, MlsSessionCommand, ContactStoreCommand};
 use crate::sovereign::gateway::common_types::MlsMessage;
 
 // Helper to bind persistence for specific stores (Vault, ACL, MLS, Contact Store)
@@ -296,26 +296,32 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         }
     })?;
 
-    // === 2. Identity Linker (WebAuthn — Unchanged) ===
+    // === 2. Identity Linker (Host-native — Wasm identity_server removed) ===
     let mut identity_linker = linker.instance("sovereign:gateway/identity")?;
-    
+
+    // NOTE: The identity_server Wasm component has been removed.
+    // WebAuthn is handled natively by the Host (auth/logic.rs).
+    // The WIT identity interface is still imported by the host-orchestrator world,
+    // so we must provide linker bindings. These are now direct implementations.
+
     identity_linker.func_wrap_async("authenticate", |caller, (id,): (String,)| {
         Box::new(Box::pin(async move {
+            // Inline: call VaultCommand::GetActiveDid directly instead of routing through identity loop
+            let shared = caller.data().shared.clone();
             let (tx, rx) = oneshot::channel();
-            let _ = caller.data().shared.identity_cmd_tx.send(IdentityCommand::Authenticate { id: id.clone(), resp: tx }).await;
-            let session = rx.await.unwrap_or(crate::sovereign::gateway::identity::AuthSession { user_id: id, nkey_seed: "FALLBACK".to_string() });
-            Ok((session,))
+            let _ = shared.vault_cmd_tx.send(VaultCommand::GetActiveDid(id.clone(), tx)).await;
+            let nkey_seed = rx.await.unwrap_or_default();
+            Ok((crate::sovereign::gateway::identity::AuthSession {
+                user_id: id,
+                nkey_seed,
+            },))
         }))
     })?;
 
-    identity_linker.func_wrap_async("process-global-login", |_caller, (assertion,): (Vec<u8>,)| {
+    // Global portal has been removed — process-global-login is a no-op error
+    identity_linker.func_wrap_async("process-global-login", |_caller, (_assertion,): (Vec<u8>,)| {
         Box::new(Box::pin(async move {
-            if assertion.is_empty() {
-                Ok((Err::<bool, String>("Empty assertion".to_string()),))
-            } else {
-                tracing::info!("🌐 Processing global login assertion ({} bytes)", assertion.len());
-                Ok((Ok(true),))
-            }
+            Ok((Err::<bool, String>("Global login not supported — global_ssi_portal has been removed".to_string()),))
         }))
     })?;
     

@@ -28,14 +28,6 @@ pub mod messaging_bindgen {
     });
 }
 
-pub mod identity_bindgen {
-    wasmtime::component::bindgen!({
-        world: "identity-server",
-        path: "../wit",
-        async: true,
-    });
-}
-
 pub mod mls_session_bindgen {
     wasmtime::component::bindgen!({
         world: "mls-session-component",

@@ -77,7 +77,18 @@ pub async fn execute_skill(
     // Set working directory to the skill's directory
     cmd.current_dir(&skill.dir);
 
-    // Inject arguments as JSON via env var SKILL_ARGS
+    // ── Security: Clear inherited environment ─────────────────
+    // Prevents skills from reading JWT_SECRET, NATS_URL, or other
+    // service-level secrets. Only explicitly declared env vars
+    // from the skill manifest are injected.
+    cmd.env_clear();
+
+    // Inject minimal safe environment
+    cmd.env("PATH", std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string()));
+    cmd.env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()));
+    cmd.env("LANG", "en_US.UTF-8");
+
+    // Inject structured skill arguments
     let args_json = serde_json::to_string(&req.arguments)?;
     cmd.env("SKILL_ARGS", &args_json);
     cmd.env("SKILL_NAME", &manifest.name);

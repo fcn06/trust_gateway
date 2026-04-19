@@ -5,17 +5,19 @@
 //   vault_loop.rs      — SSI Vault (keys, DIDs, JWTs, connections)
 //   acl_loop.rs        — Access Control List
 //   contact_loop.rs    — Contact Store
-//   identity_loop.rs   — Identity management (global login, auth)
 //   messaging_loop.rs  — DIDComm message handling & agent dispatch
 //   routing.rs         — O(1) NATS wildcard routing & target ID maps
 //   escalation.rs      — MCP escalation, OID4VP, discovery requests
+//
+// NOTE: identity_loop was removed — WebAuthn is handled natively
+//       by the Host (auth/logic.rs). The Wasm identity_server
+//       plugin was vestigial and has been deleted.
 // ─────────────────────────────────────────────────────────────
 
 mod vault_loop;
 mod acl_loop;
 #[cfg(feature = "messaging")]
 mod contact_loop;
-mod identity_loop;
 #[cfg(feature = "messaging")]
 mod messaging_loop;
 #[cfg(feature = "messaging")]
@@ -27,7 +29,7 @@ pub use vault_loop::spawn_vault_loop;
 pub use acl_loop::spawn_acl_loop;
 #[cfg(feature = "messaging")]
 pub use contact_loop::spawn_contact_store_loop;
-pub use identity_loop::spawn_identity_loop;
+
 #[cfg(feature = "messaging")]
 pub use messaging_loop::spawn_messaging_loop;
 #[cfg(feature = "messaging")]
@@ -65,7 +67,7 @@ pub(crate) fn create_store(engine: &Engine, shared: Arc<WebauthnSharedState>) ->
         wasi,
         table: ResourceTable::new(),
         vault: None,
-        identity: None,
+
         messaging: None,
         acl: None,
         mls_session: None,

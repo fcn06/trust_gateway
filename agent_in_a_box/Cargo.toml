@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "identity_server",
     "host",
     "acl_store",
     "ssi_vault",

@@ -525,23 +525,10 @@ pub async fn handle_portal_request(
 
     match category {
         "auth" => {
-            tracing::info!("🌍 Received Global Login Assertion for {}", user_id);
-            let (tx, rx) = oneshot::channel();
-            let _ = shared.identity_cmd_tx.send(crate::commands::IdentityCommand::ProcessGlobalLogin { 
-                assertion: payload, 
-                resp: tx 
-            }).await;
-            
+            // Global portal has been removed — no longer processing global login assertions
+            tracing::warn!("⚠️ Received global login assertion for {} but global_ssi_portal has been removed", user_id);
             if let Some(reply_subject) = reply {
-                let response_payload = match rx.await {
-                    Ok(Ok(true)) => {
-                        tracing::info!("✅ Global Login Verified for {}", user_id);
-                        serde_json::json!({ "status": "success", "message": "Login initiated" })
-                    },
-                    Ok(Ok(false)) => serde_json::json!({ "status": "failure", "message": "Login refused" }),
-                    Ok(Err(e)) => serde_json::json!({ "status": "error", "message": e }),
-                    Err(e) => serde_json::json!({ "status": "error", "message": format!("Channel error: {}", e) }),
-                };
+                let response_payload = serde_json::json!({ "status": "error", "message": "Global login not supported" });
                 let _ = nc.publish(reply_subject, serde_json::to_vec(&response_payload).unwrap().into()).await;
             }
         },

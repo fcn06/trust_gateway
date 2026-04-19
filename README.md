@@ -81,8 +81,9 @@ tier = "tier1"
 
 ### **Critical Environment Variables**
 
-* JWT_SECRET: Shared secret used to sign **Execution Grants**. If an executor receives a call without a valid HMAC signature from this secret, it refuses to run.  
-* NATS_URL: The backbone for real-time audit logs and approval requests.
+* `JWT_SECRET`: **Required.** Shared secret used to sign **Execution Grants**. If an executor receives a call without a valid HMAC signature from this secret, it refuses to run. The `start_dev.sh` script auto-generates a random secret if one is not set in `.env`.
+* `NATS_URL`: The backbone for real-time audit logs and approval requests.
+* `ALLOWED_ORIGINS`: Comma-separated CORS allow-list (default: `http://localhost:8080,http://localhost:8083`). Blanket `Any` is not supported.
 
 ---
 
@@ -91,41 +92,44 @@ tier = "tier1"
 This details how the `native_skill_executor` locally processes requests from the Gateway by spawning bounded, isolated CLI actions:
 
 ```text
-┌─────────────────────────────────────────────────────┐  
-│               TRUST GATEWAY (port 3060)             │  
-│  Validates Request & issues ExecutionGrant JWT      │  
-└────────────────────┬────────────────────────────────┘  
+┌─────────────────────────────────────────────────────┐
+│               TRUST GATEWAY (port 3060)             │
+│  Validates Request & issues ExecutionGrant JWT      │
+└────────────────────┬────────────────────────────────┘
                      │ HTTP POST /invoke
                      │ Payload: { skill_id, args, token }
-┌────────────────────▼────────────────────────────────┐  
-│         NATIVE SKILL EXECUTOR (port 3070)           │  
-│                                                     │  
-│  1. Token Validation: Checks HMAC ExecutionGrant    │  
-│  2. Registry Lookup: Matches `skill_id` to path     │  
-│  3. Env Setup: Injects bounded environment vars     │  
-│                                                     │  
-│  ┌─────────────────────────────────────────────────────┐  │  
-│  │ Local `/skills/` Configuration Map                  │  │  
-│  │                                                     │  │  
-│  │ ├── /claw_extract_content_from_url/                 │  │  
-│  │ │    ├── manifest.json (LLM schema)                 │  │  
-│  │ │    └── run.sh (POST to parsejet.com)              │  │  
-│  │ │                                                   │  │  
-│  └── /claw_weather/                                  │  │  
-│        ├── manifest.json                              │  │  
-│        └── run.sh (Bash Script)                       │  │  
-│  └───────────────────────┬─────────────────────────────┘  │  
-│                          │ `tokio::process::Command`      │  
-│  ┌───────────────────────▼─────────────────────────────┐  │  
-│  │    ISOLATED OS PROCESS (Subprocess Spawn)           │  │  
-│  │  - Receives: `args` via command line/stdin          │  │  
-│  │  - Runs: e.g., `bash run.sh <args>`                 │  │  
-│  │  - Captures: `stdout` and `stderr`                  │  │  
-│  └───────────────────────┬─────────────────────────────┘  │  
-└──────────────────────────┼────────────────────────────────┘  
-                           │ Raw JSON Output Result returned
+┌────────────────────▼────────────────────────────────┐
+│         NATIVE SKILL EXECUTOR (port 3070)           │
+│                                                     │
+│  1. Token Validation: Checks HMAC ExecutionGrant    │
+│  2. Registry Lookup: Matches skill_id to path       │
+│     ✓ Interpreter allow-list (bash, python3, node)  │
+│     ✓ Path traversal prevention (canonicalize)      │
+│  3. Env Setup: env_clear() + declared vars only     │
+│                                                     │
+│  ┌────────────────────────────────────────────────┐  │
+│  │    OS SUBPROCESS (Isolated Environment)        │  │
+│  │  - env_clear(): NO inherited env vars          │  │
+│  │  - Only PATH, HOME + manifest-declared vars    │  │
+│  │  - Bounded timeout (default 30s)               │  │
+│  │  - Captures: stdout and stderr                 │  │
+│  └───────────────────────┬────────────────────────┘  │
+└──────────────────────────┼───────────────────────────┘
+                           │ Raw JSON Output Result
                            ▼
 ```
+
+#### **Security Model: Process Isolation (Not Wasm Sandboxing)**
+
+The Native Skill Executor uses **OS process isolation**, not Wasm sandboxing. Skills are operator-deployed scripts that run as the executor's OS user. The Trust Gateway governs **which** skills can execute and **when** (via policy + execution grants), but does not sandbox the skill's runtime environment.
+
+**Defense-in-depth measures:**
+- `env_clear()` — Scripts cannot read `JWT_SECRET`, `NATS_URL`, or other service secrets. Only explicitly declared env vars from the skill manifest are injected.
+- **Interpreter allow-list** — Only `bash`, `sh`, `python3`, `python`, `node`, `deno`, `ruby` are permitted.
+- **Path traversal prevention** — Canonicalized path check ensures scripts stay within their skill directory.
+- **Execution grants** — Every invocation requires a valid, short-lived (30s) JWT from the Trust Gateway.
+
+> For untrusted skill code, deploy the executor within a container or VM for additional isolation.
 
 ---
 
@@ -172,6 +176,8 @@ When a proposal is received (via MCP, REST, or NATS), the Gateway triggers the *
 ## **🤝 Community vs. Professional**
 
 This repository contains the **Open-Core Community Edition**. It provides the full execution loop, Trust Gateway, and WebAuthn identity system.
+
+**Authentication:** WebAuthn passkey-based authentication, implemented natively in the Host using `webauthn-rs`. No mock challenges — production-grade FIDO2 flows.
 
 Enterprise-grade solution in preparation.
 

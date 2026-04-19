@@ -9,11 +9,6 @@ path = "../target/wasm32-wasip2/release/ssi_vault.wasm"
 enabled = true
 
 [[component]]
-name = "identity_server"
-path = "../target/wasm32-wasip2/release/identity_server.wasm"
-enabled = true
-
-[[component]]
 name = "nats_bridge"
 path = "../target/wasm32-wasip2/release/nats_bridge.wasm"
 enabled = false

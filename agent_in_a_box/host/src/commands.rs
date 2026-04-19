@@ -10,7 +10,6 @@ use tokio::sync::oneshot;
 
 // Re-export generated types from bindgen
 use crate::sovereign::gateway::common_types::{ConnectionPolicy, Permission, DidDocument};
-use crate::sovereign::gateway::identity::AuthSession;
 
 /// Commands for the Vault component (SSI operations, key management).
 pub enum VaultCommand {
@@ -108,18 +107,6 @@ pub enum AclCommand {
         subject: String,
         perm: Permission,
         resp: oneshot::Sender<bool>,
-    },
-}
-
-/// Commands for the Identity component (WebAuthn authentication).
-pub enum IdentityCommand {
-    ProcessGlobalLogin {
-        assertion: Vec<u8>,
-        resp: oneshot::Sender<Result<bool, String>>,
-    },
-    Authenticate {
-        id: String,
-        resp: oneshot::Sender<AuthSession>,
     },
 }
 

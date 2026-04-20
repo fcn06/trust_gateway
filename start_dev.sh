@@ -16,6 +16,11 @@ export JWT_SECRET="${JWT_SECRET:-dev-secret-only-for-local-testing}"
 export LLM_MCP_API_KEY="${LLM_MCP_API_KEY:-}"
 export LLM_A2A_API_KEY="${LLM_A2A_API_KEY:-}"
 
+# Google / OAuth
+export GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+export GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
+export GOOGLE_REDIRECT_URI="${GOOGLE_REDIRECT_URI:-http://localhost:3050/oauth/google/callback}"
+
 # Define edition globally
 export EDITION="${EDITION:-community}"
 
@@ -60,6 +65,10 @@ if [[ "${1:-}" != "--skip-build" ]]; then
     echo "🔨 Building WASM components and services..."
     (cd agent_in_a_box && make build)
 fi
+
+echo "Starting OAuth Connector MCP Server..."
+(cd execution_plane/connector_mcp_server && cargo run --release --bin connector_mcp_server) &
+CONNECTOR_PID=$!
 
 echo "Starting Trust Gateway..."
 (cd execution_plane/trust_gateway && \

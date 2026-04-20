@@ -31,6 +31,12 @@ pub struct AuditEvent {
     pub event_type: AuditEventType,
     /// Structured payload with event-specific data.
     pub payload: serde_json::Value,
+    /// SHA-256 hash of the previous event in the chain (None for genesis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_hash: Option<String>,
+    /// SHA-256 hash of this event's canonical form (for chain verification).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_hash: Option<String>,
 }
 
 /// All possible lifecycle event types in the trust gateway audit trail.
@@ -120,6 +126,8 @@ impl AuditEvent {
             component: component.into(),
             event_type,
             payload,
+            prev_hash: None,
+            event_hash: None,
         }
     }
 

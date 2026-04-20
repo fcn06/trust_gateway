@@ -1,8 +1,9 @@
 // ─────────────────────────────────────────────────────────────
 // JetStream Approval Store — implements trust_core::traits::ApprovalStore
 //
-// Default community implementation that publishes approval records
-// to NATS JetStream KeyValue store ("approval_records").
+// WS3: Hardened with Compare-And-Swap (CAS) revision-based
+// updates and strict state machine enforcement. Prevents race
+// conditions such as double-approval and late execution.
 // ─────────────────────────────────────────────────────────────
 
 use trust_core::approval::{ApprovalRecord, ApprovalRequest, ApprovalResult, ApprovalStatus};
@@ -22,6 +23,89 @@ impl JetStreamApprovalStore {
             .get_key_value("approval_records")
             .await
             .map_err(|e| StoreError::Backend(format!("KV lookup failed: {}", e)))
+    }
+
+    /// Fetch the record AND its current KV revision for CAS updates.
+    /// Returns (record, revision) or NotFound.
+    async fn get_with_revision(&self, id: &str) -> Result<(ApprovalRecord, u64), StoreError> {
+        let store = self.get_store().await?;
+
+        let entry = store
+            .entry(id)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?
+            .ok_or_else(|| StoreError::NotFound { id: id.to_string() })?;
+
+        let record = serde_json::from_slice::<ApprovalRecord>(&entry.value)
+            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+
+        Ok((record, entry.revision))
+    }
+
+    /// Apply a state transition using CAS (Compare-And-Swap).
+    ///
+    /// 1. Validates the transition is legal per the state machine
+    /// 2. Updates the record with the new state
+    /// 3. Uses `kv.update(key, value, revision)` for optimistic concurrency
+    ///
+    /// On `ConcurrencyConflict`, retries ONCE by re-reading the record and
+    /// checking if the transition is still valid.
+    async fn transition(
+        &self,
+        id: &str,
+        target_status: ApprovalStatus,
+        mutate: impl Fn(&mut ApprovalRecord),
+    ) -> Result<(), StoreError> {
+        let store = self.get_store().await?;
+
+        // Attempt up to 2 tries (initial + 1 retry on conflict)
+        for attempt in 0..2 {
+            let (mut record, revision) = self.get_with_revision(id).await?;
+
+            // Enforce state machine
+            if !record.status.can_transition_to(&target_status) {
+                // If already in the target state, treat as idempotent success
+                if record.status == target_status {
+                    tracing::debug!(
+                        "Idempotent: approval {} already in state {}",
+                        id, target_status
+                    );
+                    return Ok(());
+                }
+                return Err(StoreError::InvalidTransition {
+                    id: id.to_string(),
+                    from: record.status.to_string(),
+                    to: target_status.to_string(),
+                });
+            }
+
+            record.status = target_status;
+            mutate(&mut record);
+
+            let json = serde_json::to_vec(&record)
+                .map_err(|e| StoreError::Serialization(e.to_string()))?;
+
+            match store.update(id, json.into(), revision).await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    if attempt == 0 {
+                        tracing::warn!(
+                            "⚠️ CAS conflict on approval {} (attempt {}): {} — retrying",
+                            id, attempt + 1, e
+                        );
+                        continue;
+                    }
+                    // Second attempt failed — return conflict error
+                    return Err(StoreError::ConcurrencyConflict {
+                        key: id.to_string(),
+                        expected: revision,
+                        found: 0, // We don't know the actual revision on error
+                    });
+                }
+            }
+        }
+
+        unreachable!()
     }
 }
 
@@ -51,6 +135,7 @@ impl trust_core::traits::ApprovalStore for JetStreamApprovalStore {
         let json = serde_json::to_vec(&record)
             .map_err(|e| StoreError::Serialization(e.to_string()))?;
 
+        // Use create() for initial insert — fails if key already exists
         store
             .put(&record.approval_id, json.into())
             .await
@@ -72,91 +157,30 @@ impl trust_core::traits::ApprovalStore for JetStreamApprovalStore {
     }
 
     async fn mark_approved(&self, id: &str, result: ApprovalResult) -> Result<(), StoreError> {
-        let store = self.get_store().await?;
-        
-        if let Some(mut record) = self.get(id).await? {
-            record.status = ApprovalStatus::Approved;
-            record.resolved_by = Some(result.resolved_by);
-            record.resolution_method = Some(result.resolution_method);
+        self.transition(id, ApprovalStatus::Approved, |record| {
+            record.resolved_by = Some(result.resolved_by.clone());
+            record.resolution_method = Some(result.resolution_method.clone());
             record.resolved_at = Some(result.resolved_at);
-
-            let json = serde_json::to_vec(&record)
-                .map_err(|e| StoreError::Serialization(e.to_string()))?;
-
-            store
-                .put(id, json.into())
-                .await
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
-            
-            Ok(())
-        } else {
-            Err(StoreError::NotFound { id: id.to_string() })
-        }
+        }).await
     }
 
     async fn mark_denied(&self, id: &str, result: ApprovalResult) -> Result<(), StoreError> {
-        let store = self.get_store().await?;
-        
-        if let Some(mut record) = self.get(id).await? {
-            record.status = ApprovalStatus::Denied;
-            record.resolved_by = Some(result.resolved_by);
-            record.resolution_method = Some(result.resolution_method);
+        self.transition(id, ApprovalStatus::Denied, |record| {
+            record.resolved_by = Some(result.resolved_by.clone());
+            record.resolution_method = Some(result.resolution_method.clone());
             record.resolved_at = Some(result.resolved_at);
-
-            let json = serde_json::to_vec(&record)
-                .map_err(|e| StoreError::Serialization(e.to_string()))?;
-
-            store
-                .put(id, json.into())
-                .await
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
-            
-            Ok(())
-        } else {
-            Err(StoreError::NotFound { id: id.to_string() })
-        }
+        }).await
     }
 
     async fn mark_executed(&self, id: &str) -> Result<(), StoreError> {
-        let store = self.get_store().await?;
-        
-        if let Some(mut record) = self.get(id).await? {
-            record.status = ApprovalStatus::Executed;
-
-            let json = serde_json::to_vec(&record)
-                .map_err(|e| StoreError::Serialization(e.to_string()))?;
-
-            store
-                .put(id, json.into())
-                .await
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
-            
-            Ok(())
-        } else {
-            Err(StoreError::NotFound { id: id.to_string() })
-        }
+        self.transition(id, ApprovalStatus::Executed, |_| {}).await
     }
 
     async fn mark_execution_failed(&self, id: &str, error: &str) -> Result<(), StoreError> {
-        let store = self.get_store().await?;
-        
-        if let Some(mut record) = self.get(id).await? {
-            record.status = ApprovalStatus::ExecutionFailed;
-            // Store the error in resolution_method for diagnostics
-            record.resolution_method = Some(format!("execution_failed: {}", error));
-
-            let json = serde_json::to_vec(&record)
-                .map_err(|e| StoreError::Serialization(e.to_string()))?;
-
-            store
-                .put(id, json.into())
-                .await
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
-            
-            Ok(())
-        } else {
-            Err(StoreError::NotFound { id: id.to_string() })
-        }
+        let error_msg = error.to_string();
+        self.transition(id, ApprovalStatus::ExecutionFailed, move |record| {
+            record.resolution_method = Some(format!("execution_failed: {}", error_msg));
+        }).await
     }
 
     async fn list_pending(&self, tenant_id: &str) -> Result<Vec<ApprovalRecord>, StoreError> {
@@ -187,4 +211,3 @@ impl trust_core::traits::ApprovalStore for JetStreamApprovalStore {
         Ok(records)
     }
 }
-

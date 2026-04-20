@@ -388,6 +388,41 @@ pub async fn process_action(
                 }),
             ).await;
 
+            // ── Bridge to Host escalation store ─────────────
+            // The portal reads pending approvals from the Host's
+            // `escalation_requests` KV store (not the gateway's
+            // `approval_records`). Publish an escalation request
+            // to the Host so it appears in the portal.
+            let escalation_payload = serde_json::json!({
+                "tool_name": action_name,
+                "user_did": action_req.actor.owner_did,
+                "requester_did": action_req.actor.requester_did,
+                "correlation_id": approval_id,
+                "original_arguments": action_req.action.arguments,
+                "tier": format!("{}", tier),
+                "reason": reason,
+                "approval_id": approval_id,
+            });
+            match state.nats.request(
+                "host.v1.escalation.request".to_string(),
+                serde_json::to_string(&escalation_payload)
+                    .unwrap_or_default()
+                    .into(),
+            ).await {
+                Ok(_ack) => {
+                    tracing::info!(
+                        "📩 Escalation request published to Host (approval_id: {})",
+                        approval_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️ Failed to publish escalation to Host (portal may not show it): {}",
+                        e
+                    );
+                }
+            }
+
             Ok(GatewayResponse {
                 action_id,
                 status: "pending_approval".to_string(),
@@ -600,17 +635,30 @@ pub async fn run_nats_listener(
                         // so the Agent receives raw tool output, not gateway metadata.
                         let content = gw_resp.result.unwrap_or_else(|| {
                             if gw_resp.status == "pending_approval" || gw_resp.status == "pending_proof" {
-                                serde_json::json!([{"type": "text", "text": "Action execution paused pending user approval."}])
+                                serde_json::json!([{"type": "text", "text": format!(
+                                    "⏳ ACTION BLOCKED — This action requires human approval before it can execute. \
+                                     The approval request has been created (approval_id: {}). \
+                                     The user must approve this action in their Local SSI Portal before it will be executed. \
+                                     DO NOT tell the user the action was completed. Tell them it is PENDING APPROVAL.",
+                                    gw_resp.approval_id.as_deref().unwrap_or("unknown")
+                                )}])
                             } else {
                                 serde_json::json!([{"type": "text", "text": "No tool content available"}])
                             }
                         });
+
+                        // For pending_approval, mark as error so the agent doesn't
+                        // treat it as a successful execution
+                        let is_error = gw_resp.status == "failed"
+                            || gw_resp.status == "denied"
+                            || gw_resp.status == "pending_approval"
+                            || gw_resp.status == "pending_proof";
                         
                         serde_json::json!({
                             "tool_name": payload.tool_name,
                             "result": {
                                 "content": content,
-                                "is_error": gw_resp.status == "failed" || gw_resp.status == "denied",
+                                "is_error": is_error,
                             },
                             "verified_did": payload.verified_did,
                             "escalation": gw_resp.escalation,

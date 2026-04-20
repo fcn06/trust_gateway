@@ -205,6 +205,20 @@ pub struct EscalationRequest {
     /// Enriched approval payload from Trust Gateway (ActionReview with business diff, risk, etc.)
     #[serde(default)]
     pub action_review: Option<serde_json::Value>,
+    // ── Conversation context for post-execution notification ──
+    /// Thread ID of the conversation that triggered this escalation.
+    /// Used to route the execution result back to the correct chat thread.
+    #[serde(default)]
+    pub conversation_thid: Option<String>,
+    /// DID of the user who sent the original message (the sender in the chat).
+    #[serde(default)]
+    pub conversation_sender_did: Option<String>,
+    /// Institutional DID of the agent that handled the tool call.
+    #[serde(default)]
+    pub conversation_inst_did: Option<String>,
+    /// Host user_id of the agent owner (needed for process_send_message_logic).
+    #[serde(default)]
+    pub conversation_user_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

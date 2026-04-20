@@ -30,30 +30,9 @@ use commands::{VaultCommand, AclCommand};
 use dto::IncomingMessage;
 use shared_state::{WebauthnSharedState, CliArgs};
 
-// Top-level bindgen for generated host traits (if any left used by main? No, bindings.rs has them)
-// However, linker.rs uses bindgen traits.
-// We need to ensure the `bindgen!` macro in `bindings.rs` generates the `sovereign` module at the root if configured so,
-// OR we use the one in `bindings.rs`.
-// `bindgen!` generates a `sovereign` module in the scope it is called.
-// If called in `bindings.rs/vault_bindgen`, it generates `vault_bindgen::sovereign`.
-// This might be tricky if `HostState` needs to implement traits from DIFFERENT bindgen calls that share types.
-// But we used `bindgen!` in `main.rs` (lines 52-65) with `interfaces: "import ..."` for the HOST implementation.
-// AND we used separate `bindgen!` calls for each component world in submodules.
-// We need that top-level bindgen for the Linker to work with `func_wrap` mostly?
-// Actually `func_wrap` doesn't strictly need bindgen traits if we use raw signatures, but `bindgen!` helps.
-// Wait, `linker.rs` implementation uses `func_wrap_async`. It does NOT use `Linker<HostState>::instantiate` of a bindgen trait.
-// It uses `linker.instance(...)?.func_wrap_async(...)`. This is "untyped" (stringly typed) binding.
-// So we might NOT need the top-level bindgen! if we are doing manual `func_wrap`s.
-// BUT `bindgen!` also generates types like `Permission`.
-// We need those types.
-// `bindings::acl_bindgen::sovereign::gateway::common_types::Permission` exists.
-// We can use that.
-
-// However, `main.rs` had a top-level `bindgen!` (lines 52-65) which generated `sovereign` module in `crate`.
-// `handlers/api.rs` uses `crate::sovereign::gateway::common_types::Permission`.
-// So we MUST have `sovereign` module at `crate::sovereign`.
-// I will invoke the `bindgen!` macro here in `main.rs` to generate `sovereign` module at crate root level, 
-// to satisfy existing imports in `handlers/api.rs`, `logic.rs`, etc.
+// Top-level `bindgen!` generates the `crate::sovereign` module required by
+// `handlers/api.rs`, `logic.rs`, etc. for shared WIT types (e.g. `Permission`,
+// `ConnectionPolicy`). Component-specific bindgen calls live in `bindings.rs`.
 
 wasmtime::component::bindgen!({
     interfaces: "
@@ -148,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         oid4vp_rsa_pem: std::env::var("OID4VP_RSA_PEM")
             .unwrap_or_default()
             .replace("\\n", "\n"),
+        active_conversations: Mutex::new(HashMap::new()),
     });
 
     // 7. Wasm Engine & Linker
@@ -232,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "messaging")]
     auth::subscribe_to_global_logins(shared.clone()).await;
     loops::subscribe_to_escalation_requests(shared.clone());
+    loops::subscribe_to_escalation_results(shared.clone());
     loops::subscribe_to_discovery_requests(shared.clone());
     loops::spawn_mcp_escalation_loop(shared.clone());
     handlers::oid4vp::subscribe_oid4vp_get_request(shared.clone());
@@ -267,14 +248,6 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/link-remote", post(auth::link_remote_access_handler))
         .route("/api/recovery", post(auth::set_recovery_config_handler))
-        // Wait, I didn't verify mcp_handler in api.rs. 
-        // I should check handlers/api.rs content. 
-        // Logic suggests it should be there. If not, I'll need to add it.
-        // I will assume it is NOT there based on my create call (Step 120 only showed contact/msg handlers).
-        // I'll add a dummy or fix it later. For now let's comment out if unsure, or Assume I added it.
-        // Actually, let's leave it and if it fails I'll fix imports.
-        // Better: check api.rs first? No, I want to finish main.rs.
-        // I'll add mcp_handler to the routes assuming I will ensure it exists.
         .nest("/api/webauthn", auth_routes)
         .route("/api/identities", post(handlers::api::create_identity_handler).get(handlers::api::list_identities_handler))
         .route("/api/identities/generate_did_web", post(handlers::api::generate_did_web_handler))

@@ -117,9 +117,38 @@ async fn main() -> Result<()> {
         }
     };
 
+    // ── WS1: Build grant validator (Ed25519 preferred, HMAC fallback) ──
+    let grant_validator = {
+        if let Ok(key_path) = std::env::var("GRANT_VERIFY_KEY_PATH") {
+            match std::fs::read_to_string(&key_path) {
+                Ok(pem) => {
+                    // Try dual mode first (Ed25519 + HMAC for migration)
+                    match grant_validator::GrantValidator::dual(&pem, &args.jwt_secret) {
+                        Ok(v) => {
+                            tracing::info!("✅ Ed25519 + HMAC grant validation enabled (dual mode)");
+                            v
+                        }
+                        Err(e) => {
+                            tracing::warn!("⚠️ Ed25519+HMAC dual mode failed ({}), trying Ed25519 only", e);
+                            grant_validator::GrantValidator::from_ed25519_pem(&pem)
+                                .expect("Failed to load Ed25519 public key")
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Cannot read key file {}: {} — using HMAC only", key_path, e);
+                    grant_validator::GrantValidator::from_hmac_secret(&args.jwt_secret)
+                }
+            }
+        } else {
+            tracing::info!("ℹ️ Using HMAC grant validation (set GRANT_VERIFY_KEY_PATH for Ed25519)");
+            grant_validator::GrantValidator::from_hmac_secret(&args.jwt_secret)
+        }
+    };
+
     let state = Arc::new(ExecutorState {
         skill_registry,
-        grant_validator: grant_validator::GrantValidator::new(&args.jwt_secret),
+        grant_validator,
         exec_timeout: std::time::Duration::from_secs(args.exec_timeout),
         nats: nats_client.clone(),
     });

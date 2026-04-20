@@ -35,18 +35,7 @@ pub async fn populate_target_id_map(shared: Arc<WebauthnSharedState>) {
 
     // 2. For each user, get DIDs -> Compute Target ID -> Insert to Map
     let mut count = 0;
-    // We need to access blind data. We can't decrypt it easily without Vault logic.
-    // BUT, we don't need to decrypt the DIDs if we can't.
-    // Wait, 'user_dids:{userid}' is blind encrypted. Host cannot read it without Vault.
-    // This is a problem. Host cannot populate map without Vault help.
-    
-    // SOLUTION: Use Vault to list identities?
-    // We cannot call Vault Wasm here easily without an instance.
-    // But we are in `loops.rs` where we spawn Vault loop.
-    // We can send `VaultCommand::ListIdentities` for each user.
-    // BUT `ListIdentities` requires a `resp` channel.
-    
-    // We will spawn a task to do this via Vault Loop.
+    // DID data is blind-encrypted in KV — resolve via VaultCommand::ListIdentities.
     for user_id in user_ids {
         let (tx, rx) = oneshot::channel();
         if shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id.clone(), tx)).await.is_ok() {

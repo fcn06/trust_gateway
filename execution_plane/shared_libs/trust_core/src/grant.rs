@@ -33,6 +33,10 @@ pub struct ExecutionGrant {
     pub clearance: GrantClearance,
     /// Expiry timestamp (Unix epoch seconds). Typically now + 30s.
     pub expires_at: i64,
+    /// Key ID of the signing key. Used for key rotation — verifiers
+    /// resolve the correct public key by this ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kid: Option<String>,
 }
 
 /// How an execution grant was obtained — tracks the provenance of the

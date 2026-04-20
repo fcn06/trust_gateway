@@ -685,15 +685,7 @@ pub async fn process_accept_invitation_logic(
     tracing::info!("✅ [ACL] Connection Policy Updated for {} (Identity: {})", target_did, my_did);
     
     // Step 2: Send "invitation_accepted" message back to inviter
-    let _accept_msg = format!("requesting acceptance for invitation {}", invitation_id);
-    // Actually we need to send typed message. process_send_message_logic accepts generic body.
-    // The "invitation_accepted" message type is handled by process_send_message logic via manual construction?
-    // No, process_send_message_logic wraps in PlainDidcomm.
-    // In main.rs, process_accept_invitation_logic manually constructed the message with "https://didcomm.org/invitation/1.0/accepted" type.
-    // We should replicate that here, OR reuse process_send_message_logic if it supports custom types.
-    // Yes it does support 'typ'.
-    
-    // Actually, process_accept_invitation_logic in main.rs (line 4160) constructs body: {"accepter_did": "..."}
+    // Send typed "invitation_accepted" DIDComm message back to the inviter.
     let body = format!("{{\"accepter_did\":\"{}\"}}", my_did);
     return process_send_message_logic(shared, user_id, None, target_did, body, "https://didcomm.org/invitation/1.0/accepted".to_string(), Some(invitation_id)).await;
 }
@@ -745,12 +737,7 @@ pub async fn accept_invitation_handler(
     }
 }
 
-// Additional handlers like create_identity, list_identities etc should also be here or in auth.rs.
-// Given auth.rs is for "Authentication", "Identity" handlers might belong there or here.
-// But `create_identity_handler` is used in registration flow logic? No, registration flow calls logic.
-// Handlers are for API.
-// `create_identity` is `vault` related.
-// Let's put remaining handlers here.
+// ── Identity & Vault handlers ──────────────────────────────
 
 pub async fn create_identity_handler(
     headers: HeaderMap,
@@ -1297,12 +1284,7 @@ pub async fn get_active_did_handler(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let claims = extract_claims(&shared, &headers).await?;
-    // We can use resolve_active_did_for_user which checks Vault via loop OR checks global cache if any.
-    // resolve_active_did_for_user in auth.rs uses VaultCommand::GetActiveDid internally (Step 20: auth.rs line 21 calls Vault command).
-    // Wait, let's Verify resolve_active_did_for_user implementation.
-    // Reuse logic if it sends command.
-    
-    // Direct command sending:
+
     let (tx, rx) = oneshot::channel();
     let _ = shared.vault_cmd_tx.send(VaultCommand::GetActiveDid(claims.user_id, tx)).await;
     let did = rx.await.unwrap_or_default();
@@ -1598,13 +1580,8 @@ pub async fn receive_didcomm_http_wrapper(
 ) -> Response {
     tracing::info!("📥 [HTTP] Received DIDComm envelope for subject: {}", subject);
 
-    // If we have NATS, we publish to the subject so the subscriber loops pick it up
+    // Forward to NATS using the O(1) wildcard subject format: v1.{node_id}.didcomm.{subject}
     if let Some(nc) = &shared.nats {
-        // The subject provided in URL is just the suffix (the hash). We need to reconstruct the full subject?
-        // Wait, the logic.rs/publish_to_dht used: format!("{}/messaging/{}", base_url, subject)
-        // And subscribe_to_did_didcomm subscribes to: format!("v1.didcomm.{}", compute_local_subject(...))
-        // The `subject` in the URL *is* the `compute_local_subject` result.
-        // Match the O(1) Wildcard Subscription subject format: v1.{node_id}.didcomm.{subject}
         let node_id = crate::logic::compute_node_id(&shared.house_salt);
         let nats_subject = format!("v1.{}.didcomm.{}", node_id, subject);
         
@@ -1758,6 +1735,24 @@ pub async fn approve_escalation_handler(
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
         tracing::info!("✅ Published escalation approval for tool '{}' to {}", request.tool_name, request.nats_reply_subject);
+
+        // ── Bridge approval to Trust Gateway via NATS ────────
+        // The gateway's approval_daemon watches its `approval_records`
+        // KV. Publish the decision so the gateway updates its store
+        // and triggers execution.
+        let decision_payload = serde_json::json!({
+            "approval_id": req_id,
+            "decision": "approve",
+            "resolved_by": claims.user_id,
+        });
+        if let Err(e) = nats.publish(
+            "gateway.v1.approval.decision".to_string(),
+            serde_json::to_string(&decision_payload).unwrap_or_default().into(),
+        ).await {
+            tracing::warn!("⚠️ Failed to publish approval decision to gateway: {}", e);
+        } else {
+            tracing::info!("📩 Bridged approval to gateway via NATS (approval_id: {})", req_id);
+        }
     }
 
     // Update status
@@ -1809,6 +1804,21 @@ pub async fn deny_escalation_handler(
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
         tracing::info!("🚫 Published escalation denial for tool '{}' to {}", request.tool_name, request.nats_reply_subject);
+
+        // ── Bridge denial to Trust Gateway via NATS ──────────
+        let decision_payload = serde_json::json!({
+            "approval_id": req_id,
+            "decision": "deny",
+            "resolved_by": claims.user_id,
+        });
+        if let Err(e) = nats.publish(
+            "gateway.v1.approval.decision".to_string(),
+            serde_json::to_string(&decision_payload).unwrap_or_default().into(),
+        ).await {
+            tracing::warn!("⚠️ Failed to publish denial decision to gateway: {}", e);
+        } else {
+            tracing::info!("📩 Bridged denial to gateway via NATS (approval_id: {})", req_id);
+        }
     }
 
     // Update status

@@ -141,3 +141,50 @@ pub struct ApprovalResult {
     /// When the decision was made.
     pub resolved_at: chrono::DateTime<chrono::Utc>,
 }
+
+impl ApprovalStatus {
+    /// Returns the set of valid target states from this status.
+    ///
+    /// Enforces a strict state machine:
+    /// ```text
+    /// Pending       → Approved | Denied | Expired
+    /// PendingProof  → Approved | Denied | Expired
+    /// Approved      → Executed | ExecutionFailed
+    /// Denied        → (terminal)
+    /// Expired       → (terminal)
+    /// Executed      → (terminal)
+    /// ExecutionFailed → (terminal)
+    /// ```
+    pub fn valid_transitions(&self) -> &'static [ApprovalStatus] {
+        match self {
+            Self::Pending => &[Self::Approved, Self::Denied, Self::Expired],
+            Self::PendingProof => &[Self::Approved, Self::Denied, Self::Expired],
+            Self::Approved => &[Self::Executed, Self::ExecutionFailed],
+            Self::Denied | Self::Expired | Self::Executed | Self::ExecutionFailed => &[],
+        }
+    }
+
+    /// Whether this status is a terminal (final) state.
+    pub fn is_terminal(&self) -> bool {
+        self.valid_transitions().is_empty()
+    }
+
+    /// Check if transitioning to `target` is valid.
+    pub fn can_transition_to(&self, target: &ApprovalStatus) -> bool {
+        self.valid_transitions().contains(target)
+    }
+}
+
+impl std::fmt::Display for ApprovalStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::PendingProof => write!(f, "pending_proof"),
+            Self::Approved => write!(f, "approved"),
+            Self::Denied => write!(f, "denied"),
+            Self::Expired => write!(f, "expired"),
+            Self::Executed => write!(f, "executed"),
+            Self::ExecutionFailed => write!(f, "execution_failed"),
+        }
+    }
+}

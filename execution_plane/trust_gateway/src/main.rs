@@ -107,6 +107,26 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     tracing::info!("🚀 Trust Gateway starting...");
+
+    // ── WS6: Dev-secret detection guard ─────────────────────
+    // Refuse to start with the known dev secret unless explicitly
+    // in development mode. Prevents accidental production deployment.
+    let lianxi_env = std::env::var("LIANXI_ENV").unwrap_or_else(|_| "development".to_string());
+    if args.jwt_secret.contains("dev-secret") && lianxi_env != "development" {
+        tracing::error!(
+            "🚨 CRITICAL: JWT_SECRET contains the known dev secret but LIANXI_ENV={}. \
+             Refusing to start. Set a strong secret via: export JWT_SECRET=$(openssl rand -base64 32)",
+            lianxi_env
+        );
+        std::process::exit(1);
+    }
+    if args.jwt_secret.contains("dev-secret") {
+        tracing::warn!(
+            "⚠️ Using development JWT secret — NOT suitable for production. \
+             Set JWT_SECRET to a strong random value and LIANXI_ENV=production for deployment."
+        );
+    }
+
     tracing::info!("   NATS URL:          {}", args.nats_url);
     tracing::info!("   HTTP Listen:       {}", args.listen);
     tracing::info!("   Policy:            {}", args.policy_path);
@@ -217,10 +237,43 @@ async fn main() -> Result<()> {
     agent_registry::bootstrap_from_toml_direct(&js, &args.agents_path).await;
     tracing::info!("✅ Agent Registry initialized");
 
+    // ── WS1: Build grant issuer (Ed25519 preferred, HMAC fallback) ──
+    let grant_issuer: Arc<dyn trust_core::traits::GrantIssuer> = {
+        if let Ok(key_path) = std::env::var("GRANT_SIGNING_KEY_PATH") {
+            // Ed25519 asymmetric signing — private key stays in the gateway
+            match std::fs::read_to_string(&key_path) {
+                Ok(pem) => {
+                    let kid = std::env::var("GRANT_SIGNING_KEY_ID")
+                        .unwrap_or_else(|_| "gateway-ed25519-1".to_string());
+                    match grant::Ed25519GrantIssuer::from_pem(&pem, kid.clone()) {
+                        Ok(issuer) => {
+                            tracing::info!("✅ Ed25519 grant signing enabled (kid={})", kid);
+                            Arc::new(issuer)
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to load Ed25519 key from {}: {}", key_path, e);
+                            tracing::warn!("⚠️ Falling back to HMAC grant signing");
+                            Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret))
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("❌ Cannot read Ed25519 key file {}: {}", key_path, e);
+                    tracing::warn!("⚠️ Falling back to HMAC grant signing");
+                    Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret))
+                }
+            }
+        } else {
+            // Legacy HMAC signing
+            tracing::info!("ℹ️ Using HMAC grant signing (set GRANT_SIGNING_KEY_PATH for Ed25519)");
+            Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret))
+        }
+    };
+
     // Build shared gateway state
     let state = Arc::new(GatewayState {
         policy_engine: Arc::new(policy_engine),
-        grant_issuer: Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret)),
+        grant_issuer,
         audit_sink,
         approval_store,
         agent_registry,
@@ -323,6 +376,7 @@ async fn main() -> Result<()> {
 
     // Spawn the asynchronous supervisor daemon for outbox processing
     approval_daemon::spawn_execution_daemon(state.clone()).await;
+    approval_daemon::spawn_decision_listener(state.clone()).await;
 
     // Build and run HTTP server with graceful shutdown
     let app = api::build_router(state);

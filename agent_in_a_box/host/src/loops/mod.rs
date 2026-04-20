@@ -34,7 +34,7 @@ pub use contact_loop::spawn_contact_store_loop;
 pub use messaging_loop::spawn_messaging_loop;
 #[cfg(feature = "messaging")]
 pub use routing::{populate_target_id_map, subscribe_to_node_wildcard};
-pub use escalation::{spawn_mcp_escalation_loop, subscribe_to_escalation_requests, subscribe_to_discovery_requests};
+pub use escalation::{spawn_mcp_escalation_loop, subscribe_to_escalation_requests, subscribe_to_discovery_requests, subscribe_to_escalation_results};
 
 use std::sync::Arc;
 use wasmtime::{Engine, Store};

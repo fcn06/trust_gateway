@@ -9,8 +9,14 @@ if [ -f .env ]; then
     set +a
 fi
 
-# Default development secret for Trust Gateway & Host
-export JWT_SECRET="${JWT_SECRET:-dev-secret-only-for-local-testing}"
+# JWT_SECRET: REQUIRED. Must be shared across trust_gateway, native_skill_executor,
+# and the host. Generate a random one if not set in .env.
+if [ -z "${JWT_SECRET:-}" ]; then
+    export JWT_SECRET=$(openssl rand -base64 32)
+    echo "🔐 Generated random JWT_SECRET (set JWT_SECRET in .env for persistence)"
+else
+    export JWT_SECRET
+fi
 
 # LLM API Keys (sourced from environment or .env)
 export LLM_MCP_API_KEY="${LLM_MCP_API_KEY:-}"
@@ -25,6 +31,20 @@ export GOOGLE_REDIRECT_URI="${GOOGLE_REDIRECT_URI:-http://localhost:3050/oauth/g
 export EDITION="${EDITION:-community}"
 
 export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:8083,http://127.0.0.1:8083}"
+
+# ── WS1: Ed25519 Grant Signing Keys ──────────────────────
+ROOT_DIR=$(pwd)
+KEYS_DIR="${ROOT_DIR}/.keys"
+mkdir -p "$KEYS_DIR"
+
+if [ ! -f "$KEYS_DIR/grant_signing.pem" ]; then
+    echo "🔑 Generating Ed25519 key pair for grant signing..."
+    openssl genpkey -algorithm Ed25519 -out "$KEYS_DIR/grant_signing.pem" 2>/dev/null
+    openssl pkey -in "$KEYS_DIR/grant_signing.pem" -pubout -out "$KEYS_DIR/grant_verify.pem" 2>/dev/null
+fi
+export GRANT_SIGNING_KEY_PATH="$KEYS_DIR/grant_signing.pem"
+export GRANT_VERIFY_KEY_PATH="$KEYS_DIR/grant_verify.pem"
+export GRANT_SIGNING_KEY_ID="${GRANT_SIGNING_KEY_ID:-gateway-ed25519-1}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -73,6 +93,8 @@ CONNECTOR_PID=$!
 echo "Starting Trust Gateway..."
 (cd execution_plane/trust_gateway && \
     POLICY_PATH="../../agent_in_a_box/host/config/policy.toml" \
+    GRANT_SIGNING_KEY_PATH="$GRANT_SIGNING_KEY_PATH" \
+    GRANT_SIGNING_KEY_ID="$GRANT_SIGNING_KEY_ID" \
     cargo run --release --bin trust_gateway) &
 GATEWAY_PID=$!
 

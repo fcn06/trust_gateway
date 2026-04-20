@@ -14,8 +14,100 @@
 
 use std::sync::Arc;
 use crate::gateway::GatewayState;
-use trust_core::approval::{ApprovalRecord, ApprovalStatus};
+use trust_core::approval::{ApprovalRecord, ApprovalResult, ApprovalStatus};
 use trust_core::audit::AuditEventType;
+
+/// Spawn a NATS listener for approval decisions from the Host portal.
+///
+/// The Host publishes to `gateway.v1.approval.decision` when a user
+/// approves or denies an escalation request in the portal. This listener
+/// updates the gateway's `approval_records` KV, which triggers the
+/// KV watcher in `spawn_execution_daemon` to execute the action.
+pub async fn spawn_decision_listener(state: Arc<GatewayState>) {
+    let nc = state.nats.clone();
+    let state = state.clone();
+
+    tokio::spawn(async move {
+        let subject = "gateway.v1.approval.decision";
+        let mut sub = match nc.subscribe(subject.to_string()).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("❌ Failed to subscribe to {}: {}", subject, e);
+                return;
+            }
+        };
+        tracing::info!("📬 Approval decision listener subscribed to {}", subject);
+
+        use futures::StreamExt;
+        while let Some(msg) = sub.next().await {
+            let payload: serde_json::Value = match serde_json::from_slice(&msg.payload) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("⚠️ Invalid approval decision payload: {}", e);
+                    continue;
+                }
+            };
+
+            let approval_id = match payload["approval_id"].as_str() {
+                Some(id) => id.to_string(),
+                None => {
+                    tracing::warn!("⚠️ Missing approval_id in decision payload");
+                    continue;
+                }
+            };
+
+            let decision = payload["decision"].as_str().unwrap_or("unknown");
+            let resolved_by = payload["resolved_by"].as_str().unwrap_or("portal_user").to_string();
+
+            let result = ApprovalResult {
+                resolved_by: resolved_by.clone(),
+                resolution_method: "portal_click".to_string(),
+                notes: None,
+                resolved_at: chrono::Utc::now(),
+            };
+
+            match decision {
+                "approve" => {
+                    match state.approval_store.mark_approved(&approval_id, result).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "✅ Approval {} marked as Approved via NATS (by: {})",
+                                approval_id, resolved_by
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "⚠️ Failed to mark approval {} as Approved: {}",
+                                approval_id, e
+                            );
+                        }
+                    }
+                }
+                "deny" => {
+                    match state.approval_store.mark_denied(&approval_id, result).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "🚫 Approval {} marked as Denied via NATS (by: {})",
+                                approval_id, resolved_by
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "⚠️ Failed to mark approval {} as Denied: {}",
+                                approval_id, e
+                            );
+                        }
+                    }
+                }
+                other => {
+                    tracing::warn!("⚠️ Unknown decision '{}' for approval {}", other, approval_id);
+                }
+            }
+        }
+
+        tracing::warn!("⚠️ Approval decision NATS listener ended unexpectedly");
+    });
+}
 
 /// Spawn a background daemon to execute actions asynchronously once they are approved.
 pub async fn spawn_execution_daemon(state: Arc<GatewayState>) {
@@ -118,6 +210,29 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
     let tenant_id = record.tenant_id.clone();
     let action_req = record.action_request.clone();
 
+    // WS3.3: Pre-check — re-read from store to confirm still in Approved state.
+    // Prevents double-execution when multiple daemon instances or KV watcher
+    // replays trigger on the same record.
+    match state.approval_store.get(&approval_id).await {
+        Ok(Some(current)) => {
+            if current.status != trust_core::approval::ApprovalStatus::Approved {
+                tracing::info!(
+                    "⏭️ Daemon skipping {} — status already changed to {}",
+                    approval_id, current.status
+                );
+                return;
+            }
+        }
+        Ok(None) => {
+            tracing::warn!("⚠️ Daemon: approval {} not found — skipping", approval_id);
+            return;
+        }
+        Err(e) => {
+            tracing::error!("❌ Daemon: failed to re-read approval {}: {}", approval_id, e);
+            return;
+        }
+    }
+
     // Determine clearance from approval tier
     let clearance = match record.tier {
         trust_core::approval::ApprovalTier::Tier2ReAuthenticate => {
@@ -135,9 +250,11 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
         Ok(g) => g,
         Err(e) => {
             tracing::error!("Daemon failed to issue grant for {}: {}", action_id, e);
-            let _ = state.approval_store.mark_execution_failed(
+            if let Err(mark_err) = state.approval_store.mark_execution_failed(
                 &approval_id, &format!("Grant issuance failed: {}", e)
-            ).await;
+            ).await {
+                tracing::error!("Failed to mark {} as execution_failed: {}", approval_id, mark_err);
+            }
             return;
         }
     };
@@ -158,9 +275,26 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
         Ok(action_result) => {
             tracing::info!("✅ Daemon completed execution for {} (connector: {})", action_id, action_result.connector);
             
-            // Mark as Executed BEFORE auditing (idempotency first)
-            if let Err(e) = state.approval_store.mark_executed(&approval_id).await {
-                tracing::error!("Failed to mark {} as executed: {}", approval_id, e);
+            // Mark as Executed (CAS-protected — prevents double-execution)
+            match state.approval_store.mark_executed(&approval_id).await {
+                Ok(_) => {},
+                Err(trust_core::errors::StoreError::InvalidTransition { .. }) => {
+                    tracing::warn!(
+                        "⏭️ Approval {} already transitioned — skipping post-execution audit",
+                        approval_id
+                    );
+                    return;
+                }
+                Err(trust_core::errors::StoreError::ConcurrencyConflict { .. }) => {
+                    tracing::warn!(
+                        "⚠️ CAS conflict marking {} as executed — another instance handled it",
+                        approval_id
+                    );
+                    return;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to mark {} as executed: {}", approval_id, e);
+                }
             }
 
             crate::audit_sink::emit_audit(
@@ -172,7 +306,7 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
                 })
             ).await;
 
-            // Publish result to NATS so any waiting agent gets notified
+            // Publish result to NATS so the Host can notify the user
             let result_msg = serde_json::json!({
                 "tool_name": action_req.action.name,
                 "result": {
@@ -182,16 +316,27 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
                 "action_id": action_id,
                 "approval_id": approval_id,
                 "status": "succeeded",
+                "owner_did": action_req.actor.owner_did,
+                "requester_did": action_req.actor.requester_did,
             });
+            // Notify both the generic result channel and the Host notification channel
             let subject = format!("gateway.v1.action.result.{}", action_id);
             if let Ok(payload) = serde_json::to_vec(&result_msg) {
-                let _ = state.nats.publish(subject, payload.into()).await;
+                let _ = state.nats.publish(subject, payload.clone().into()).await;
+                let _ = state.nats.publish(
+                    "host.v1.escalation.result".to_string(),
+                    payload.into(),
+                ).await;
+                tracing::info!(
+                    "📩 Published execution result to host.v1.escalation.result (tool: {}, owner: {})",
+                    action_req.action.name, action_req.actor.owner_did
+                );
             }
         }
         Err(e) => {
             tracing::error!("❌ Daemon execution failed for {}: {}", action_id, e);
             
-            // Mark as failed (prevents retry loops)
+            // Mark as failed (CAS-protected — prevents overwriting terminal states)
             if let Err(mark_err) = state.approval_store.mark_execution_failed(
                 &approval_id, &format!("{}", e)
             ).await {

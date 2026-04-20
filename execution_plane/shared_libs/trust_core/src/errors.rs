@@ -31,6 +31,10 @@ pub enum StoreError {
     Backend(String),
     #[error("serialization error: {0}")]
     Serialization(String),
+    #[error("concurrency conflict on key {key}: expected revision {expected}, found {found}")]
+    ConcurrencyConflict { key: String, expected: u64, found: u64 },
+    #[error("invalid state transition for {id}: {from} → {to}")]
+    InvalidTransition { id: String, from: String, to: String },
 }
 
 /// Error from the GrantIssuer.

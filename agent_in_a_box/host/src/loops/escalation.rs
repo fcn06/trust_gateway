@@ -233,6 +233,16 @@ pub fn subscribe_to_escalation_requests(shared: Arc<WebauthnSharedState>) {
                     // Determine initial status based on proof requirement
                     let initial_status = if proof_required { "PENDING_PROOF" } else { "PENDING" };
 
+                    // Lookup conversation context from active_conversations map
+                    // (populated by messaging_loop before agent dispatch)
+                    let conv_ctx = {
+                        if let Ok(map) = shared.active_conversations.lock() {
+                            map.get(&requester_did).cloned()
+                        } else {
+                            None
+                        }
+                    };
+
                     // Store in KV
                     let request = crate::dto::EscalationRequest {
                         id: correlation_id.clone(),
@@ -251,6 +261,10 @@ pub fn subscribe_to_escalation_requests(shared: Arc<WebauthnSharedState>) {
                         approved_by: None,
                         proof_verification: None,
                         action_review,
+                        conversation_thid: conv_ctx.as_ref().map(|c| c.thid.clone()),
+                        conversation_sender_did: conv_ctx.as_ref().map(|c| c.sender_did.clone()),
+                        conversation_inst_did: conv_ctx.as_ref().map(|c| c.inst_did.clone()),
+                        conversation_user_id: conv_ctx.as_ref().map(|c| c.user_id.clone()),
                     };
 
                     if let Some(kv_stores) = &shared.kv_stores {
@@ -385,6 +399,139 @@ pub fn subscribe_to_discovery_requests(shared: Arc<WebauthnSharedState>) {
             }
             Err(e) => {
                 tracing::error!("❌ Failed to subscribe to discovery requests: {}", e);
+            }
+        }
+    });
+}
+
+/// Subscribes to execution results from the Trust Gateway daemon.
+///
+/// After the daemon dispatches an approved action (e.g., Google Calendar create),
+/// it publishes the result to `host.v1.escalation.result`. This listener
+/// looks up the original conversation context from the escalation request and
+/// delivers the result as a proper DIDComm message in the same chat thread.
+pub fn subscribe_to_escalation_results(shared: Arc<WebauthnSharedState>) {
+    let Some(nats) = shared.nats.clone() else {
+        tracing::warn!("⚠️ Cannot subscribe to escalation results: NATS not available");
+        return;
+    };
+
+    tokio::spawn(async move {
+        let subject = "host.v1.escalation.result";
+        tracing::info!("📬 Subscribing to escalation results on: {}", subject);
+
+        match nats.subscribe(subject.to_string()).await {
+            Ok(mut sub) => {
+                while let Some(msg) = sub.next().await {
+                    let parsed: serde_json::Value = match serde_json::from_slice(&msg.payload) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!("⚠️ Failed to parse escalation result: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let tool_name = parsed["tool_name"].as_str().unwrap_or("unknown");
+                    let status = parsed["status"].as_str().unwrap_or("unknown");
+                    let approval_id = parsed["approval_id"].as_str().unwrap_or("");
+                    let result_content = parsed["result"]["content"].clone();
+
+                    tracing::info!(
+                        "📩 Escalation result: tool='{}', status='{}', approval_id='{}'",
+                        tool_name, status, approval_id
+                    );
+
+                    // Look up the stored EscalationRequest to get conversation context
+                    let escalation = if let Some(kv) = shared.kv_stores.as_ref()
+                        .and_then(|m| m.get("escalation_requests"))
+                    {
+                        if let Ok(Some(entry)) = kv.get(approval_id).await {
+                            serde_json::from_slice::<crate::dto::EscalationRequest>(&entry).ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let Some(esc) = escalation else {
+                        tracing::warn!(
+                            "⚠️ Could not find escalation request for approval_id '{}' — cannot route notification",
+                            approval_id
+                        );
+                        continue;
+                    };
+
+                    // Extract conversation context (stored deterministically by subscribe_to_escalation_requests)
+                    let (thid, sender_did, inst_did, user_id) = match (
+                        &esc.conversation_thid,
+                        &esc.conversation_sender_did,
+                        &esc.conversation_inst_did,
+                        &esc.conversation_user_id,
+                    ) {
+                        (Some(t), Some(s), Some(i), Some(u)) => {
+                            (t.clone(), s.clone(), i.clone(), u.clone())
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "⚠️ Escalation '{}' missing conversation context — cannot route notification",
+                                approval_id
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Build notification text
+                    let notification_text = if status == "succeeded" {
+                        let output_summary = if let Some(arr) = result_content.as_array() {
+                            arr.iter()
+                                .filter_map(|item| item["text"].as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        } else if let Some(s) = result_content.as_str() {
+                            s.to_string()
+                        } else {
+                            result_content.to_string()
+                        };
+
+                        if output_summary.is_empty() || output_summary == "null" {
+                            format!("✅ Your approved action '{}' has been executed successfully.", tool_name)
+                        } else {
+                            format!("✅ Your approved action '{}' has been executed successfully.\n\nResult:\n{}", tool_name, output_summary)
+                        }
+                    } else {
+                        format!("❌ Your approved action '{}' failed during execution. Status: {}", tool_name, status)
+                    };
+
+                    // Send via process_send_message_logic — same path as normal agent replies.
+                    // This ensures the message appears in the correct conversation thread.
+                    let body_json = serde_json::json!({ "content": notification_text });
+                    match crate::handlers::api::process_send_message_logic(
+                        shared.clone(),
+                        user_id.clone(),
+                        Some(inst_did.clone()),
+                        sender_did.clone(),
+                        body_json.to_string(),
+                        "https://didcomm.org/message/2.0/chat".to_string(),
+                        Some(thid.clone()),
+                    ).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                "💬 Execution result delivered to {} in thread {} (tool: {})",
+                                sender_did, thid, tool_name
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "❌ Failed to deliver execution result to {}: {:?}",
+                                sender_did, e
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to subscribe to escalation results: {}", e);
             }
         }
     });

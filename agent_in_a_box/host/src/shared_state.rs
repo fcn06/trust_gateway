@@ -127,6 +127,19 @@ pub struct WebauthnSharedState {
     pub connections_kv: async_nats::jetstream::kv::Store,
     pub oid4vp_client_id: String,
     pub oid4vp_rsa_pem: String,
+    /// Active conversation contexts, keyed by requester_did.
+    /// Populated by messaging_loop before agent dispatch, consumed by escalation listener.
+    pub active_conversations: Mutex<HashMap<String, ConversationContext>>,
+}
+
+/// Conversation context stored during agent dispatch for deterministic
+/// escalation notification routing.
+#[derive(Debug, Clone)]
+pub struct ConversationContext {
+    pub thid: String,
+    pub sender_did: String,
+    pub inst_did: String,
+    pub user_id: String,
 }
 
 impl WebauthnSharedState {
@@ -174,6 +187,7 @@ impl WebauthnSharedState {
                 .unwrap_or_default()
                 // If loaded via `.env` as a single literal line for multiline PEMs, fix escapes:
                 .replace("\\n", "\n"),
+            active_conversations: Mutex::new(HashMap::new()),
         }
     }
 }

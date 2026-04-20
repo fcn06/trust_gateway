@@ -119,32 +119,65 @@ pub async fn execute_skill(
         effective_timeout,
     );
 
-    // Spawn with timeout
-    let child = cmd.spawn()?;
+    // ── WS7: Process group isolation ──────────────────────────
+    // Spawn the child in its own process group (setsid) so that
+    // SIGKILL on timeout kills the entire subprocess tree, not
+    // just the top-level process.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::unistd::setsid()
+                    .map(|_| ())
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            });
+        }
+    }
 
-    let result = tokio::time::timeout(effective_timeout, child.wait_with_output()).await;
+    // Pipe stdout/stderr so we can capture them while retaining
+    // ownership of the child handle for timeout kill.
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
 
-    match result {
-        Ok(Ok(output)) => {
-            let exit_code = output.status.code();
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let mut child = cmd.spawn()?;
+    let child_pid = child.id();
 
-            let success = output.status.success();
+    // Take the stdout/stderr handles before waiting
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    // Wait with timeout — child.wait() borrows &mut, so we keep ownership
+    let wait_result = tokio::time::timeout(effective_timeout, child.wait()).await;
+
+    match wait_result {
+        Ok(Ok(status)) => {
+            // Process exited within timeout — read captured output
+            let stdout = if let Some(mut h) = stdout_handle {
+                let mut buf = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut h, &mut buf).await.ok();
+                String::from_utf8_lossy(&buf).to_string()
+            } else { String::new() };
+
+            let stderr = if let Some(mut h) = stderr_handle {
+                let mut buf = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut h, &mut buf).await.ok();
+                String::from_utf8_lossy(&buf).to_string()
+            } else { String::new() };
+
+            let exit_code = status.code();
+            let success = status.success();
 
             if !stderr.is_empty() {
                 tracing::debug!("Skill '{}' stderr: {}", manifest.name, stderr);
             }
 
-            // Try to parse stdout as JSON, fall back to string
             let output_value = serde_json::from_str::<serde_json::Value>(&stdout)
                 .unwrap_or_else(|_| serde_json::Value::String(stdout.trim().to_string()));
 
             tracing::info!(
                 "🦞 Skill '{}' completed: success={}, exit_code={:?}",
-                manifest.name,
-                success,
-                exit_code
+                manifest.name, success, exit_code
             );
 
             Ok(InvokeResponse {
@@ -159,8 +192,33 @@ pub async fn execute_skill(
         Ok(Err(e)) => {
             Err(anyhow::anyhow!("Failed to execute skill '{}': {}", manifest.name, e))
         }
-        Err(_) => {
-            tracing::error!("⏰ Skill '{}' timed out after {:?}", manifest.name, effective_timeout);
+        Err(_timeout) => {
+            // ── WS7: Kill-on-timeout ────────────────────────────
+            // The timeout fired. Kill the entire process group to
+            // prevent orphaned subprocesses from lingering.
+            tracing::error!(
+                "⏰ Skill '{}' timed out after {:?} — killing process group",
+                manifest.name, effective_timeout
+            );
+
+            #[cfg(unix)]
+            if let Some(pid) = child_pid {
+                use nix::sys::signal::{kill, Signal};
+                use nix::unistd::Pid;
+                let pgid = Pid::from_raw(-(pid as i32));
+                if let Err(e) = kill(pgid, Signal::SIGKILL) {
+                    tracing::warn!(
+                        "⚠️ Failed to kill process group {} for skill '{}': {}",
+                        pid, manifest.name, e
+                    );
+                }
+            }
+
+            // Fallback: direct kill (also handles non-Unix)
+            let _ = child.kill().await;
+            // Reap the zombie to prevent resource leaks
+            let _ = child.wait().await;
+
             Ok(InvokeResponse {
                 action_id,
                 success: false,

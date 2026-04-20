@@ -100,7 +100,20 @@ pub fn spawn_messaging_loop(
                                                                                 if text_msg.is_empty() { text_msg = body_str; }
                                                                                 let inst_did_clone = first_recipient.clone();
                                                                                 let thid_clone = dto.thid.clone().or_else(|| Some(msg_id.clone()));
-                                                                                 let thid_to_pass = thid_clone.clone();
+                                                                                let thid_to_pass = thid_clone.clone();
+
+                                                                                // Register conversation context for deterministic escalation routing
+                                                                                {
+                                                                                    if let Ok(mut map) = shared_clone.active_conversations.lock() {
+                                                                                        map.insert(sender_clone.clone(), crate::shared_state::ConversationContext {
+                                                                                            thid: thid_to_pass.clone().unwrap_or_default(),
+                                                                                            sender_did: sender_clone.clone(),
+                                                                                            inst_did: inst_did_clone.clone(),
+                                                                                            user_id: user_clone.clone(),
+                                                                                        });
+                                                                                    }
+                                                                                }
+
                                                                                 tokio::spawn(async move {
                                                                                      match crate::handlers::agent::dispatch_to_ssi_agent(
                                                                                          shared_clone.clone(),
@@ -129,17 +142,26 @@ pub fn spawn_messaging_loop(
                                                                                              
                                                                                              let body_json = serde_json::json!({ "content": final_text });
                                                                                              let _ = crate::handlers::api::process_send_message_logic(
-                                                                                                 shared_clone,
+                                                                                                 shared_clone.clone(),
                                                                                                  user_clone,
                                                                                                  Some(inst_did_clone),
-                                                                                                 sender_clone,
+                                                                                                 sender_clone.clone(),
                                                                                                  body_json.to_string(),
                                                                                                  "https://didcomm.org/message/2.0/chat".to_string(),
                                                                                                  thid_clone
                                                                                              ).await;
+
+                                                                                             // Clean up conversation context after dispatch
+                                                                                             if let Ok(mut map) = shared_clone.active_conversations.lock() {
+                                                                                                 map.remove(&sender_clone);
+                                                                                             }
                                                                                          }
                                                                                          Err((status, err_msg)) => {
                                                                                              tracing::error!("Agent dispatch failed ({}): {}", status, err_msg);
+                                                                                             // Clean up on error too
+                                                                                             if let Ok(mut map) = shared_clone.active_conversations.lock() {
+                                                                                                 map.remove(&sender_clone);
+                                                                                             }
                                                                                          }
                                                                                      }
                                                                                  });

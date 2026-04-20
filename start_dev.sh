@@ -16,11 +16,25 @@ export JWT_SECRET="${JWT_SECRET:-dev-secret-only-for-local-testing}"
 export LLM_MCP_API_KEY="${LLM_MCP_API_KEY:-}"
 export LLM_A2A_API_KEY="${LLM_A2A_API_KEY:-}"
 
-# Define community edition globally
-export EDITION="community"
+# Define edition globally
+export EDITION="${EDITION:-community}"
 
-export CARGO_FEATURES=""
-echo "🌍 Selected Edition: Community"
+for arg in "$@"; do
+    case "$arg" in
+        --skip-build) : ;;
+        community)    EDITION="community" ;;
+        professional) EDITION="professional" ;;
+        entreprise)   EDITION="entreprise" ;;
+    esac
+done
+
+if [ "$EDITION" = "community" ]; then
+    export CARGO_FEATURES=""
+else
+    export CARGO_FEATURES="--features messaging"
+fi
+
+echo "🌍 Selected Edition: $EDITION"
 
 # Verify prerequisites
 if ! command -v trunk &> /dev/null; then

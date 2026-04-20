@@ -22,7 +22,7 @@ Existing security frameworks are designed for humans or static service accounts.
 | **Policy Engine** | Priority-ordered, TOML-based rules (Allow, Require Approval, Deny). |
 | **Execution Grants** | Short-lived (30s), scoped JWTs that follow Zero Trust principles. |
 | **Human-in-the-Loop** | Interrupts risky calls with **Plain-Language Diffs** for manual approval. |
-| **The Claw Method** | High-performance, isolated OS process execution for local scripts. |
+| **The Claw Method** | High-performance, isolated OS process execution for local scripts.The community edition uses OS process isolation. Wasm sandboxed execution is available in the enterprise edition. |
 | **Transport Normalizer** | Unified handling of HTTP, NATS, and MCP tool calls. |
 | **Standalone Registry** | Autonomous tool discovery from connectors and native skills. |
 
@@ -50,7 +50,6 @@ The native_skill_executor (Port 3070) spawns bounded, isolated sub-processes. It
 ### **Prerequisites**
 
 * **Rust** 1.75+  
-* **Wasmtime**
 * **NATS Server** (with JetStream enabled: nats-server -js)  
 * **Trunk** (for the Web UI: cargo install --locked trunk)
 

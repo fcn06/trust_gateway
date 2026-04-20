@@ -19,6 +19,8 @@ export LLM_A2A_API_KEY="${LLM_A2A_API_KEY:-}"
 # Define edition globally
 export EDITION="${EDITION:-community}"
 
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:8083,http://127.0.0.1:8083}"
+
 for arg in "$@"; do
     case "$arg" in
         --skip-build) : ;;
@@ -60,11 +62,15 @@ if [[ "${1:-}" != "--skip-build" ]]; then
 fi
 
 echo "Starting Trust Gateway..."
-(cd execution_plane/trust_gateway && cargo run --release --bin trust_gateway) &
+(cd execution_plane/trust_gateway && \
+    POLICY_PATH="../../agent_in_a_box/host/config/policy.toml" \
+    cargo run --release --bin trust_gateway) &
 GATEWAY_PID=$!
 
 echo "Starting Agent in a Box Host..."
-(cd agent_in_a_box/host && cargo run --release ${CARGO_FEATURES} --bin host) &
+(cd agent_in_a_box/host && \
+    POLICY_PATH="config/policy.toml" \
+    cargo run --release ${CARGO_FEATURES} --bin host) &
 HOST_PID=$!
 
 echo "Starting Local SSI Portal..."

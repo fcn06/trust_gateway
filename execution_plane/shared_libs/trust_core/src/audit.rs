@@ -86,6 +86,11 @@ pub enum AuditEventType {
     ActionFailed,
     /// A dispatch attempt failed and is being retried.
     ActionRetried,
+
+    // ── Security events ──
+
+    /// An ExecutionGrant JWT was replayed (same JTI presented twice).
+    GrantReplayBlocked,
 }
 
 impl std::fmt::Display for AuditEventType {
@@ -104,6 +109,7 @@ impl std::fmt::Display for AuditEventType {
             Self::ActionSucceeded => "action.succeeded",
             Self::ActionFailed => "action.failed",
             Self::ActionRetried => "action.retried",
+            Self::GrantReplayBlocked => "grant.replay_blocked",
         };
         write!(f, "{}", s)
     }

@@ -35,8 +35,8 @@ pub use proof::{ProofCallback, ProofChallenge, ProofRequest, ProofResult, ProofT
 pub use skill::{ExecutorType, SkillAction, SkillManifest};
 pub use agent::{AgentRecord, AgentType, AgentEnvironment, AgentStatus, RegisterAgentRequest, UpdateAgentRequest};
 pub use traits::{
-    AgentRegistry, ApprovalStore, AuditSink, ConnectorDispatcher, GrantIssuer, PolicyEngine,
-    ProofVerifier,
+    AgentRegistry, ApprovalStore, AuditSink, ConnectorDispatcher, GrantIssuer, NonceStore,
+    PolicyEngine, ProofVerifier,
 };
 
 /// Monetary value with currency code (ISO 4217).

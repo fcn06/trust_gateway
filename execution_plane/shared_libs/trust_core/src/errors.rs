@@ -90,3 +90,12 @@ pub enum AuditError {
     #[error("serialization error: {0}")]
     Serialization(String),
 }
+
+/// Error from the NonceStore (JTI replay prevention).
+#[derive(Debug, Error)]
+pub enum NonceError {
+    #[error("JTI already consumed: {jti}")]
+    AlreadyConsumed { jti: String },
+    #[error("nonce store backend error: {0}")]
+    Backend(String),
+}

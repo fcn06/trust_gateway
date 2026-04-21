@@ -142,6 +142,26 @@ pub trait AuditSink: Send + Sync {
     async fn publish(&self, event: AuditEvent) -> Result<(), AuditError>;
 }
 
+// ── Nonce Store (JTI Replay Prevention) ────────────────
+
+/// A consume-once nonce store for ExecutionGrant JTI replay prevention.
+///
+/// Each grant_id (JTI) may only be consumed once within a TTL window.
+/// Implementations must be safe for concurrent access.
+///
+/// The primary implementation is an in-memory HashMap with TTL-based
+/// auto-expiry. For horizontally scaled executors, a NATS KV-backed
+/// implementation can be substituted without changing call sites.
+#[async_trait::async_trait]
+pub trait NonceStore: Send + Sync {
+    /// Attempt to consume a nonce. Returns Ok(()) if it has never been
+    /// consumed before, or Err(NonceError::AlreadyConsumed) if it has.
+    ///
+    /// Implementations should auto-expire entries after `ttl` to bound
+    /// memory usage.
+    async fn consume(&self, jti: &str, ttl: std::time::Duration) -> Result<(), NonceError>;
+}
+
 // ── Agent Registry ─────────────────────────────────────
 
 /// Manages the lifecycle of registered agents.

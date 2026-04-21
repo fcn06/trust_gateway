@@ -1,7 +1,12 @@
 # AI Agents Trust Gateway — Community Edition
 
-> **The execution control plane for the agentic era.** 
+> **The execution control plane for the agentic era.**  
 > Built in Rust. Runs self-hosted. No cloud dependency.
+
+[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
+[![NATS](https://img.shields.io/badge/NATS-JetStream-green?logo=nats.io)](https://nats.io)
+[![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20Streamable-purple)](https://modelcontextprotocol.io)
 
 ---
 
@@ -9,26 +14,27 @@
 
 Your AI agent just sent an email to the wrong client. Or called a payment API with hallucinated parameters. Or deleted records that a hundred downstream processes depend on.
 
-This isn't a model quality problem. It's an architecture problem.
+This isn't a model quality problem. **It's an architecture problem.**
 
-Existing security frameworks were built for two kinds of actors: **humans** and **static service accounts**. Neither model fits an autonomous agent — an actor with dynamic intent, no fixed permission scope, and the ability to chain dozens of tool calls whose combined effect is invisible from any individual operation.
+Existing security frameworks were built for two kinds of actors: humans and static service accounts. Neither model fits an autonomous agent — an actor with dynamic intent, no fixed permission scope, and the ability to chain dozens of tool calls whose combined effect is invisible from any individual operation.
 
 **Trust Gateway solves this** by inserting a deterministic governance layer between your agents and your business systems. Every agentic intent is treated as a *proposed action* until it clears a cryptographic and policy hurdle. Nothing executes unless the gateway says so.
 
 ---
 
-## What Makes This Different
+## Why This Exists
 
 Most "AI gateway" projects are reverse proxies with rate limiting bolted on. Trust Gateway is an **execution control plane** — a fundamentally different architecture:
 
 | Concern | Typical API Gateway | Trust Gateway |
 |---|---|---|
 | Unit of control | HTTP request | Proposed Action (intent) |
-| Trust model | Network perimeter | Cryptographic execution grant |
+| Trust model | Network perimeter | Cryptographic execution grant (Ed25519 JWT) |
 | Policy | Allow/deny by route | Allow / Require Approval / Deny by identity + operation |
 | Human oversight | None | First-class human-in-the-loop primitive |
 | Audit | Access logs | Durable, replayable JetStream event trail |
 | Identity | API key / token | DID + WebAuthn passkey (FIDO2) |
+| Replay prevention | None | JTI nonce store — each grant consumed exactly once |
 | Skill runtime | N/A | OS process isolation (Wasm sandboxing in Enterprise) |
 
 ---
@@ -44,7 +50,7 @@ User Intent
 Host Orchestrator  ←── WebAuthn / DID identity
     │
     ▼
-Execution Orchestrator
+Execution Orchestrator (ssi_agent / External Swarm)
     │
     ▼
 ┌─────────────────────────────────────┐
@@ -56,6 +62,7 @@ Execution Orchestrator
 │     (Ed25519 or HMAC-SHA256 JWT)    │
 │  4. Audit event → JetStream         │
 │  5. Human approval (if required)    │
+│  6. JTI replay prevention           │
 └──────────────┬──────────────────────┘
                │  Signed ExecutionGrant
                ▼
@@ -132,14 +139,18 @@ effect = "deny"
 **2. Execution Grants** — When an action is approved, the gateway issues a short-lived (30s), cryptographically signed JWT scoped to that specific action. Executors validate the grant before running anything. No valid grant = no execution, even with direct network access to an executor.
 
 Grant signing supports two modes:
-- **Ed25519** (preferred): set `GRANT_SIGNING_KEY_PATH`. Private key stays in the gateway; executors only need the public key.
+- **Ed25519** (preferred): set `GRANT_SIGNING_KEY_PATH`. Private key stays in the gateway; executors only need the public key — they cannot mint grants.
 - **HMAC-SHA256** (fallback): symmetric shared secret via `JWT_SECRET`.
+
+Each grant carries a unique `grant_id` (JWT `jti` claim). Executors enforce **consume-once semantics** via a `NonceStore` — a replayed grant is rejected even within its 30s TTL. Replay attempts are logged as `GrantReplayBlocked` audit events.
 
 The gateway refuses to start with a known dev secret outside of `LIANXI_ENV=development` — a hard guard against accidental production misconfiguration.
 
 **3. Human-in-the-Loop** — High-risk operations are interrupted for manual approval. The agent waits. A named human operator reviews a plain-language summary and approves or denies. The approval event is logged with the approver's identity. This is a first-class primitive, not an afterthought.
 
-**4. Audit Trail** — Every step — proposal received, policy evaluated, grant issued, execution result, human approval — is written to a durable NATS JetStream stream with 90-day retention. An audit projector builds queryable timelines from the event log. The record answers: *what did the agent try to do, what did the gateway permit, who approved it, and what was the outcome?*
+**4. Audit Trail** — Every step — proposal received, policy evaluated, grant issued, execution result, human approval, replay blocked — is written to a durable NATS JetStream stream with 90-day retention. An audit projector builds queryable timelines from the event log. The record answers: *what did the agent try to do, what did the gateway permit, who approved it, and what was the outcome?*
+
+The gateway uses deterministic graceful shutdown (`CancellationToken` + `TaskTracker`) with a final `nc.flush().await` to guarantee audit events are never lost — even during deployments or restarts.
 
 **5. Circuit Breakers** — Per-connector circuit breakers (5-failure threshold, 30s recovery window) prevent a degraded downstream service from cascading into gateway failures.
 
@@ -149,9 +160,9 @@ The gateway speaks three transports natively:
 
 - **MCP over SSE** at `/v1/mcp/sse` — the recommended integration path for any MCP-compatible agent
 - **HTTP REST** at `/v1/actions/propose`
-- **NATS** subject `mcp.v1.dispatch.>` for backward compatibility
+- **NATS** subject `mcp.v1.dispatch.>` for internal orchestration
 
-All three paths flow through the same governance pipeline.
+All three paths flow through the same governance pipeline. No transport gets a shortcut.
 
 ### "The Claw" — Native Skill Execution
 
@@ -159,11 +170,11 @@ The `native_skill_executor` runs operator-deployed scripts as bounded OS subproc
 
 ```
 TRUST GATEWAY
-  └── issues ExecutionGrant JWT
+  └── issues ExecutionGrant JWT (Ed25519 or HMAC)
         │
         ▼
 NATIVE SKILL EXECUTOR
-  1. Validates HMAC ExecutionGrant
+  1. Validates ExecutionGrant (signature + expiry + JTI nonce)
   2. Resolves skill_id → script path
      ✓ Interpreter allow-list (bash, python3, node, deno, ruby)
      ✓ Path traversal prevention (canonicalized paths)
@@ -173,7 +184,7 @@ NATIVE SKILL EXECUTOR
   5. Captures stdout/stderr → JSON result
 ```
 
-> **Community edition**: OS process isolation. 
+> **Community edition**: OS process isolation.  
 > **Enterprise edition**: Wasm sandboxed execution for fully untrusted skill code.
 
 ---
@@ -182,13 +193,13 @@ NATIVE SKILL EXECUTOR
 
 ### Prerequisites
 
-- **Rust** 1.75+
-- **Wasmtime** 25+ with Component Model support (`cargo install wasmtime-cli`) 
-- **target wasm32-wasip2 , to build wasm components** (`rustup target add wasm32-wasip2` )
+- **Rust** 1.75+ (`rustup` recommended)
+- **Wasmtime** 25+ with Component Model support (`cargo install wasmtime-cli`)
+- **Wasm target**: `rustup target add wasm32-wasip2`
 - **NATS Server** with JetStream: `nats-server -js`
 - **Trunk** for the Web UI: `cargo install --locked trunk`
 
-### Run
+### Build & Run
 
 ```bash
 git clone https://github.com/fcn06/trust_gateway.git
@@ -199,11 +210,14 @@ make build
 
 The `start_dev.sh` script auto-generates a random `JWT_SECRET` if one is not set in `.env`.
 
-Once running, open the **Local SSI Portal** at **[http://localhost:8080/](http://localhost:8080/)** — a WebAuthn-authenticated web interface for identity management, messaging, agent interaction, and approval workflows.
+Once running, open the **Local SSI Portal** at **[http://localhost:8080/](http://localhost:8080/)** — a WebAuthn-authenticated web interface for identity management, agent interaction, and approval workflows.
 
 ### Verify
 
 ```bash
+# Check the gateway is up
+curl http://localhost:3060/health
+
 # List available tools
 curl http://localhost:3060/v1/tools/list
 
@@ -267,19 +281,22 @@ priority = 30
 ## Repository Structure
 
 ```
-trust_gateway/
+lianxi-community/
 ├── execution_plane/
-│   ├── trust_gateway/          # The gateway — policy engine, grant issuance, audit
+│   ├── trust_gateway/            # Policy engine, grant issuance, audit, graceful shutdown
+│   ├── native_skill_executor/    # "The Claw" — OS process skill runner + JTI nonce store
+│   ├── connector_mcp_server/     # OAuth2 MCP connector (Google, Stripe, Shopify)
 │   └── shared_libs/
-│       ├── trust_core/         # Shared traits: AuditSink, ApprovalStore, GrantIssuer
-│       ├── trust_policy/       # TOML policy engine
-│       ├── identity_context/   # JWT + DID identity resolution
-│       └── ssi_mcp_runtime/    # MCP transport runtime
+│       ├── trust_core/           # Domain types: ExecutionGrant, NonceStore, AuditEvent
+│       ├── trust_policy/         # TOML policy engine
+│       └── identity_context/     # JWT + DID identity resolution
 ├── agent_in_a_box/
-│   └── host/                   # Wasm Component Model host — WebAuthn, SSI vault, ACL
+│   └── host/                     # Wasm Component Model host — WebAuthn, SSI vault, ACL
+├── agents/
+│   └── ssi_agent/                # A2A agent with MCP runtime
 ├── portals/
-│   └── local_ssi_portal/       # Web UI (Trunk/WASM frontend)
-└── platform/                   # Connector implementations
+│   └── local_ssi_portal/         # Web UI — Trunk/WASM frontend (port 8080)
+└── platform/                     # Infrastructure (tenant registry, public gateway)
 ```
 
 ---
@@ -294,10 +311,25 @@ trust_gateway/
 | HTTP client | reqwest (rustls backend) | Pure-Rust TLS — no OpenSSL/C-library attack surface |
 | Messaging | NATS + JetStream | Durable audit, fan-out, KV store — without Kafka overhead |
 | Wasm runtime | Wasmtime (Component Model) | Sandboxed identity/crypto primitives via WIT interfaces |
-| JWT | jwt-simple (pure-rust) | No OpenSSL dependency |
+| JWT | jwt-simple (pure-rust) | Ed25519 + HMAC-SHA256 grant signing, no C dependencies |
 | Identity | WebAuthn / webauthn-rs | Production FIDO2 — no mock auth |
 | MCP | rmcp 1.3 | Native MCP over SSE |
 | Shutdown | tokio-util CancellationToken | Deterministic task cancellation and NATS flush on shutdown |
+
+---
+
+## Security Properties
+
+The Trust Gateway was designed with production-grade security from day one:
+
+| Property | How |
+|---|---|
+| **No silent fallbacks** | All listen address parsing uses `.expect()` — misconfigured bindings crash at startup, not silently bind to `0.0.0.0` |
+| **No C-library TLS** | `reqwest` uses `rustls` backend — eliminating OpenSSL's C attack surface |
+| **No deadlocks under load** | All shared state uses `tokio::sync::RwLock` — no synchronous locks held across `.await` points |
+| **No lost audit events** | Graceful shutdown with `CancellationToken` + `TaskTracker` + `nc.flush().await` before exit |
+| **No grant replay** | JTI nonce store enforces consume-once semantics on every ExecutionGrant |
+| **No dev secrets in production** | The gateway refuses to start with known dev secrets when `LIANXI_ENV=production` |
 
 ---
 
@@ -306,13 +338,15 @@ trust_gateway/
 | Feature | Community | Enterprise |
 |---|---|---|
 | Policy engine (Allow/Deny/Approve) | ✅ | ✅ |
-| Ed25519 execution grants | ✅ | ✅ |
+| Ed25519 + HMAC execution grants | ✅ | ✅ |
+| JTI replay prevention (NonceStore) | ✅ | ✅ |
 | Human-in-the-loop approvals | ✅ | ✅ |
 | JetStream audit trail (90 days) | ✅ | ✅ |
 | WebAuthn / FIDO2 identity | ✅ | ✅ |
 | MCP + HTTP + NATS transports | ✅ | ✅ |
 | Circuit breakers per connector | ✅ | ✅ |
 | OS process isolation (The Claw) | ✅ | ✅ |
+| Deterministic graceful shutdown | ✅ | ✅ |
 | Wasm sandboxed skill execution | ❌ | ✅ |
 | Multi-tenancy | ❌ | ✅ |
 | Attribute-based policy (ABAC) | ❌ | ✅ |
@@ -324,7 +358,6 @@ trust_gateway/
 
 The project is at an early but technically substantive stage. Contributions are welcome, particularly in these areas:
 
-- **Asymmetric JWT nonce store** — JTI replay prevention within the 30s execution grant window
 - **Policy expression language** — attribute-based contextual rules (time-of-day, value thresholds)
 - **CI pipeline** — `cargo test` + `cargo clippy` on push
 - **Docker Compose** — single-command dev environment including NATS

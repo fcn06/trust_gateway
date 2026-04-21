@@ -37,6 +37,7 @@ dotenvy = "0.15"
 glob = "0.3"
 async-nats = "0.38"
 futures = "0.3"
+async-trait = "0.1"
 
 # Unix process management (WS7: kill-on-timeout cleanup)
 [target.'cfg(unix)'.dependencies]

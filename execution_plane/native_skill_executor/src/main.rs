@@ -15,6 +15,7 @@
 mod executor;
 mod registry;
 mod grant_validator;
+mod nonce_store;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -146,6 +147,13 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Attach JTI replay prevention nonce store
+    let nonce_store: Arc<dyn trust_core::traits::NonceStore> = Arc::new(
+        nonce_store::InMemoryNonceStore::new()
+    );
+    let grant_validator = grant_validator.with_nonce_store(nonce_store);
+    tracing::info!("✅ JTI replay prevention enabled (in-memory nonce store)");
+
     let state = Arc::new(ExecutorState {
         skill_registry,
         grant_validator,
@@ -230,7 +238,7 @@ async fn invoke_handler(
 
     // 1. Validate ExecutionGrant
     if let Some(ref grant_token) = req.execution_grant {
-        match state.grant_validator.validate(grant_token) {
+        match state.grant_validator.validate(grant_token).await {
             Ok(grant) => {
                 // Verify the grant is for the requested action
                 if grant.allowed_action != req.skill_name {

@@ -2057,6 +2057,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats 0.38.0",
+ "async-trait",
  "axum 0.7.9",
  "chrono",
  "clap",

@@ -340,9 +340,10 @@ pub async fn process_send_message_logic(
         // --- LOCAL NATS SHORTCUT ---
         // If the recipient is on the same host, publish directly to NATS.
         let target_id = crate::logic::compute_local_subject(&recipient, &shared.house_salt);
-        let is_local = if let Ok(map) = shared.target_id_map.lock() {
+        let is_local = {
+            let map = shared.target_id_map.read().await;
             map.contains_key(&target_id)
-        } else { false };
+        };
 
         if is_local {
             if let Some(nc) = &shared.nats {

@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use std::collections::{HashMap, HashSet};
 use clap::Parser;
 use tokio::sync::mpsc;
@@ -102,9 +103,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. Shared State
     let shared = Arc::new(WebauthnSharedState {
-        registration_sessions: Mutex::new(HashMap::new()),
-        authentication_sessions: Mutex::new(HashMap::new()),
-        user_credentials: Mutex::new(HashMap::new()),
+        registration_sessions: RwLock::new(HashMap::new()),
+        authentication_sessions: RwLock::new(HashMap::new()),
+        user_credentials: RwLock::new(HashMap::new()),
         vault_cmd_tx: vault_cmd_tx.clone(),
         messaging_cmd_tx: messaging_cmd_tx.clone(),
         acl_cmd_tx: acl_cmd_tx.clone(),
@@ -116,9 +117,9 @@ async fn main() -> anyhow::Result<()> {
         kv_stores: Some(kv_stores.clone()),
         jwt_key,
         config: config.clone(),
-        active_subscriptions: Mutex::new(HashSet::new()),
-        target_id_map: Mutex::new(HashMap::new()),
-        portal_id_map: Mutex::new(HashMap::new()),
+        active_subscriptions: RwLock::new(HashSet::new()),
+        target_id_map: RwLock::new(HashMap::new()),
+        portal_id_map: RwLock::new(HashMap::new()),
         house_salt: keys.house_salt,
         gateway_url: config.gateway_url.clone(),
         connections_kv: kv_stores.get("tenant_connections").cloned().expect("Connections KV missing"),
@@ -127,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
         oid4vp_rsa_pem: std::env::var("OID4VP_RSA_PEM")
             .unwrap_or_default()
             .replace("\\n", "\n"),
-        active_conversations: Mutex::new(HashMap::new()),
+        active_conversations: RwLock::new(HashMap::new()),
     });
 
     // 7. Wasm Engine & Linker
@@ -305,7 +306,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors);
 
     // 12. Run Server
-    let addr: std::net::SocketAddr = config.api_listen_url.parse().unwrap_or_else(|_| "0.0.0.0:3000".parse().unwrap());
+    let addr: std::net::SocketAddr = config.api_listen_url.parse().expect("Invalid api_listen_url provided in configuration");
     tracing::info!("🚀 Host listening on {}", addr);
     
     let listener = tokio::net::TcpListener::bind(addr).await?;

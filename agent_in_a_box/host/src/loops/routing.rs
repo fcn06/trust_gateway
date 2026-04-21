@@ -40,7 +40,7 @@ pub async fn populate_target_id_map(shared: Arc<WebauthnSharedState>) {
         let (tx, rx) = oneshot::channel();
         if shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id.clone(), tx)).await.is_ok() {
             if let Ok(dids) = rx.await {
-                let mut map = shared.target_id_map.lock().unwrap();
+                let mut map = shared.target_id_map.write().await;
                 for did in dids {
                     let target_id = crate::logic::compute_local_subject(&did, &shared.house_salt);
                     map.insert(target_id, did);
@@ -127,7 +127,7 @@ pub fn subscribe_to_node_wildcard(shared: Arc<WebauthnSharedState>) {
                     "didcomm" => {
                         // Resolve DID from Target ID (JIT Routing)
                         let did_opt = {
-                            let map = shared_clone.target_id_map.lock().unwrap();
+                            let map = shared_clone.target_id_map.read().await;
                             map.get(target_id).cloned()
                         };
                         
@@ -177,7 +177,7 @@ pub fn subscribe_to_node_wildcard(shared: Arc<WebauthnSharedState>) {
                         // Wallet-bound messages from connected pairwise DIDs
                         // These arrive when a wallet connection sends a message through the gateway
                         let did_opt = {
-                            let map = shared_clone.target_id_map.lock().unwrap();
+                            let map = shared_clone.target_id_map.read().await;
                             map.get(target_id).cloned()
                         };
                         

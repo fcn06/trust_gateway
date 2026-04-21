@@ -98,9 +98,8 @@ pub fn spawn_vault_loop(
                                 Ok(did) => {
                                     tracing::info!("✅ Vault CreateIdentity SUCCESS: {}", did);
                                     let target_id = crate::logic::compute_local_subject(&did, &store.data().shared.house_salt);
-                                    if let Ok(mut map) = store.data().shared.target_id_map.lock() {
-                                        map.insert(target_id, did.clone());
-                                    }
+                                    let mut map = store.data().shared.target_id_map.write().await;
+                                    map.insert(target_id, did.clone());
                                     if let Some(r) = resp_opt.take() { let _ = r.send(did); }
                                 },
                                 Err(e) => {
@@ -121,9 +120,8 @@ pub fn spawn_vault_loop(
                                 Ok(did) => {
                                     tracing::info!("✅ Vault CreatePeerIdentity SUCCESS: {}", did);
                                     let target_id = crate::logic::compute_local_subject(&did, &store.data().shared.house_salt);
-                                    if let Ok(mut map) = store.data().shared.target_id_map.lock() {
-                                        map.insert(target_id, did.clone());
-                                    }
+                                    let mut map = store.data().shared.target_id_map.write().await;
+                                    map.insert(target_id, did.clone());
                                     if let Some(r) = resp_opt.take() { let _ = r.send(did); }
                                 },
                                 Err(e) => {
@@ -295,11 +293,11 @@ pub fn spawn_vault_loop(
                         match kv.put(&pairwise_did, serde_json::to_vec(&connection).unwrap().into()).await {
                             Ok(_) => {
                                 // Also register in target_id_map for message routing
-                                let target_id = crate::logic::compute_target_id(&pairwise_did, &store.data().shared.house_salt);
-                                {
-                                    let mut map = store.data().shared.target_id_map.lock().unwrap();
-                                    map.insert(target_id.clone(), pairwise_did.clone());
-                                }
+                                    let target_id = crate::logic::compute_target_id(&pairwise_did, &store.data().shared.house_salt);
+                                    {
+                                        let mut map = store.data().shared.target_id_map.write().await;
+                                        map.insert(target_id.clone(), pairwise_did.clone());
+                                    }
                                 tracing::info!("🤝 Connection registered: {} (target: {})", pairwise_did, target_id);
                                 Ok(true)
                             },
@@ -333,7 +331,7 @@ pub fn spawn_vault_loop(
                                 // Remove from target_id_map
                                 let target_id = crate::logic::compute_target_id(&pairwise_did, &store.data().shared.house_salt);
                                 {
-                                    let mut map = store.data().shared.target_id_map.lock().unwrap();
+                                    let mut map = store.data().shared.target_id_map.write().await;
                                     map.remove(&target_id);
                                 }
                                 tracing::info!("❌ Connection revoked: {}", pairwise_did);

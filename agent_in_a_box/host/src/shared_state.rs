@@ -3,7 +3,8 @@
 //! Contains the main state types passed between handlers and the Wasm runtime.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use jwt_simple::prelude::Ed25519KeyPair;
 use serde::{Deserialize, Serialize};
@@ -104,9 +105,9 @@ fn default_mcp_nats_url() -> String {
 /// Shared state accessible across all async tasks and handlers.
 pub struct WebauthnSharedState {
     /// (PasskeyRegistration, username, user_id, invite_code)
-    pub registration_sessions: Mutex<HashMap<String, (PasskeyRegistration, String, String, Option<String>)>>,
-    pub authentication_sessions: Mutex<HashMap<String, (PasskeyAuthentication, String, String)>>,
-    pub user_credentials: Mutex<HashMap<String, Vec<Passkey>>>,
+    pub registration_sessions: RwLock<HashMap<String, (PasskeyRegistration, String, String, Option<String>)>>,
+    pub authentication_sessions: RwLock<HashMap<String, (PasskeyAuthentication, String, String)>>,
+    pub user_credentials: RwLock<HashMap<String, Vec<Passkey>>>,
     pub vault_cmd_tx: tokio::sync::mpsc::Sender<VaultCommand>,
     pub messaging_cmd_tx: tokio::sync::mpsc::Sender<IncomingMessage>,
     pub acl_cmd_tx: tokio::sync::mpsc::Sender<AclCommand>,
@@ -116,9 +117,9 @@ pub struct WebauthnSharedState {
     pub nats: Option<async_nats::Client>,
     pub kv_stores: Option<HashMap<String, async_nats::jetstream::kv::Store>>,
     pub jwt_key: jwt_simple::prelude::HS256Key,
-    pub active_subscriptions: Mutex<HashSet<String>>,
-    pub target_id_map: Mutex<HashMap<String, String>>, // Maps target_id -> DID
-    pub portal_id_map: Mutex<HashMap<String, String>>, // Maps portal_hash (AID) -> user_id
+    pub active_subscriptions: RwLock<HashSet<String>>,
+    pub target_id_map: RwLock<HashMap<String, String>>, // Maps target_id -> DID
+    pub portal_id_map: RwLock<HashMap<String, String>>, // Maps portal_hash (AID) -> user_id
     pub webauthn: Webauthn,
     pub house_salt: Vec<u8>,
     pub config: HostConfig,
@@ -129,7 +130,7 @@ pub struct WebauthnSharedState {
     pub oid4vp_rsa_pem: String,
     /// Active conversation contexts, keyed by requester_did.
     /// Populated by messaging_loop before agent dispatch, consumed by escalation listener.
-    pub active_conversations: Mutex<HashMap<String, ConversationContext>>,
+    pub active_conversations: RwLock<HashMap<String, ConversationContext>>,
 }
 
 /// Conversation context stored during agent dispatch for deterministic
@@ -161,9 +162,9 @@ impl WebauthnSharedState {
     ) -> Self {
         let gateway_url = config.gateway_url.clone();
         WebauthnSharedState {
-            registration_sessions: Mutex::new(HashMap::new()),
-            authentication_sessions: Mutex::new(HashMap::new()),
-            user_credentials: Mutex::new(HashMap::new()),
+            registration_sessions: RwLock::new(HashMap::new()),
+            authentication_sessions: RwLock::new(HashMap::new()),
+            user_credentials: RwLock::new(HashMap::new()),
             vault_cmd_tx,
             messaging_cmd_tx,
             acl_cmd_tx,
@@ -173,9 +174,9 @@ impl WebauthnSharedState {
             nats,
             kv_stores,
             jwt_key,
-            active_subscriptions: Mutex::new(HashSet::new()),
-            target_id_map: Mutex::new(HashMap::new()),
-            portal_id_map: Mutex::new(HashMap::new()),
+            active_subscriptions: RwLock::new(HashSet::new()),
+            target_id_map: RwLock::new(HashMap::new()),
+            portal_id_map: RwLock::new(HashMap::new()),
             webauthn,
             house_salt,
             config,
@@ -187,7 +188,7 @@ impl WebauthnSharedState {
                 .unwrap_or_default()
                 // If loaded via `.env` as a single literal line for multiline PEMs, fix escapes:
                 .replace("\\n", "\n"),
-            active_conversations: Mutex::new(HashMap::new()),
+            active_conversations: RwLock::new(HashMap::new()),
         }
     }
 }

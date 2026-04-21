@@ -72,7 +72,7 @@ impl Authenticator for WebAuthnAuthenticator {
     ) -> Result<serde_json::Value, AuthError> {
         // Load credentials for this user
         let user_creds = {
-            let creds_map = self.shared.user_credentials.lock().unwrap();
+            let creds_map = self.shared.user_credentials.read().await;
             creds_map.get(user_id).cloned()
         };
 
@@ -104,7 +104,7 @@ impl Authenticator for WebAuthnAuthenticator {
         // Store the auth state for verification later
         let session_id = uuid::Uuid::new_v4().to_string();
         {
-            let mut sessions = self.shared.authentication_sessions.lock().unwrap();
+            let mut sessions = self.shared.authentication_sessions.write().await;
             // Store with a special "reauth:" prefix to distinguish from login flows
             sessions.insert(
                 format!("reauth:{}", session_id),
@@ -137,7 +137,7 @@ impl Authenticator for WebAuthnAuthenticator {
 
         let reauth_key = format!("reauth:{}", session_id);
         let (auth_state, _, stored_user_id) = {
-            let mut sessions = self.shared.authentication_sessions.lock().unwrap();
+            let mut sessions = self.shared.authentication_sessions.write().await;
             sessions.remove(&reauth_key)
                 .ok_or(AuthError::ReauthFailed("session expired or invalid".to_string()))?
         };

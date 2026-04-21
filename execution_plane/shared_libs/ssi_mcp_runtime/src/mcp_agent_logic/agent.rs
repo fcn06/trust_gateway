@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use anyhow::Context;
 use llm_api::chat::Message;
 use tracing::{info, error, warn, debug};
 use std::env;
@@ -39,7 +39,9 @@ enum AgentState {
 ///
 /// Uses a state-machine pattern for the execution loop, providing clean
 /// separation of concerns and support for self-correcting tool execution.
-#[derive(Clone)]
+// NOTE: Clone intentionally not derived — McpAgent owns mutable execution state
+// (messages, AgentState). Cloning a mid-execution agent would snapshot state,
+// which is almost never the desired behavior. Callers use Arc<Mutex<McpAgent>>.
 pub struct McpAgent {
     llm_interaction: ChatLlmInteraction,
     pub nats_client: Arc<async_nats::Client>,
@@ -57,7 +59,11 @@ pub struct McpAgent {
 }
 
 impl McpAgent {
-    pub async fn new(agent_mcp_config: McpRuntimeConfig, mcp_runtime_api_key: Option<String>) -> anyhow::Result<Self> {
+    pub async fn new(
+        agent_mcp_config: McpRuntimeConfig,
+        mcp_runtime_api_key: Option<String>,
+        nats_client: Option<Arc<async_nats::Client>>,
+    ) -> anyhow::Result<Self> {
         let model_id = agent_mcp_config.agent_mcp_model_id.clone();
         let system_message = agent_mcp_config.agent_mcp_system_prompt.clone();
 
@@ -71,25 +77,24 @@ impl McpAgent {
                 .context("LLM_MCP_API_KEY environment variable must be set")?
         };
 
-        let local_nats_config = std::fs::read_to_string("configuration/mcp_runtime_config.toml")
-            .ok()
-            .and_then(|c| toml::from_str::<serde_json::Value>(&c).ok());
-        
-        let nats_url = local_nats_config.as_ref()
-            .and_then(|c| c.get("agent_mcp_nats_url").and_then(|v| v.as_str()))
-            .unwrap_or("nats://127.0.0.1:4222")
-            .to_string();
-            
-        let dispatch_subject = local_nats_config.as_ref()
-            .and_then(|c| c.get("agent_mcp_nats_dispatch_subject").and_then(|v| v.as_str()))
-            .unwrap_or("mcp.v1.dispatch")
-            .to_string();
+        let nats_url = agent_mcp_config.agent_mcp_nats_url
+            .clone()
+            .unwrap_or_else(|| "nats://127.0.0.1:4222".to_string());
 
-        let nats_options = async_nats::ConnectOptions::new()
-            .request_timeout(Some(std::time::Duration::from_secs(25)));
-        let nats_client = Arc::new(async_nats::connect_with_options(&nats_url, nats_options)
-            .await
-            .context("Failed to connect to NATS in McpAgent")?);
+        let dispatch_subject = agent_mcp_config.agent_mcp_nats_dispatch_subject
+            .clone()
+            .unwrap_or_else(|| "mcp.v1.dispatch".to_string());
+
+        // Use injected NATS client or create one (fallback for standalone usage)
+        let nats_client = if let Some(client) = nats_client {
+            client
+        } else {
+            let nats_options = async_nats::ConnectOptions::new()
+                .request_timeout(Some(std::time::Duration::from_secs(25)));
+            Arc::new(async_nats::connect_with_options(&nats_url, nats_options)
+                .await
+                .context("Failed to connect to NATS in McpAgent")?)
+        };
 
         // Retrieve tools over NATS bridging (fallback to empty if bridge isn't up yet - will refresh later)
         let list_tools = match crate::mcp_client::mcp_client::get_tools_list_over_nats(nats_client.clone(), &dispatch_subject).await {
@@ -419,8 +424,13 @@ impl McpAgent {
                     }
                 }
             }
-            self.messages.extend(tool_results);
-            Ok(AgentState::Thinking)
+            // Route through evaluation when enabled (gated by config flag)
+            if self.agent_mcp_config.agent_mcp_enable_evaluation.unwrap_or(false) {
+                Ok(AgentState::Evaluating(choice.clone(), tool_results))
+            } else {
+                self.messages.extend(tool_results);
+                Ok(AgentState::Thinking)
+            }
         } else {
             // No tool calls found — go back to thinking
             Ok(AgentState::Thinking)
@@ -447,7 +457,10 @@ impl McpAgent {
         evaluation_messages.extend(tool_results.clone());
         evaluation_messages.push(Message {
             role: "system".to_string(),
-            content: Some(self.agent_mcp_config.agent_mcp_evaluation_prompt.clone()),
+            content: Some(format!(
+                "{}\n\nRespond with ONLY a JSON object: {{\"satisfactory\": true/false, \"reason\": \"...\"}}",
+                self.agent_mcp_config.agent_mcp_evaluation_prompt
+            )),
             tool_call_id: None,
             tool_calls: None,
         });
@@ -468,9 +481,25 @@ impl McpAgent {
 
         if let Some(first_choice) = response.choices.get(0) {
             if let Some(content) = &first_choice.message.content {
-                if content.contains("unsatisfactory") {
-                    warn!("Tool execution unsatisfactory. Entering correction state.");
-                    return Ok(AgentState::Correcting(content.clone()));
+                // Attempt to parse structured evaluation response
+                let is_unsatisfactory = match serde_json::from_str::<serde_json::Value>(content) {
+                    Ok(json) => json.get("satisfactory")
+                        .and_then(|v| v.as_bool())
+                        .map(|s| !s)
+                        .unwrap_or(false),
+                    Err(_) => {
+                        // Fallback: check for keyword (backward compat with non-JSON models)
+                        content.to_lowercase().contains("unsatisfactory")
+                    }
+                };
+
+                if is_unsatisfactory {
+                    let reason = serde_json::from_str::<serde_json::Value>(content)
+                        .ok()
+                        .and_then(|j| j.get("reason").and_then(|r| r.as_str()).map(String::from))
+                        .unwrap_or_else(|| content.clone());
+                    warn!("Tool execution unsatisfactory: {}", reason);
+                    return Ok(AgentState::Correcting(reason));
                 }
             }
         }
@@ -575,8 +604,5 @@ impl McpAgent {
         self.execute_loop(auth_data).await
     }
 
-    pub async fn submit_user_text(&self, user_text: String) -> Result<String> {
-        info!("MCP Agent received user text: {}", user_text);
-        Ok(format!("MCP agent processed: {}", user_text))
-    }
+
 }

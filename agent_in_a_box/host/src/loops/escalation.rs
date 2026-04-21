@@ -236,11 +236,8 @@ pub fn subscribe_to_escalation_requests(shared: Arc<WebauthnSharedState>) {
                     // Lookup conversation context from active_conversations map
                     // (populated by messaging_loop before agent dispatch)
                     let conv_ctx = {
-                        if let Ok(map) = shared.active_conversations.lock() {
-                            map.get(&requester_did).cloned()
-                        } else {
-                            None
-                        }
+                        let map = shared.active_conversations.read().await;
+                        map.get(&requester_did).cloned()
                     };
 
                     // Store in KV

@@ -25,6 +25,7 @@ tower-http = { version = "0.5", features = ["cors"] }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 futures = "0.3"
 
@@ -32,7 +33,7 @@ futures = "0.3"
 async-nats = "0.37"
 
 # HTTP client (for connector dispatch)
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

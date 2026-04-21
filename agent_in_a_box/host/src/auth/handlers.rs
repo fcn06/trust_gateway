@@ -485,7 +485,8 @@ pub async fn subscribe_user_to_global_logins(shared: Arc<WebauthnSharedState>, u
              let shared_clone = shared.clone();
              
              // Populate portal_id_map for O(1) dispatch
-             if let Ok(mut map) = shared.portal_id_map.lock() {
+             {
+                 let mut map = shared.portal_id_map.write().await;
                  map.insert(hash.clone(), user_id.clone());
              }
 
@@ -508,7 +509,7 @@ pub async fn handle_portal_request(
 ) {
     // 1. Resolve User ID from Portal Hash (AID)
     let user_id = {
-        let map = shared.portal_id_map.lock().unwrap();
+        let map = shared.portal_id_map.read().await;
         match map.get(hash).cloned() {
             Some(uid) => uid,
             None => {

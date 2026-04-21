@@ -21,7 +21,12 @@ SAFE_ACTION_ID="${SKILL_ACTION_ID:-none}"
 # 3. Extract the "text" field specifically and ensure valid JSON output
 if command -v jq >/dev/null 2>&1; then
     # jq is universally the best and safest tool for JSON in shell scripts
-    TEXT=$(echo "$RESPONSE" | jq -r '.text // empty')
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // .error // empty')
+    if [ "$ERROR_MSG" != "" ] && [ "$ERROR_MSG" != "null" ]; then
+        TEXT="Extraction API Error: $ERROR_MSG"
+    else
+        TEXT=$(echo "$RESPONSE" | jq -r '.text // empty')
+    fi
     
     jq -n \
       --arg result "$TEXT" \

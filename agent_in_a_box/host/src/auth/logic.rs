@@ -25,14 +25,14 @@ pub async fn start_registration_logic(shared: &WebauthnSharedState, username: St
     ).map_err(|e| anyhow::anyhow!("WebAuthn error: {:?}", e))?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
-    shared.registration_sessions.lock().unwrap()
+    shared.registration_sessions.write().await
         .insert(session_id.clone(), (reg_state, username, user_id, invite_code));
 
     Ok((session_id, ccr))
 }
 
 pub async fn finish_registration_logic(shared: Arc<WebauthnSharedState>, session_id: String, response: String) -> Result<(bool, String, Option<RegistrationCookie>)> {
-    let (reg_state, username, user_id, invite_code) = match shared.registration_sessions.lock().unwrap().remove(&session_id) {
+    let (reg_state, username, user_id, invite_code) = match shared.registration_sessions.write().await.remove(&session_id) {
         Some(s) => s,
         None => return Ok((false, String::new(), None)),
     };
@@ -49,7 +49,7 @@ pub async fn finish_registration_logic(shared: Arc<WebauthnSharedState>, session
 
     // Update in-memory store
     let credentials = {
-        let mut creds_map = shared.user_credentials.lock().unwrap();
+        let mut creds_map = shared.user_credentials.write().await;
         let user_creds = creds_map.entry(user_id.clone()).or_default();
         user_creds.push(passkey);
         user_creds.clone()
@@ -327,7 +327,7 @@ pub async fn start_login_logic(shared: &WebauthnSharedState, username: String) -
     // Load credentials (lazy load from KV if missing in memory)
     let user_creds = {
         let creds_opt = {
-            let creds_map = shared.user_credentials.lock().unwrap();
+            let creds_map = shared.user_credentials.read().await;
             creds_map.get(&user_id).cloned()
         };
 
@@ -349,7 +349,7 @@ pub async fn start_login_logic(shared: &WebauthnSharedState, username: String) -
             
             // Re-acquire lock and insert
             {
-                let mut creds_map = shared.user_credentials.lock().unwrap();
+                let mut creds_map = shared.user_credentials.write().await;
                 creds_map.insert(user_id.clone(), fetched_creds.clone());
             }
             fetched_creds
@@ -360,7 +360,7 @@ pub async fn start_login_logic(shared: &WebauthnSharedState, username: String) -
         .map_err(|e| anyhow::anyhow!("WebAuthn error: {:?}", e))?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
-    shared.authentication_sessions.lock().unwrap()
+    shared.authentication_sessions.write().await
         .insert(session_id.clone(), (auth_state, username, user_id));
 
     Ok((session_id, rcr))
@@ -378,7 +378,7 @@ pub async fn finish_login_logic(shared: Arc<WebauthnSharedState>, session_id: St
     };
     
     let (auth_state, username, user_id) = {
-        let mut sessions = shared.authentication_sessions.lock().unwrap();
+        let mut sessions = shared.authentication_sessions.write().await;
         match sessions.remove(&session_id) {
             Some(s) => s,
             None => {
@@ -418,11 +418,10 @@ pub async fn finish_login_logic(shared: Arc<WebauthnSharedState>, session_id: St
                     let _ = shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id.clone(), did_tx)).await;
                     let user_dids = did_rx.await.unwrap_or_default();
                     
-                    if let Ok(mut map) = shared.target_id_map.lock() {
-                        for did in user_dids {
-                            let target_id = compute_local_subject(&did, &shared.house_salt);
-                            map.insert(target_id, did);
-                        }
+                    let mut map = shared.target_id_map.write().await;
+                    for did in user_dids {
+                        let target_id = compute_local_subject(&did, &shared.house_salt);
+                        map.insert(target_id, did);
                     }
                 },
                 Ok(Ok(false)) => tracing::warn!("⚠️ Failed to unlock vault for {}: Logic returned false", user_id),
@@ -522,11 +521,10 @@ pub async fn resolve_active_did_for_user(shared: Arc<WebauthnSharedState>, user_
             let _ = shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id.to_string(), did_tx)).await;
             let user_dids = did_rx.await.unwrap_or_default();
             
-            if let Ok(mut map) = shared.target_id_map.lock() {
-                for did in user_dids {
-                    let target_id = compute_local_subject(&did, &shared.house_salt);
-                    map.insert(target_id, did);
-                }
+            let mut map = shared.target_id_map.write().await;
+            for did in user_dids {
+                let target_id = compute_local_subject(&did, &shared.house_salt);
+                map.insert(target_id, did);
             }
             
             // Retry Fetching Active DID

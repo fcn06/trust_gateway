@@ -23,11 +23,9 @@ use trust_core::audit::AuditEventType;
 /// approves or denies an escalation request in the portal. This listener
 /// updates the gateway's `approval_records` KV, which triggers the
 /// KV watcher in `spawn_execution_daemon` to execute the action.
-pub async fn spawn_decision_listener(state: Arc<GatewayState>) {
+pub async fn run_decision_listener(state: Arc<GatewayState>) {
     let nc = state.nats.clone();
-    let state = state.clone();
 
-    tokio::spawn(async move {
         let subject = "gateway.v1.approval.decision";
         let mut sub = match nc.subscribe(subject.to_string()).await {
             Ok(s) => s,
@@ -106,14 +104,12 @@ pub async fn spawn_decision_listener(state: Arc<GatewayState>) {
         }
 
         tracing::warn!("⚠️ Approval decision NATS listener ended unexpectedly");
-    });
 }
 
 /// Spawn a background daemon to execute actions asynchronously once they are approved.
-pub async fn spawn_execution_daemon(state: Arc<GatewayState>) {
+pub async fn run_execution_daemon(state: Arc<GatewayState>) {
     let js = state.jetstream.clone();
-    tokio::spawn(async move {
-        tracing::info!("✅ Supervisor daemon starting — watching for action approvals...");
+    tracing::info!("✅ Supervisor daemon starting — watching for action approvals...");
 
         // Try to get the KV store for approvals (retries until available)
         let kv = loop {
@@ -156,7 +152,6 @@ pub async fn spawn_execution_daemon(state: Arc<GatewayState>) {
         }
 
         tracing::warn!("⚠️ Supervisor daemon KV watcher ended unexpectedly");
-    });
 }
 
 /// On startup, scan for any records stuck in `Approved` state

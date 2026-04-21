@@ -104,14 +104,13 @@ pub fn spawn_messaging_loop(
 
                                                                                 // Register conversation context for deterministic escalation routing
                                                                                 {
-                                                                                    if let Ok(mut map) = shared_clone.active_conversations.lock() {
-                                                                                        map.insert(sender_clone.clone(), crate::shared_state::ConversationContext {
-                                                                                            thid: thid_to_pass.clone().unwrap_or_default(),
-                                                                                            sender_did: sender_clone.clone(),
-                                                                                            inst_did: inst_did_clone.clone(),
-                                                                                            user_id: user_clone.clone(),
-                                                                                        });
-                                                                                    }
+                                                                                    let mut map = shared_clone.active_conversations.write().await;
+                                                                                    map.insert(sender_clone.clone(), crate::shared_state::ConversationContext {
+                                                                                        thid: thid_to_pass.clone().unwrap_or_default(),
+                                                                                        sender_did: sender_clone.clone(),
+                                                                                        inst_did: inst_did_clone.clone(),
+                                                                                        user_id: user_clone.clone(),
+                                                                                    });
                                                                                 }
 
                                                                                 tokio::spawn(async move {
@@ -152,14 +151,16 @@ pub fn spawn_messaging_loop(
                                                                                              ).await;
 
                                                                                              // Clean up conversation context after dispatch
-                                                                                             if let Ok(mut map) = shared_clone.active_conversations.lock() {
+                                                                                             {
+                                                                                                 let mut map = shared_clone.active_conversations.write().await;
                                                                                                  map.remove(&sender_clone);
                                                                                              }
                                                                                          }
                                                                                          Err((status, err_msg)) => {
                                                                                              tracing::error!("Agent dispatch failed ({}): {}", status, err_msg);
                                                                                              // Clean up on error too
-                                                                                             if let Ok(mut map) = shared_clone.active_conversations.lock() {
+                                                                                             {
+                                                                                                 let mut map = shared_clone.active_conversations.write().await;
                                                                                                  map.remove(&sender_clone);
                                                                                              }
                                                                                          }

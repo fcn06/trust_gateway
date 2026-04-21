@@ -295,27 +295,39 @@ async fn main() -> Result<()> {
             .collect(),
     });
 
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let mut background_tasks = tokio_util::task::TaskTracker::new();
+
     // Spawn NATS listener (backward compat with mcp_nats_bridge)
     let nats_state = state.clone();
     let nats_subject = args.nats_subject.clone();
     let nats_client = nc.clone();
-    tokio::spawn(async move {
-        if let Err(e) = gateway::run_nats_listener(nats_client, nats_subject, nats_state).await {
-            tracing::error!("❌ NATS listener error: {}", e);
+    let token = cancel_token.clone();
+    background_tasks.spawn(async move {
+        tokio::select! {
+            _ = token.cancelled() => tracing::info!("🛑 NATS listener cancelled"),
+            res = gateway::run_nats_listener(nats_client, nats_subject, nats_state) => {
+                if let Err(e) = res {
+                    tracing::error!("❌ NATS listener error: {}", e);
+                }
+            }
         }
     });
 
     // Spawn audit timeline projector (Trust Replay)
     let projector_js = async_nats::jetstream::new(nc.clone());
     if !audit_stream_name.is_empty() {
-        match audit_projector::spawn_projector(projector_js, &audit_stream_name).await {
-            Ok(_handle) => {
-                tracing::info!("✅ Audit timeline projector spawned (stream: {})", audit_stream_name);
+        let token = cancel_token.clone();
+        background_tasks.spawn(async move {
+            tokio::select! {
+                _ = token.cancelled() => tracing::info!("🛑 Audit projector cancelled"),
+                res = audit_projector::spawn_projector(projector_js, &audit_stream_name) => {
+                    if let Err(e) = res {
+                        tracing::warn!("⚠️ Could not start audit projector: {} (timeline will be unavailable)", e);
+                    }
+                }
             }
-            Err(e) => {
-                tracing::warn!("⚠️ Could not start audit projector: {} (timeline will be unavailable)", e);
-            }
-        }
+        });
     } else {
         tracing::warn!("⚠️ No audit stream available — projector disabled");
     }
@@ -375,14 +387,33 @@ async fn main() -> Result<()> {
     }
 
     // Spawn the asynchronous supervisor daemon for outbox processing
-    approval_daemon::spawn_execution_daemon(state.clone()).await;
-    approval_daemon::spawn_decision_listener(state.clone()).await;
+    let token = cancel_token.clone();
+    let s1 = state.clone();
+    background_tasks.spawn(async move {
+        tokio::select! {
+            _ = token.cancelled() => tracing::info!("🛑 Execution daemon cancelled"),
+            _ = approval_daemon::run_execution_daemon(s1) => {}
+        }
+    });
+    
+    let token = cancel_token.clone();
+    let s2 = state.clone();
+    background_tasks.spawn(async move {
+        tokio::select! {
+            _ = token.cancelled() => tracing::info!("🛑 Decision listener cancelled"),
+            _ = approval_daemon::run_decision_listener(s2) => {}
+        }
+    });
+    
+    background_tasks.close();
 
     // Build and run HTTP server with graceful shutdown
     let app = api::build_router(state);
 
-    let addr: std::net::SocketAddr = args.listen.parse()
-        .unwrap_or_else(|_| "0.0.0.0:3060".parse().unwrap());
+    let addr: std::net::SocketAddr = args
+        .listen
+        .parse()
+        .expect("Invalid listen address provided");
     tracing::info!("🚀 Trust Gateway listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -405,15 +436,18 @@ async fn main() -> Result<()> {
             #[cfg(not(unix))]
             ctrl_c.await.ok();
 
-            tracing::info!("🛑 Shutdown signal received — stopping HTTP and closing NATS...");
+            tracing::info!("🛑 Shutdown signal received — stopping HTTP and signalling tasks...");
 
-            // Give in-flight requests a moment to complete
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Signal all background tasks to stop
+            cancel_token.cancel();
 
-            // async_nats::Client does not have a `drain()` method, so we let it drop
-            // normally, allowing pending flushes to complete in the background.
-            // Give background tasks a moment to finish before terminating
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            // Wait for all tracked tasks to finish their current iterations
+            tokio::time::timeout(std::time::Duration::from_secs(5), background_tasks.wait())
+                .await
+                .ok();
+
+            tracing::info!("🧹 Waiting for final NATS flush...");
+            let _ = shutdown_nc.flush().await;
             tracing::info!("👋 Trust Gateway shut down cleanly");
         })
         .await?;

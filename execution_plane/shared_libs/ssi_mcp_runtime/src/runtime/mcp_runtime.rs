@@ -17,7 +17,6 @@ use crate::mcp_client::transport::{create_transport, McpClient};
 ///
 /// Provides a stateful wrapper around an MCP client that maintains
 /// configuration and provides convenient methods for tool operations.
-#[allow(dead_code)]
 pub struct McpRuntime {
     agent_mcp_config: McpRuntimeConfig,
     client: McpClient,
@@ -37,7 +36,7 @@ impl McpRuntime {
         let mcp_server_url_string = agent_mcp_config
             .agent_mcp_server_url
             .clone()
-            .expect("Missing mcp server Url");
+            .ok_or_else(|| anyhow::anyhow!("Missing MCP server URL in agent_mcp_config"))?;
         let mcp_server_url = mcp_server_url_string.as_str();
 
         let api_key = agent_mcp_config.agent_mcp_server_api_key.clone();
@@ -58,8 +57,8 @@ impl McpRuntime {
     }
 
     /// Get a reference to the underlying MCP client.
-    pub fn get_client(&self) -> anyhow::Result<&McpClient> {
-        Ok(&self.client)
+    pub fn get_client(&self) -> &McpClient {
+        &self.client
     }
 
     /// Get the list of available tools from the MCP server.
@@ -92,7 +91,11 @@ impl McpRuntime {
                     tool_call.function.name,
                     e
                 );
-                CallToolResult::error(vec![])
+                CallToolResult::error(vec![
+                    rmcp::model::Content::text(format!(
+                        "Failed to parse tool arguments: {}", e
+                    ))
+                ])
             }
         };
 

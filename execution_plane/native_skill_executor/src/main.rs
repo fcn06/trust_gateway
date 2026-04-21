@@ -209,8 +209,10 @@ async fn main() -> Result<()> {
         .with_state(state)
         .layer(cors);
 
-    let addr: std::net::SocketAddr = args.listen.parse()
-        .unwrap_or_else(|_| "0.0.0.0:3070".parse().unwrap());
+    let addr: std::net::SocketAddr = args
+        .listen
+        .parse()
+        .expect("Invalid listen address provided");
     tracing::info!("🦞 Native Skill Executor listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

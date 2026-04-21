@@ -119,7 +119,11 @@ pub async fn execute_tool_call_v2(
         Ok(p) => p,
         Err(e) => {
             tracing::error!("Failed to parse arguments for {}: {}", tool_call.function.name, e);
-            return Ok(CallToolResult::error(vec![]));
+            return Ok(CallToolResult::error(vec![
+                rmcp::model::Content::text(format!(
+                    "Failed to parse tool arguments: {}", e
+                ))
+            ]));
         }
     };
 
@@ -163,15 +167,27 @@ pub async fn execute_tool_call_v2(
                 Ok(call_result)
             } else if let Some(err) = bridge_response.get("error") {
                 tracing::error!("Bridge error: {}", err);
-                Ok(CallToolResult::error(vec![]))
+                Ok(CallToolResult::error(vec![
+                    rmcp::model::Content::text(format!(
+                        "Bridge error: {}", err
+                    ))
+                ]))
             } else {
                 tracing::error!("Unexpected response format from NATS bridge: {:?}", bridge_response);
-                Ok(CallToolResult::error(vec![]))
+                Ok(CallToolResult::error(vec![
+                    rmcp::model::Content::text(format!(
+                        "Unexpected response format from NATS bridge: {:?}", bridge_response
+                    ))
+                ]))
             }
         }
         Err(e) => {
             tracing::error!("NATS request failed: {}", e);
-            Ok(CallToolResult::error(vec![]))
+            Ok(CallToolResult::error(vec![
+                rmcp::model::Content::text(format!(
+                    "NATS request failed: {}", e
+                ))
+            ]))
         }
     }
 }

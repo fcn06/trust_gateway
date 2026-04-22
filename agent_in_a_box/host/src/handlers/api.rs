@@ -375,7 +375,7 @@ pub async fn process_send_message_logic(
                 let endpoint = &svc.endpoint;
                 tracing::info!("📤 Sending via contact_store endpoint: {}", endpoint);
                 
-                let client = reqwest::Client::new();
+                let client = shared.http_client.clone();
                 match client.post(endpoint).body(envelope.clone()).send().await {
                     Ok(res) if res.status().is_success() => {
                         distributed_success = true;
@@ -433,7 +433,7 @@ pub async fn process_send_message_logic(
                                 }
                             } else {
                                 // HTTP endpoint
-                                let client = reqwest::Client::new();
+                                let client = shared.http_client.clone();
                                 match client.post(endpoint_str).body(envelope.clone()).send().await {
                                     Ok(res) if res.status().is_success() => {
                                         distributed_success = true;
@@ -469,7 +469,7 @@ pub async fn process_send_message_logic(
                                         match rx_j.await {
                                             Ok(Ok(token)) => {
                                                 tracing::info!("🔒 JIT Encryption SUCCESS. Dispatching to: {}", uri);
-                                                let client = reqwest::Client::new();
+                                                let client = shared.http_client.clone();
                                                 
                                                 // --- Control & Trace ---
                                                 tracing::info!("📦 Payload Trace (Outbound to Gateway): {}", envelope);
@@ -530,7 +530,7 @@ pub async fn process_send_message_logic(
                                         }
                                     }
                                 } else {
-                                    let client = reqwest::Client::new();
+                                    let client = shared.http_client.clone();
                                     if let Ok(res) = client.post(endpoint).body(envelope.clone()).send().await {
                                         if res.status().is_success() { distributed_success = true; }
                                     }
@@ -967,7 +967,7 @@ pub async fn publish_identity_handler(
         "signed_document": signed_document_str
     });
     
-    let client = reqwest::Client::new();
+    let client = shared.http_client.clone();
     match client.post(&publish_url).json(&publish_payload).send().await {
         Ok(res) if res.status().is_success() => {
             tracing::info!("✅ Gateway HTTP publish succeeded (signed)");
@@ -1027,7 +1027,7 @@ pub async fn build_complete_did_document(
         }
 
         // 1. Get Opaque Routing Secret from Gateway
-        let client = reqwest::Client::new();
+        let client = shared.http_client.clone();
         let base = shared.config.service_gateway_base_url
             .trim_end_matches('/')
             .trim_end_matches("ingress")
@@ -1463,8 +1463,7 @@ pub async fn register_gateway_did_handler(
                 "controller": req.did,
                 "publicKeyBase64": pub_key
             }));
-        } else if req.did.starts_with("did:twin:z") && req.did.len() >= 74 {
-            let hex_part = &req.did[10..74];
+        } else if let Some(hex_part) = req.did.strip_prefix(identity_context::did::DID_TWIN_PREFIX).filter(|s| s.len() >= identity_context::did::ED25519_HEX_KEY_LEN).map(|s| &s[..identity_context::did::ED25519_HEX_KEY_LEN]) {
             if let Ok(pub_bytes) = hex::decode(hex_part) {
                 use base64::Engine;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&pub_bytes);
@@ -1694,7 +1693,9 @@ pub async fn approve_escalation_handler(
         Err(_) => return Err(StatusCode::FORBIDDEN),
     };
 
-    let effective_user_did = if request.user_did.is_empty() || request.user_did == "todo_verify_in_layer_above" {
+    // WS-A3: Replaced `todo_verify_in_layer_above` sentinel with proper emptiness check.
+    // If user_did is absent or empty, fall back to the approving user's active DID.
+    let effective_user_did = if request.user_did.is_empty() {
         approving_did
     } else {
         request.user_did.clone()
@@ -1710,15 +1711,19 @@ pub async fn approve_escalation_handler(
         resp: tx_jwt,
     }).await;
 
+    // WS-A1: JWT minting failure is now a hard error. Publishing an approval
+    // with a null/empty JWT would be a silent security degradation — the
+    // consumer (mcp_nats_bridge) needs a valid elevated JWT to re-execute
+    // the tool with elevated privileges.
     let elevated_jwt = match rx_jwt.await {
-        Ok(Ok(token)) => Some(token),
+        Ok(Ok(token)) => token,
         Ok(Err(e)) => {
-            tracing::warn!("⚠️ Failed to mint elevated JWT (connector tools may not need it): {}", e);
-            None
+            tracing::error!("🚨 Failed to mint elevated JWT for approval — aborting: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
         Err(e) => {
-            tracing::warn!("⚠️ Vault command channel failed: {}", e);
-            None
+            tracing::error!("🚨 Vault command channel failed during approval — aborting: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
@@ -1839,10 +1844,7 @@ pub async fn deny_escalation_handler(
 pub async fn skills_registry_handler(
     State(shared): State<Arc<WebauthnSharedState>>,
 ) -> Json<serde_json::Value> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .unwrap_or_default();
+    let client = shared.http_client.clone();
 
     // 1. Fetch MCP tools from connector_mcp_server
     let connector_url = &shared.config.connector_mcp_url;
@@ -1941,7 +1943,7 @@ pub async fn restaurant_invoke_handler(
         req_json.get("skill_name").and_then(|s| s.as_str()).unwrap_or("?"));
 
     // 4. Forward to restaurant_state_service
-    let client = reqwest::Client::new();
+    let client = shared.http_client.clone();
     match client
         .post(format!("{}/invoke", restaurant_service_url(&shared)))
         .header("Content-Type", "application/json")
@@ -1981,7 +1983,7 @@ pub async fn restaurant_menu_handler(
         "tenant_id": tenant
     });
 
-    let client = reqwest::Client::new();
+    let client = shared.http_client.clone();
     match client
         .post(format!("{}/invoke", restaurant_service_url(&shared)))
         .header("Content-Type", "application/json")

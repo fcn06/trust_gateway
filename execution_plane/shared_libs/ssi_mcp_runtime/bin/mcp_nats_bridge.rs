@@ -125,7 +125,13 @@ async fn main() -> Result<()> {
     tracing::info!("✅ Connected to MCP Server");
     
     // Setup HTTP client for calling the connector_mcp_server
-    let http_client = Arc::new(reqwest::Client::new());
+    let http_client = Arc::new(
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(10)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default(),
+    );
     let connector_mcp_url = std::env::var("CONNECTOR_MCP_URL").unwrap_or_else(|_| "http://127.0.0.1:3050".to_string());
     tracing::info!("   Connector MCP URL: {}", connector_mcp_url);
 
@@ -645,6 +651,14 @@ async fn wait_for_escalation_decision(
                         .as_str()
                         .unwrap_or("")
                         .to_string();
+                    // WS-A1: Defensive check — an approval without a valid JWT
+                    // is a security degradation. Treat as denied.
+                    if elevated_jwt.is_empty() {
+                        tracing::error!("🚨 Approval received with empty elevated_jwt — treating as denied");
+                        return Ok(EscalationDecision::Denied {
+                            message: "Approval failed: no elevated JWT was provided".to_string(),
+                        });
+                    }
                     Ok(EscalationDecision::Approved { elevated_jwt })
                 }
                 "DENIED" => {

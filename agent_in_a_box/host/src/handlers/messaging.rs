@@ -63,7 +63,7 @@ pub async fn send_mls_message(
         "ciphertext": ciphertext,
     });
 
-    let client = reqwest::Client::new();
+    let client = shared.http_client.clone();
     let response = client
         .post(&service_endpoint)
         .header("Content-Type", "application/mls-message")

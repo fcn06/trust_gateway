@@ -224,7 +224,7 @@ async fn execute_google_calendar_list(
 
     tracing::info!("📅 Listing events: time_min={}, max_results={}", time_min, max_results);
 
-    let client = reqwest::Client::new();
+    let client = state.http_client.clone();
     let resp = client
         .get("https://www.googleapis.com/calendar/v3/calendars/primary/events")
         .bearer_auth(&token.access_token)
@@ -294,7 +294,7 @@ async fn execute_google_calendar_create(
         "end": { "dateTime": args["end_time"] },
     });
 
-    let client = reqwest::Client::new();
+    let client = state.http_client.clone();
     let resp = client
         .post("https://www.googleapis.com/calendar/v3/calendars/primary/events")
         .bearer_auth(&token.access_token)

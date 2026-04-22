@@ -244,7 +244,7 @@ pub fn spawn_messaging_loop(
                                                                     }
 
                                                                     // Also fetch A2A skills from HTTP /skills for completeness
-                                                                    let client = reqwest::Client::new();
+                                                                    let client = shared_clone.http_client.clone();
                                                                     let agent_url = shared_clone.config.ssi_agent_endpoint.clone();
                                                                     let mut a2a_skills = serde_json::json!([]);
                                                                     if let Ok(res) = client.get(&format!("{}/skills", agent_url)).send().await {

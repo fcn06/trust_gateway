@@ -257,6 +257,7 @@ async fn handle_wallet_connection(socket: WebSocket, state: crate::GatewayAppSta
                                             let from_did_clone = from_did.to_string();
                                             let js_clone = js.clone();
                                             let gateway_seed_clone = state.gateway_seed.clone();
+                                            let http_client_clone = state.http_client.clone();
                                             
                                             tokio::spawn(async move {
                                                 if let Ok(kv) = js_clone.get_key_value("dht_discovery").await {
@@ -360,7 +361,7 @@ async fn handle_wallet_connection(socket: WebSocket, state: crate::GatewayAppSta
                                                             if let Some(uri) = endpoint_uri {
                                                                 if uri != "http://localhost:3002/ingress" && !uri.contains("gateway.push.wallet") {
                                                                     tracing::info!("🌐 Sending Wallet message to external HTTP endpoint: {}", uri);
-                                                                    let client = reqwest::Client::new();
+                                                                    let client = http_client_clone.clone();
                                                                     if let Err(e) = client.post(&uri).body(payload_to_send).send().await {
                                                                         tracing::warn!("⚠️ Failed to send to external endpoint: {}", e);
                                                                     }

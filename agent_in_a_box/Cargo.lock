@@ -2321,6 +2321,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "identity_context",
  "jsonwebtoken",
  "jwt-simple",
  "lazy_static",
@@ -2667,6 +2668,23 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
+name = "identity_context"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tracing",
+ "trust_core",
+ "uuid",
+]
 
 [[package]]
 name = "idna"

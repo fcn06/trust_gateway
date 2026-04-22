@@ -141,7 +141,7 @@ pub async fn dispatch_to_ssi_agent(
 
     // 5. Dispatch via HTTP POST to ssi_agent_endpoint
     let endpoint = shared.config.ssi_agent_endpoint.trim_end_matches('/').to_string() + "/";
-    let client = Client::new();
+    let client = shared.http_client.clone();
     
     info!("🚀 Sending request to ssi_agent at {}", endpoint);
     let resp = client.post(&endpoint)

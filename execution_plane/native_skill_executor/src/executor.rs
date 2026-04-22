@@ -126,6 +126,10 @@ pub async fn execute_skill(
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        // SAFETY: `setsid()` is async-signal-safe per POSIX and only affects the
+        // calling process's session/group membership. It is called in the
+        // pre_exec hook which runs after fork() but before exec(), in a
+        // single-threaded context. No shared state is mutated.
         unsafe {
             cmd.pre_exec(|| {
                 nix::unistd::setsid()

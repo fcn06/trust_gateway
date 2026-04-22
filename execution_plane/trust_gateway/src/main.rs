@@ -279,7 +279,11 @@ async fn main() -> Result<()> {
         agent_registry,
         nats: nc.clone(),
         jetstream: js,
-        http_client: reqwest::Client::new(),
+        http_client: reqwest::Client::builder()
+            .pool_max_idle_per_host(10)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default(),
         connector_mcp_url: args.connector_mcp_url.clone(),
         skill_executor_url: args.skill_executor_url.clone(),
         restaurant_service_url: args.restaurant_service_url.clone(),

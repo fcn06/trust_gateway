@@ -401,7 +401,7 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
                     "ciphertext": msg.ciphertext,
                 })).unwrap_or_default();
                 
-                match reqwest::Client::new()
+                match shared.http_client.clone()
                     .post(&url)
                     .header("Content-Type", "application/mls-message")
                     .body(payload)
@@ -572,7 +572,7 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
             let shared = caller.data().shared.clone();
             if let Some(ref gateway_url) = shared.gateway_url {
                 let url = format!("{}/ingress", gateway_url);
-                match reqwest::Client::new()
+                match shared.http_client.clone()
                     .post(&url)
                     .header("X-Routing-Token", &target_id)
                     .header("Content-Type", "application/octet-stream")

@@ -101,6 +101,13 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(not(feature = "messaging"))]
     let (contact_cmd_tx, _contact_cmd_rx_stub) = mpsc::channel::<commands::ContactStoreCommand>(1);
 
+    // Create a shared HTTP client with connection pooling
+    let http_client = reqwest::Client::builder()
+        .pool_max_idle_per_host(10)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("Failed to build HTTP client");
+
     // 6. Shared State
     let shared = Arc::new(WebauthnSharedState {
         registration_sessions: RwLock::new(HashMap::new()),
@@ -129,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_default()
             .replace("\\n", "\n"),
         active_conversations: RwLock::new(HashMap::new()),
+        http_client,
     });
 
     // 7. Wasm Engine & Linker

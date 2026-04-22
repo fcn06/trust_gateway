@@ -131,6 +131,7 @@ pub struct WebauthnSharedState {
     /// Active conversation contexts, keyed by requester_did.
     /// Populated by messaging_loop before agent dispatch, consumed by escalation listener.
     pub active_conversations: RwLock<HashMap<String, ConversationContext>>,
+    pub http_client: reqwest::Client,
 }
 
 /// Conversation context stored during agent dispatch for deterministic
@@ -159,6 +160,7 @@ impl WebauthnSharedState {
         webauthn: Webauthn,
         house_salt: Vec<u8>,
         connections_kv: async_nats::jetstream::kv::Store,
+        http_client: reqwest::Client,
     ) -> Self {
         let gateway_url = config.gateway_url.clone();
         WebauthnSharedState {
@@ -189,6 +191,7 @@ impl WebauthnSharedState {
                 // If loaded via `.env` as a single literal line for multiline PEMs, fix escapes:
                 .replace("\\n", "\n"),
             active_conversations: RwLock::new(HashMap::new()),
+            http_client,
         }
     }
 }

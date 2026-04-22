@@ -43,6 +43,7 @@ pub struct GatewayAppState {
     pub jetstream: Option<async_nats::jetstream::Context>,
     /// Active wallet WebSocket sessions.
     pub wallet_sessions: ws_relay::WalletSessions,
+    pub http_client: reqwest::Client,
 }
 
 #[tokio::main]
@@ -111,6 +112,10 @@ async fn main() -> anyhow::Result<()> {
         phone_to_tenant: HashMap::new(), // TODO: Load from config/env
         jetstream: Some(js),
         wallet_sessions: ws_relay::new_sessions(),
+        http_client: reqwest::Client::builder()
+            .pool_max_idle_per_host(10)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?,
     };
 
     let webhook_routes = Router::new()

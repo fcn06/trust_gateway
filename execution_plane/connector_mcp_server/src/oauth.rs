@@ -73,7 +73,7 @@ pub async fn google_callback(
     });
 
     // Exchange authorization code for tokens
-    let client = reqwest::Client::new();
+    let client = state.http_client.clone();
     let token_response = client
         .post("https://oauth2.googleapis.com/token")
         .form(&[

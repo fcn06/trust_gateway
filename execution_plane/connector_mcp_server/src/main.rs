@@ -43,6 +43,7 @@ pub struct AppState {
     pub token_store: token_store::TokenStore,
     pub google_client_id: String,
     pub google_client_secret: String,
+    pub http_client: reqwest::Client,
 }
 
 #[tokio::main]
@@ -64,12 +65,18 @@ async fn main() -> anyhow::Result<()> {
 
     let token_store = token_store::TokenStore::new(js.clone()).await?;
 
+    let http_client = reqwest::Client::builder()
+        .pool_max_idle_per_host(10)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
     let state = Arc::new(AppState {
         js,
         nats,
         token_store,
         google_client_id: cli.google_client_id,
         google_client_secret: cli.google_client_secret,
+        http_client,
     });
 
     let cors = tower_http::cors::CorsLayer::permissive();

@@ -149,7 +149,7 @@ pub async fn execute_tool_call_v2(
     let payload = serde_json::json!({
         "tool_name": tool_call.function.name,
         "arguments": parsed_args,
-        "verified_did": "todo_verify_in_layer_above", // Will be addressed at higher level via JWT
+        "verified_did": "", // WS-A3: DID is resolved from JWT `iss` claim by the trust_gateway
         "original_request": {}
     });
 

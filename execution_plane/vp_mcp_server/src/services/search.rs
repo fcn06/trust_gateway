@@ -22,6 +22,7 @@ pub struct SearchParams {
 #[derive(Clone)]
 pub struct SearchMcpService {
     tool_router: ToolRouter<Self>,
+    http_client: reqwest::Client,
 }
 
 #[tool_router]
@@ -30,6 +31,11 @@ impl SearchMcpService {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
+            http_client: reqwest::Client::builder()
+                .pool_max_idle_per_host(10)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -44,7 +50,7 @@ impl SearchMcpService {
             DUCKDUCK_SEARCH_URL_PART1, search_query, DUCKDUCK_SEARCH_URL_PART2
         );
 
-        let client = reqwest::Client::new();
+        let client = self.http_client.clone();
 
         let response = client
             .get(&duckduckgo_url)

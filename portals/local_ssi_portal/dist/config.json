@@ -1,6 +1,0 @@
-{
-  "api_base_url": "http://localhost:3000/api",
-  "connector_url": "http://localhost:3050",
-  "did_restaurant": "did:twin:z68d8e628fada7dc2c1e3c24ecd4b5f4b22156d94667bb2a23d7763e6aac7daba",
-  "kitchen_menu_visible": false
-}

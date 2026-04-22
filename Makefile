@@ -16,6 +16,7 @@ clean:
 	cd execution_plane/trust_gateway && cargo clean
 	cd agent_in_a_box/host && cargo clean
 	cd portals/local_ssi_portal && cargo clean
+	rm -rf portals/local_ssi_portal/dist
 
 test:
 	cd execution_plane/trust_gateway && cargo test

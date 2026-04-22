@@ -1,5 +1,7 @@
 /target/
+/.keys/
 **/target/
+**/dist/
 **/*.wasm
 **/.env
 *.log

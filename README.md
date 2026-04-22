@@ -374,3 +374,8 @@ Apache 2.0 — use it, build on it, contribute back.
 ---
 
 *Enterprise edition in preparation. Feedback and early enterprise interest welcome via GitHub Issues.*
+
+---
+
+**Show your support!**  
+If you find this project useful, please consider giving it a ⭐ on GitHub! It helps more developers discover the control plane for the agentic era.

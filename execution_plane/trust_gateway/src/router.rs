@@ -302,6 +302,9 @@ async fn determine_executor_target(state: &GatewayState, tool_name: &str) -> Exe
     }
 
     // Resilience: If registry missed, check prefix before defaulting to connector
+    if tool_name.starts_with("claw_") {
+        return ExecutorTarget::ClawExecutor;
+    }
     if tool_name.starts_with("restaurant_") {
         return ExecutorTarget::RestaurantService;
     }

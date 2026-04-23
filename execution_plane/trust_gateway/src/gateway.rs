@@ -506,9 +506,25 @@ pub fn build_action_request(proposed: identity_context::models::ProposedAction) 
     let operation = crate::api::infer_operation(&proposed.tool_name);
     let category = crate::api::infer_category(&proposed.tool_name);
 
+    // Derive tenant_id: use identity context value, or fall back to a
+    // deterministic default derived from the owner DID.  Community
+    // edition JWTs often omit the tenant_id claim; without this
+    // fallback the entire pipeline propagates an empty string that
+    // downstream services reject.
+    let tenant_id = if proposed.identity.tenant_id.is_empty() {
+        let fallback = format!("default-{}", &proposed.identity.owner_did);
+        tracing::info!(
+            "📋 JWT missing tenant_id — derived fallback: '{}'",
+            fallback
+        );
+        fallback
+    } else {
+        proposed.identity.tenant_id
+    };
+
     ActionRequest {
         action_id: proposed.action_id,
-        tenant_id: proposed.identity.tenant_id,
+        tenant_id,
         actor: ActorContext {
             owner_did: proposed.identity.owner_did,
             requester_did: proposed.identity.requester_did,

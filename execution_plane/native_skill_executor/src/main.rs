@@ -232,11 +232,11 @@ async fn main() -> Result<()> {
 /// POST /invoke — execute a skill with grant validation.
 async fn invoke_handler(
     State(state): State<Arc<ExecutorState>>,
-    Json(req): Json<executor::InvokeRequest>,
+    Json(mut req): Json<executor::InvokeRequest>,
 ) -> Json<executor::InvokeResponse> {
     tracing::info!("📥 Invoke request for skill: {}", req.skill_name);
 
-    // 1. Validate ExecutionGrant
+    // 1. Validate ExecutionGrant and extract claims
     if let Some(ref grant_token) = req.execution_grant {
         match state.grant_validator.validate(grant_token).await {
             Ok(grant) => {
@@ -250,7 +250,20 @@ async fn invoke_handler(
                         ),
                     ));
                 }
-                tracing::info!("✅ Grant validated for '{}'", req.skill_name);
+
+                // Enrich tenant_id from the signed grant (authoritative source).
+                // The grant's tenant_id is set by the trust_gateway during issuance
+                // and is the canonical, signed identity context. Use it to fill in
+                // or override an empty body tenant_id.
+                if req.tenant_id.is_empty() && !grant.tenant_id.is_empty() {
+                    tracing::info!(
+                        "📋 Enriched tenant_id from ExecutionGrant: '{}'",
+                        grant.tenant_id
+                    );
+                    req.tenant_id = grant.tenant_id;
+                }
+
+                tracing::info!("✅ Grant validated for '{}' (tenant: '{}')", req.skill_name, req.tenant_id);
             }
             Err(e) => {
                 return Json(executor::InvokeResponse::error(

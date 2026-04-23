@@ -359,10 +359,23 @@ The Trust Gateway was designed with production-grade security from day one:
 
 ---
 
+## Roadmap
+
+Our goal is to build the most secure and transparent gateway for AI agents. Key milestones on our path include:
+
+- **Full Wasm Isolation** — Bringing enterprise-grade sandboxing to the core execution model.
+- **Dynamic ABAC** — Richer policy evaluation using real-time context (IP, location, user risk scores).
+- **Identity Federation** — Native OIDC and SAML integration for enterprise SSO.
+- **Audit Visualization** — A visual dashboard for inspecting the NATS JetStream audit trail.
+- **Cross-Gateway Sync** — High-availability configurations for multi-region deployments.
+
+---
+
 ## Contributing
 
 The project is at an early but technically substantive stage. Contributions are welcome, particularly in these areas:
 
+- **Claw-like tools** — We'd love to see more OS-level isolation primitives and specialized "Claw" extensions to harden process boundaries.
 - **Policy expression language** — attribute-based contextual rules (time-of-day, value thresholds)
 - **CI pipeline** — `cargo test` + `cargo clippy` on push
 - **Docker Compose** — single-command dev environment including NATS

@@ -116,5 +116,7 @@ echo "  - Host:           http://127.0.0.1:3000"
 echo "  - Local Portal:   http://127.0.0.1:8080"
 echo "═══════════════════════════════════════════════════"
 echo ""
+echo ""
+echo "🚀 Trust Gateway is running! Find this useful? Give us a star: https://github.com/fcn06/trust_gateway"
 
 wait

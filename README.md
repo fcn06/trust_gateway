@@ -10,6 +10,11 @@
 
 ---
 
+**Show your support!**  
+If you find this project useful, please consider giving it a ⭐ on GitHub! It helps more developers discover the control plane for the agentic era.
+
+---
+
 ## The Problem
 
 Your AI agent just sent an email to the wrong client. Or called a payment API with hallucinated parameters. Or deleted records that a hundred downstream processes depend on.
@@ -19,6 +24,53 @@ This isn't a model quality problem. **It's an architecture problem.**
 Existing security frameworks were built for two kinds of actors: humans and static service accounts. Neither model fits an autonomous agent — an actor with dynamic intent, no fixed permission scope, and the ability to chain dozens of tool calls whose combined effect is invisible from any individual operation.
 
 **Trust Gateway solves this** by inserting a deterministic governance layer between your agents and your business systems. Every agentic intent is treated as a *proposed action* until it clears a cryptographic and policy hurdle. Nothing executes unless the gateway says so.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Rust** 1.75+ (`rustup` recommended)
+- **Wasmtime** 25+ with Component Model support (`cargo install wasmtime-cli`)
+- **Wasm target**: `rustup target add wasm32-wasip2`
+- **NATS Server** with JetStream: `nats-server -js`
+- **Trunk** for the Web UI: `cargo install --locked trunk`
+
+### Build & Run
+
+```bash
+git clone https://github.com/fcn06/trust_gateway.git
+cd trust_gateway
+make build
+./start_dev.sh
+```
+
+The `start_dev.sh` script auto-generates a random `JWT_SECRET` if one is not set in `.env`.
+
+Once running, open the **Local SSI Portal** at **[http://localhost:8080/](http://localhost:8080/)** — a WebAuthn-authenticated web interface for identity management, agent interaction, and approval workflows.
+
+### Verify
+
+```bash
+# Check the gateway is up
+curl http://localhost:3060/health
+
+# List available tools
+curl http://localhost:3060/v1/tools/list
+
+# Propose an action (REST path)
+curl -X POST http://localhost:3060/v1/actions/propose \
+  -H "Authorization: Bearer <your_session_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action_name": "google.calendar.event.create",
+    "arguments": { "summary": "Strategy Meeting", "start": "2025-09-01T10:00:00Z" }
+  }'
+
+# MCP path — connect your agent to:
+# http://localhost:3060/v1/mcp/sse
+```
 
 ---
 
@@ -189,53 +241,6 @@ NATIVE SKILL EXECUTOR
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-- **Rust** 1.75+ (`rustup` recommended)
-- **Wasmtime** 25+ with Component Model support (`cargo install wasmtime-cli`)
-- **Wasm target**: `rustup target add wasm32-wasip2`
-- **NATS Server** with JetStream: `nats-server -js`
-- **Trunk** for the Web UI: `cargo install --locked trunk`
-
-### Build & Run
-
-```bash
-git clone https://github.com/fcn06/trust_gateway.git
-cd trust_gateway
-make build
-./start_dev.sh
-```
-
-The `start_dev.sh` script auto-generates a random `JWT_SECRET` if one is not set in `.env`.
-
-Once running, open the **Local SSI Portal** at **[http://localhost:8080/](http://localhost:8080/)** — a WebAuthn-authenticated web interface for identity management, agent interaction, and approval workflows.
-
-### Verify
-
-```bash
-# Check the gateway is up
-curl http://localhost:3060/health
-
-# List available tools
-curl http://localhost:3060/v1/tools/list
-
-# Propose an action (REST path)
-curl -X POST http://localhost:3060/v1/actions/propose \
-  -H "Authorization: Bearer <your_session_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "action_name": "google.calendar.event.create",
-    "arguments": { "summary": "Strategy Meeting", "start": "2025-09-01T10:00:00Z" }
-  }'
-
-# MCP path — connect your agent to:
-# http://localhost:3060/v1/mcp/sse
-```
-
----
-
 ## Configuration
 
 ### Policy (`config/policy.toml`)
@@ -374,8 +379,3 @@ Apache 2.0 — use it, build on it, contribute back.
 ---
 
 *Enterprise edition in preparation. Feedback and early enterprise interest welcome via GitHub Issues.*
-
----
-
-**Show your support!**  
-If you find this project useful, please consider giving it a ⭐ on GitHub! It helps more developers discover the control plane for the agentic era.

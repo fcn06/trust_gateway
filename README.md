@@ -1,4 +1,4 @@
-# AI Agents Trust Gateway — Community Edition
+# AI Agents Trust Gateway
 
 > **The execution control plane for the agentic era.**  
 > Built in Rust. Runs self-hosted. No cloud dependency.

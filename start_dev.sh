@@ -108,6 +108,15 @@ echo "Starting Local SSI Portal..."
 (cd portals/local_ssi_portal && trunk serve --port 8080) &
 PORTAL_PID=$!
 
+echo "⏳ Waiting for services to initialize..."
+# Wait for Trust Gateway (3060), Host (3000), and Portal (8080)
+while ! (nc -z localhost 3060 2>/dev/null && nc -z localhost 3000 2>/dev/null && nc -z localhost 8080 2>/dev/null); do
+    sleep 1
+done
+
+# Small buffer to let final initialization logs flush
+sleep 2
+
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  Lianxi Community Edition is running!"

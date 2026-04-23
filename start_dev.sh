@@ -90,6 +90,12 @@ echo "Starting OAuth Connector MCP Server..."
 (cd execution_plane/connector_mcp_server && cargo run --release --bin connector_mcp_server) &
 CONNECTOR_PID=$!
 
+echo "Starting Native Skill Executor (Claw)..."
+(cd execution_plane/native_skill_executor && \
+    GRANT_VERIFY_KEY_PATH="$GRANT_VERIFY_KEY_PATH" \
+    cargo run --release --bin native_skill_executor) &
+EXECUTOR_PID=$!
+
 echo "Starting Trust Gateway..."
 (cd execution_plane/trust_gateway && \
     POLICY_PATH="../../agent_in_a_box/host/config/policy.toml" \

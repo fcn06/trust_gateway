@@ -21,11 +21,15 @@ SAFE_ACTION_ID="${SKILL_ACTION_ID:-none}"
 # 3. Extract the "text" field specifically and ensure valid JSON output
 if command -v jq >/dev/null 2>&1; then
     # jq is universally the best and safest tool for JSON in shell scripts
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // .error // empty')
+    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // .error // .detail.message // .detail // empty')
     if [ "$ERROR_MSG" != "" ] && [ "$ERROR_MSG" != "null" ]; then
         TEXT="Extraction API Error: $ERROR_MSG"
     else
         TEXT=$(echo "$RESPONSE" | jq -r '.text // empty')
+        # If it's still completely empty, give a fallback message so the LLM knows it failed silently
+        if [ "$TEXT" = "" ]; then
+            TEXT="Extraction API Error: No text content could be extracted from this URL."
+        fi
     fi
     
     jq -n \

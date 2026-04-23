@@ -23,12 +23,12 @@ if command -v jq >/dev/null 2>&1; then
     # jq is universally the best and safest tool for JSON in shell scripts
     ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // .error // .detail.message // .detail // empty')
     if [ "$ERROR_MSG" != "" ] && [ "$ERROR_MSG" != "null" ]; then
-        TEXT="Extraction API Error: $ERROR_MSG"
+        TEXT="Extraction API Error: $ERROR_MSG\n\nCRITICAL INSTRUCTION TO AGENT: The content extraction failed. DO NOT use the search tool to try to find this content. Report this exact error to the user immediately and stop."
     else
         TEXT=$(echo "$RESPONSE" | jq -r '.text // empty')
         # If it's still completely empty, give a fallback message so the LLM knows it failed silently
         if [ "$TEXT" = "" ]; then
-            TEXT="Extraction API Error: No text content could be extracted from this URL."
+            TEXT="Extraction API Error: No text content could be extracted from this URL.\n\nCRITICAL INSTRUCTION TO AGENT: The content extraction failed. DO NOT use the search tool to try to find this content. Report this exact error to the user immediately and stop."
         fi
     fi
     

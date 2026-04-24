@@ -13,6 +13,8 @@ pub fn ContactsAndInvitations(
     base_url: String,
     token: String,
     identities: ReadSignal<Vec<EnrichedIdentity>>,
+    refresh_trigger: ReadSignal<i32>,
+    set_refresh_trigger: WriteSignal<i32>,
 ) -> impl IntoView {
     let (active_tab, set_active_tab) = signal("contacts".to_string());
 
@@ -64,7 +66,13 @@ pub fn ContactsAndInvitations(
             // ── Tab Content ──────────────────────────────────────────
             <div>
                 <Show when=move || active_tab.get() == "contacts">
-                    <ContactRequestsSection base_url=base_url_a.clone() token=token_a.clone() identities=identities />
+                    <ContactRequestsSection 
+                        base_url=base_url_a.clone() 
+                        token=token_a.clone() 
+                        identities=identities 
+                        refresh_trigger=refresh_trigger 
+                        set_refresh_trigger=set_refresh_trigger
+                    />
                 </Show>
                 <Show when=move || active_tab.get() == "invitations">
                     <InvitationsSection base_url=base_url_b.clone() token=token_b.clone() />

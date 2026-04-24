@@ -30,6 +30,10 @@ pub struct ActionTimelineSummary {
     pub status: String,
     pub risk_level: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub owner_did: Option<String>,
+    #[serde(default)]
+    pub requester_did: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +240,13 @@ async fn process_audit_message(
         if let Some(source) = details.get("source_type").and_then(|v| v.as_str()) {
             timeline.summary.source_type = source.to_string();
         }
+        // Extract ownership DIDs
+        if let Some(actor) = details.get("actor").and_then(|v| v.as_str()) {
+            timeline.summary.requester_did = Some(actor.to_string());
+        }
+        if let Some(owner) = details.get("owner_did").and_then(|v| v.as_str()) {
+            timeline.summary.owner_did = Some(owner.to_string());
+        }
     }
 
     // Extract approval_id from relevant events
@@ -266,6 +277,8 @@ fn new_timeline(action_id: &str, tenant_id: &str, event_type: &str, details: &se
             status: projected_status(event_type, details),
             risk_level: None,
             created_at: now.clone(),
+            owner_did: None,
+            requester_did: None,
         },
         timeline: vec![],
         last_updated_at: now,

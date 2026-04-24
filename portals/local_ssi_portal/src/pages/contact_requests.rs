@@ -10,14 +10,15 @@ use crate::types::{ContactRequest, EnrichedIdentity};
 pub fn ContactRequestsSection(
     base_url: String, 
     token: String, 
-    identities: ReadSignal<Vec<EnrichedIdentity>>
+    identities: ReadSignal<Vec<EnrichedIdentity>>,
+    refresh_trigger: ReadSignal<i32>,
+    set_refresh_trigger: WriteSignal<i32>,
 ) -> impl IntoView {
     let (target_did, set_target_did) = signal(String::new());
     let (msg_body, set_msg_body) = signal(String::new());
     let (is_sending, set_is_sending) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let (success, set_success) = signal(Option::<String>::None);
-    let (trigger, set_trigger) = signal(0);
     let (is_offline, set_is_offline) = signal(false);
     
     let (requests, set_requests) = signal(Vec::<ContactRequest>::new());
@@ -28,7 +29,7 @@ pub fn ContactRequestsSection(
     Effect::new(move |_| {
         let ab = base_url.get_value();
         let tt = token.get_value();
-        let _ = trigger.get();
+        let _ = refresh_trigger.get();
         spawn_local(async move {
             if let Ok(list) = api::get_contact_requests(&ab, tt).await {
                 set_requests.set(list);
@@ -62,7 +63,7 @@ pub fn ContactRequestsSection(
                         set_success.set(Some("Offline connection request sent!".to_string()));
                         set_target_did.set(String::new());
                         set_msg_body.set(String::new());
-                        set_trigger.update(|n| *n += 1);
+                        set_refresh_trigger.update(|n| *n += 1);
                     },
                     Err(e) => set_error.set(Some(format!("Failed to send: {}", e))),
                 }
@@ -78,7 +79,7 @@ pub fn ContactRequestsSection(
                         set_success.set(Some("Contact request sent successfully!".to_string()));
                         set_target_did.set(String::new());
                         set_msg_body.set(String::new());
-                        set_trigger.update(|n| *n += 1);
+                        set_refresh_trigger.update(|n| *n += 1);
                     },
                     Err(e) => set_error.set(Some(format!("Failed to send: {}", e))),
                 }
@@ -187,7 +188,7 @@ pub fn ContactRequestsSection(
                 <div class="p-4 border-b border-slate-700 flex justify-between items-center">
                     <h3 class="text-lg font-semibold">"Pending Requests"</h3>
                     <button 
-                        on:click=move |_| set_trigger.update(|n| *n += 1)
+                        on:click=move |_| set_refresh_trigger.update(|n| *n += 1)
                         class="text-xs text-blue-400 hover:text-blue-300"
                     >
                         "Refresh"
@@ -292,7 +293,7 @@ pub fn ContactRequestsSection(
                                                                             match api::accept_contact_request(&ab, id, tt).await {
                                                                                 Ok(_) => {
                                                                                     set_success.set(Some("Contact request accepted!".to_string()));
-                                                                                    set_trigger.update(|n| *n += 1);
+                                                                                    set_refresh_trigger.update(|n| *n += 1);
                                                                                 },
                                                                                 Err(e) => set_error.set(Some(format!("Failed: {}", e))),
                                                                             }
@@ -313,7 +314,7 @@ pub fn ContactRequestsSection(
                                                                             match api::refuse_contact_request(&ab, id, tt).await {
                                                                                 Ok(_) => {
                                                                                     set_success.set(Some("Contact request refused.".to_string()));
-                                                                                    set_trigger.update(|n| *n += 1);
+                                                                                    set_refresh_trigger.update(|n| *n += 1);
                                                                                 },
                                                                                 Err(e) => set_error.set(Some(format!("Failed: {}", e))),
                                                                             }

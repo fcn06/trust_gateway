@@ -69,8 +69,8 @@ if ! command -v trunk &> /dev/null; then
     exit 1
 fi
 
-echo "Starting NATS JetStream server..."
-nats-server -js &
+echo "Starting NATS JetStream server with local persistence..."
+nats-server -js -sd .nats_data &
 NATS_PID=$!
 
 function cleanup {
@@ -82,8 +82,11 @@ trap cleanup EXIT
 
 # Build components if requested or if missing
 if [[ "${1:-}" != "--skip-build" ]]; then
-    echo "🔨 Building WASM components and services..."
-    (cd agent_in_a_box && make build)
+    echo "🔨 Ensuring all components are built..."
+    # We rely on 'cargo run --release' and 'trunk serve --release' to handle 
+    # incremental builds efficiently. If the user ran 'make', these will be instant.
+else
+    echo "⏩ Skipping build checks (--skip-build set)"
 fi
 
 echo "Starting OAuth Connector MCP Server..."
@@ -111,7 +114,7 @@ echo "Starting Agent in a Box Host..."
 HOST_PID=$!
 
 echo "Starting Local SSI Portal..."
-(cd portals/local_ssi_portal && trunk serve --port 8080) &
+(cd portals/local_ssi_portal && EDITION=${EDITION} trunk serve --release --port 8080) &
 PORTAL_PID=$!
 
 echo "⏳ Waiting for services to initialize..."

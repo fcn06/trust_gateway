@@ -35,11 +35,14 @@ pub fn TrustReplay(
 
     // Fetch actions on mount
     let gw = gateway_url.clone();
+    let tok_on_mount = token.clone();
     Effect::new(move |_| {
         let url = gw.clone();
+        let tok = tok_on_mount.clone();
         set_loading.set(true);
         spawn_local(async move {
             match reqwasm::http::Request::get(&format!("{}/api/actions?limit=100", url))
+                .header("Authorization", &format!("Bearer {}", tok))
                 .send()
                 .await
             {
@@ -61,8 +64,9 @@ pub fn TrustReplay(
         });
     });
 
-    // Store gateway URL in a signal so on:click handlers can read it
-    let (gw_url, _) = signal(gateway_url);
+    // Store gateway URL and token in signals so on:click handlers can read them
+    let (gw_url_sig, _) = signal(gateway_url);
+    let (token_sig, _) = signal(token);
 
     // WS3.2: Filter state
     let (status_filter, set_status_filter) = signal("all".to_string());
@@ -326,10 +330,12 @@ pub fn TrustReplay(
                                 <div
                                     class="bg-slate-800 rounded-xl p-4 border border-slate-700 hover:border-blue-500/30 transition-all cursor-pointer group"
                                     on:click=move |_| {
-                                        let url = gw_url.get();
+                                        let url = gw_url_sig.get();
+                                        let tok = token_sig.get();
                                         let id = aid.clone();
                                         spawn_local(async move {
                                             match reqwasm::http::Request::get(&format!("{}/api/actions/{}", url, id))
+                                                .header("Authorization", &format!("Bearer {}", tok))
                                                 .send()
                                                 .await
                                             {

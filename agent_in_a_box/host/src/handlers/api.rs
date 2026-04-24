@@ -810,8 +810,15 @@ pub async fn export_audit_events_handler(
     headers: HeaderMap,
     Query(params): Query<AuditExportParams>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let _claims = extract_claims(&shared, &headers).await?;
+    let claims = extract_claims(&shared, &headers).await?;
     
+    // Resolve user DIDs to filter activity
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ListIdentities(claims.user_id.clone(), tx)).await;
+    let my_dids = rx.await.unwrap_or_default();
+    let my_tenant_id = crate::auth::lookup_user_tenant(&shared, &claims.user_id).await
+        .unwrap_or_else(|| "default".to_string());
+
     if let Some(nc) = &shared.nats {
         let js = async_nats::jetstream::new(nc.clone());
         let tenant_prefix = if shared.config.tenant_id.is_empty() {
@@ -842,7 +849,7 @@ pub async fn export_audit_events_handler(
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
         };
         
-        // ADDED .expires(...) to prevent the stream reader from hanging forever waiting for exactly `limit` events!
+        // Fetch messages from the stream
         let mut messages = match consumer.fetch().max_messages(limit).expires(std::time::Duration::from_millis(300)).messages().await {
             Ok(m) => m,
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -853,14 +860,58 @@ pub async fn export_audit_events_handler(
             match tokio::time::timeout(std::time::Duration::from_millis(50), messages.next()).await {
                 Ok(Some(Ok(m))) => {
                     if let Ok(event) = serde_json::from_slice::<serde_json::Value>(&m.payload) {
-                        events.push(event);
+                        // FILTER: Only show events belonging to the user's DIDs or user_id
+                        let mut belongs_to_user = false;
+                        
+                        if let Some(did) = event.get("user_did").and_then(|v| v.as_str()) {
+                            if my_dids.contains(&did.to_string()) {
+                                belongs_to_user = true;
+                            }
+                        }
+                        
+                        if !belongs_to_user {
+                            if let Some(uid) = event.get("user_id").and_then(|v| v.as_str()) {
+                                if uid == &claims.user_id {
+                                    belongs_to_user = true;
+                                }
+                            }
+                        }
+
+                        if !belongs_to_user {
+                            if let Some(tid) = event.get("tenant_id").and_then(|v| v.as_str()) {
+                                if tid == my_tenant_id {
+                                    belongs_to_user = true;
+                                }
+                            }
+                        }
+
+                        if !belongs_to_user {
+                            if let Some(jti) = event.get("session_jti").and_then(|v| v.as_str()) {
+                                if Some(jti) == claims.jti.as_deref() {
+                                    belongs_to_user = true;
+                                }
+                            }
+                        }
+
+                        if belongs_to_user {
+                            tracing::debug!("✅ Audit match: action={}, user_id_match={}, did_match={}, tenant_match={}, jti_match={}", 
+                                event.get("action").and_then(|v| v.as_str()).unwrap_or("?"),
+                                event.get("user_id").and_then(|v| v.as_str()) == Some(&claims.user_id),
+                                event.get("user_did").and_then(|v| v.as_str()).map(|d| my_dids.contains(&d.to_string())).unwrap_or(false),
+                                event.get("tenant_id").and_then(|v| v.as_str()) == Some(my_tenant_id.as_str()),
+                                event.get("session_jti").and_then(|v| v.as_str()) == claims.jti.as_deref(),
+                            );
+                            events.push(event);
+                        } else {
+                            tracing::trace!("⏭️ Audit skip: action={}, tenant_id={:?}, my_tenant={:?}", 
+                                event.get("action").and_then(|v| v.as_str()).unwrap_or("?"),
+                                event.get("tenant_id").and_then(|v| v.as_str()),
+                                my_tenant_id);
+                        }
                     }
                     let _ = m.ack().await;
                 }
-                _ => {
-                    // Break on timeout, stream completion, or error
-                    break;
-                }
+                _ => break,
             }
         }
         

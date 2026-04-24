@@ -13,6 +13,8 @@ pub fn Inbox(
     token: String,
     policies: ReadSignal<Vec<ConnectionPolicy>>,
     identities: ReadSignal<Vec<EnrichedIdentity>>,
+    refresh_trigger: ReadSignal<i32>,
+    set_refresh_trigger: WriteSignal<i32>,
 ) -> impl IntoView {
     let (messages, set_messages) = signal(Vec::<PlainDidcomm>::new());
     let (loading, set_loading) = signal(true);
@@ -202,7 +204,10 @@ pub fn Inbox(
                     <button
                         on:click={
                             let fm = fetch_msgs.clone();
-                            move |_| fm()
+                            move |_| {
+                                fm();
+                                set_refresh_trigger.update(|n| *n += 1);
+                            }
                         }
                         class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-medium shadow-sm border border-slate-600 transition-colors flex items-center gap-2"
                     >

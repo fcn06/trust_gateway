@@ -13,50 +13,29 @@ pub fn Identities(
     token: String, 
     user_id: String, 
     identities: ReadSignal<Vec<EnrichedIdentity>>, 
-    set_identities: WriteSignal<Vec<EnrichedIdentity>>
+    set_identities: WriteSignal<Vec<EnrichedIdentity>>,
+    active_did: ReadSignal<String>,
+    set_active_did: WriteSignal<String>,
+    refresh_trigger: ReadSignal<i32>,
+    set_refresh_trigger: WriteSignal<i32>,
+    policies: ReadSignal<Vec<crate::types::ConnectionPolicy>>,
 ) -> impl IntoView {
-    let (trigger, set_trigger) = signal(0);
     let (status_message, set_status_message) = signal(Option::<(String, bool)>::None);
     let (published_dids, set_published_dids) = signal(Vec::<String>::new());
 
     let base_url = store_value(base_url);
     let token = store_value(token);
     let tt = token.get_value();
-    let (active_did, set_active_did) = signal(String::new());
 
     let (enrich_did, set_enrich_did) = signal(Option::<String>::None);
     let (enrich_alias, set_enrich_alias) = signal(String::new());
     let (enrich_is_institutional, set_enrich_is_institutional) = signal(false);
 
-    // Fetch active DID
-    let ab_for_active = base_url.get_value();
-    Effect::new(move |_| {
-        let _ = trigger.get(); 
-        let tt = tt.clone();
-        let ab = ab_for_active.clone();
-        spawn_local(async move {
-            if let Ok(did) = api::get_active_did(&ab, tt).await {
-                set_active_did.set(did);
-            }
-        });
-    });
-
-    Effect::new(move |_| {
-        let _ = trigger.get();
-        let tt = token.get_value();
-        let ab = base_url.get_value();
-        spawn_local(async move {
-            match api::list_identities(&ab, tt).await {
-                Ok(list) => set_identities.set(list),
-                Err(e) => log::error!("Failed to load identities: {}", e),
-            }
-        });
-    });
-    
+    // Initial load and refresh handling
     let user_id_for_published = user_id.clone();
     let ab_for_published = base_url.get_value();
     Effect::new(move |_| {
-        let _ = trigger.get();
+        let _ = refresh_trigger.get();
         let uid = user_id_for_published.clone();
         let ab = ab_for_published.clone();
         spawn_local(async move {
@@ -74,7 +53,7 @@ pub fn Identities(
             match api::create_identity(&ab, tt).await {
                 Ok(_) => {
                     log::info!("Identity generated");
-                    set_trigger.update(|n| *n += 1);
+                    set_refresh_trigger.update(|n| *n += 1);
                 },
                 Err(e) => log::error!("Failed to generate identity: {}", e),
             }
@@ -89,7 +68,7 @@ pub fn Identities(
                 <h2 class="text-2xl font-bold text-white">"Manage Identities"</h2>
                 <div class="flex flex-wrap gap-2">
                     <button
-                        on:click=move |_| set_trigger.update(|n| *n += 1)
+                        on:click=move |_| set_refresh_trigger.update(|n| *n += 1)
                         class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-sm border border-slate-600">
                         "Refresh"
                     </button>
@@ -145,7 +124,7 @@ pub fn Identities(
                 }
                 let active_did = active_did;
                 let token = token;
-                let set_trigger = set_trigger;
+                let refresh_trigger = refresh_trigger;
                 view! {
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <For
@@ -158,14 +137,13 @@ pub fn Identities(
                                 let on_activate = {
                                     let d = did.clone();
                                     let ab = base_url.get_value();
-                                    let st = set_trigger;
                                     move |_| {
                                         let d = d.clone();
                                         let ab = ab.clone();
-                                        let tok = tt.clone();
+                                        let tt = tt.clone();
                                         spawn_local(async move {
-                                            if let Ok(_) = api::activate_identity(&ab, d, tok).await {
-                                                st.update(|n| *n += 1);
+                                            if let Ok(_) = api::activate_identity(&ab, d, tt).await {
+                                                set_refresh_trigger.update(|n| *n += 1);
                                             }
                                         });
                                     }
@@ -269,7 +247,13 @@ pub fn Identities(
                 let tt = token.get_value();
                 view! {
                     <div class="h-px bg-slate-700 w-full my-4"></div>
-                    <crate::pages::ApprovedContactsSection base_url=ab token=tt />
+                    <crate::pages::ApprovedContactsSection 
+                        base_url=ab 
+                        token=tt 
+                        policies=policies 
+                        refresh_trigger=refresh_trigger 
+                        set_refresh_trigger=set_refresh_trigger
+                    />
                 }
             }
 
@@ -309,7 +293,7 @@ pub fn Identities(
                             spawn_local(async move {
                                 match api::enrich_identity(&ab, did, a, inst, tt).await {
                                     Ok(_) => {
-                                        set_trigger.update(|n| *n += 1);
+                                        set_refresh_trigger.update(|n| *n += 1);
                                         set_enrich_did.set(None);
                                     },
                                     Err(e) => log::error!("Enrichment save failed: {}", e),

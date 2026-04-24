@@ -7,3 +7,4 @@
 **/dist/
 # WS1: Ed25519 grant signing keys (auto-generated, never commit)
 .keys/
+.nats_data

@@ -47,6 +47,8 @@ pub struct GatewayState {
     pub circuit_breakers: std::collections::HashMap<String, router::CircuitBreaker>,
     /// Allowed CORS origins (configurable via ALLOWED_ORIGINS env var).
     pub allowed_origins: Vec<String>,
+    /// JWT secret for session verification.
+    pub jwt_secret: String,
 }
 
 /// The payload received from the ssi_agent via NATS (backward compat).

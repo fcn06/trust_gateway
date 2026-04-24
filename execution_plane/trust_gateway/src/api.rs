@@ -20,6 +20,8 @@ use tower_http::cors::CorsLayer;
 use trust_core::action::OperationKind;
 
 use crate::gateway::{GatewayState, GatewayResponse, ProposeActionRequest};
+use axum::http::StatusCode;
+use jwt_simple::prelude::*;
 
 /// Build the Axum router with all gateway routes.
 pub fn build_router(state: Arc<GatewayState>) -> Router {
@@ -75,11 +77,31 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
 
 /// Extract Bearer token from the Authorization header.
 fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
-    headers
+    let tok = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    
+    if tok.is_none() {
+        tracing::debug!("🚫 No Bearer token found in Authorization header");
+    }
+    tok.map(|s| s.to_string())
+}
+
+/// Verify the session JWT and return claims.
+fn verify_auth(headers: &axum::http::HeaderMap, secret: &str) -> Result<identity_context::jwt::JwtClaims, StatusCode> {
+    let token = extract_bearer_token(headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    
+    // Phase 1.1: Use jwt-simple for verification (shared secret HMAC)
+    let key = HS256Key::from_bytes(secret.as_bytes());
+    let _ = key.verify_token::<serde_json::Value>(&token, None)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    // Once verified, decode the claims using the normalized identity-context logic
+    let claims = identity_context::jwt::decode_jwt_claims(&token)
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    
+    Ok(claims)
 }
 
 /// POST /v1/actions/propose — the main gateway entry point.
@@ -287,13 +309,18 @@ fn default_limit() -> usize { 50 }
 /// GET /api/actions — List all tracked actions with summary.
 async fn list_actions_handler(
     State(state): State<Arc<GatewayState>>,
+    headers: axum::http::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<ListActionsQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Phase 2: Mandatory authentication
+    let claims = verify_auth(&headers, &state.jwt_secret)?;
+    let my_did = if !claims.sub.is_empty() { claims.sub } else { claims.iss };
+
     let kv_store = match state.jetstream.get_key_value("action_timelines").await {
         Ok(store) => store,
         Err(e) => {
             tracing::warn!("Cannot access action_timelines KV: {}", e);
-            return Json(serde_json::json!({ "actions": [], "total": 0, "error": format!("{}", e) }));
+            return Ok(Json(serde_json::json!({ "actions": [], "total": 0, "error": format!("{}", e) })));
         }
     };
 
@@ -304,7 +331,18 @@ async fn list_actions_handler(
             while let Some(Ok(key)) = tokio_stream::StreamExt::next(&mut keys).await {
                 if let Ok(Some(entry)) = kv_store.get(&key).await {
                     if let Ok(timeline) = serde_json::from_slice::<crate::audit_projector::ActionTimeline>(&entry) {
-                        // Apply filters
+                        // FILTER: Only show actions owned by the authenticated user or matching tenant
+                        let is_owner = timeline.summary.owner_did.as_ref().map(|d| d == &my_did).unwrap_or(false);
+                        let is_requester = timeline.summary.requester_did.as_ref().map(|d| d == &my_did).unwrap_or(false);
+                        let tenant_match = !timeline.tenant_id.is_empty() && timeline.tenant_id == claims.tenant_id;
+                        
+                        let belongs_to_me = is_owner || is_requester || tenant_match;
+                        
+                        if !belongs_to_me {
+                            continue;
+                        }
+
+                        // Apply additional filters
                         if let Some(ref status_filter) = query.status {
                             if timeline.summary.status != *status_filter {
                                 continue;
@@ -349,61 +387,96 @@ async fn list_actions_handler(
         actions.truncate(query.limit);
     }
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "actions": actions,
         "total": total,
-    }))
+    })))
 }
 
 /// GET /api/actions/:action_id — Full action detail with timeline.
 async fn get_action_handler(
     State(state): State<Arc<GatewayState>>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(action_id): axum::extract::Path<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let claims = verify_auth(&headers, &state.jwt_secret)?;
+    let my_did = if !claims.sub.is_empty() { claims.sub } else { claims.iss };
+
     let kv_store = match state.jetstream.get_key_value("action_timelines").await {
         Ok(store) => store,
         Err(e) => {
-            return Json(serde_json::json!({ "error": format!("KV access failed: {}", e) }));
+            return Ok(Json(serde_json::json!({ "error": format!("KV access failed: {}", e) })));
         }
     };
 
     match kv_store.get(&action_id).await {
         Ok(Some(entry)) => {
             match serde_json::from_slice::<crate::audit_projector::ActionTimeline>(&entry) {
-                Ok(timeline) => Json(serde_json::to_value(timeline).unwrap_or_default()),
-                Err(e) => Json(serde_json::json!({ "error": format!("Deserialize error: {}", e) })),
+                Ok(timeline) => {
+                    let is_owner = timeline.summary.owner_did.as_ref().map(|d| d == &my_did).unwrap_or(false);
+                    let is_requester = timeline.summary.requester_did.as_ref().map(|d| d == &my_did).unwrap_or(false);
+                    let tenant_match = !timeline.tenant_id.is_empty() && timeline.tenant_id == claims.tenant_id;
+                    
+                    let belongs_to_me = is_owner || is_requester || tenant_match;
+                    
+                    if !belongs_to_me {
+                        return Err(StatusCode::FORBIDDEN);
+                    }
+
+                    Ok(Json(serde_json::to_value(timeline).unwrap_or_default()))
+                },
+                Err(e) => Ok(Json(serde_json::json!({ "error": format!("Deserialize error: {}", e) }))),
             }
         }
-        Ok(None) => Json(serde_json::json!({ "error": "Action not found" })),
-        Err(e) => Json(serde_json::json!({ "error": format!("{}", e) })),
+        Ok(None) => Ok(Json(serde_json::json!({ "error": "Action not found" }))),
+        Err(e) => Ok(Json(serde_json::json!({ "error": format!("{}", e) }))),
     }
 }
 
 /// GET /api/actions/:action_id/timeline — Timeline events only.
 async fn get_action_timeline_handler(
     State(state): State<Arc<GatewayState>>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(action_id): axum::extract::Path<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let claims = verify_auth(&headers, &state.jwt_secret)?;
+    let my_did = if !claims.sub.is_empty() { claims.sub } else { claims.iss };
+
     let kv_store = match state.jetstream.get_key_value("action_timelines").await {
         Ok(store) => store,
         Err(e) => {
-            return Json(serde_json::json!({ "error": format!("KV access failed: {}", e) }));
+            return Ok(Json(serde_json::json!({ "error": format!("KV access failed: {}", e) })));
         }
     };
 
     match kv_store.get(&action_id).await {
         Ok(Some(entry)) => {
             match serde_json::from_slice::<crate::audit_projector::ActionTimeline>(&entry) {
-                Ok(timeline) => Json(serde_json::json!({
-                    "action_id": timeline.action_id,
-                    "status": timeline.summary.status,
-                    "timeline": timeline.timeline,
-                })),
-                Err(e) => Json(serde_json::json!({ "error": format!("Deserialize error: {}", e) })),
+                Ok(timeline) => {
+                    // Check ownership
+                    let mut belongs_to_me = false;
+                    if let Some(ref owner) = timeline.summary.owner_did {
+                        if owner == &my_did { belongs_to_me = true; }
+                    }
+                    if let Some(ref req) = timeline.summary.requester_did {
+                        if req == &my_did { belongs_to_me = true; }
+                    }
+                    
+                    if !belongs_to_me {
+                        return Err(StatusCode::FORBIDDEN);
+                    }
+
+                    Ok(Json(serde_json::json!({
+                        "action_id": timeline.action_id,
+                        "status": timeline.summary.status,
+                        "timeline": timeline.timeline,
+                    })))
+                },
+                Err(e) => Ok(Json(serde_json::json!({ "error": format!("Deserialize error: {}", e) }))),
             }
         }
-        Ok(None) => Json(serde_json::json!({ "error": "Action not found" })),
-        Err(e) => Json(serde_json::json!({ "error": format!("{}", e) })),
+        Ok(None) => Ok(Json(serde_json::json!({ "error": "Action not found" }))),
+        Err(e) => Ok(Json(serde_json::json!({ "error": format!("{}", e) }))),
     }
 }
 

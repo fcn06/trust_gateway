@@ -140,6 +140,7 @@ async fn main() -> Result<()> {
     let policy_engine = trust_policy::TomlPolicyEngine::from_file(&args.policy_path)
         .map_err(|e| anyhow::anyhow!("Failed to load policy: {}", e))?;
     tracing::info!("✅ Loaded policy ({} rules)", policy_engine.rule_count());
+    tracing::info!("🔐 JWT secret loaded (len={})", args.jwt_secret.len());
 
     // Connect to NATS
     let nats_options = async_nats::ConnectOptions::new()
@@ -301,6 +302,7 @@ async fn main() -> Result<()> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect(),
+        jwt_secret: args.jwt_secret.clone(),
     });
 
     let cancel_token = tokio_util::sync::CancellationToken::new();

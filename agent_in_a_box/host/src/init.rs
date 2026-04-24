@@ -124,10 +124,9 @@ pub fn setup_webauthn(config: &HostConfig) -> Result<Webauthn> {
 // Load or Generate Server Keys
 pub fn load_server_keys() -> Result<ServerKeys> {
     let path = std::path::Path::new("config/server.keys");
-    if path.exists() {
+    let mut keys = if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        let keys: ServerKeys = serde_json::from_str(&content)?;
-        Ok(keys)
+        serde_json::from_str::<ServerKeys>(&content)?
     } else {
         tracing::warn!("⚠️ server.keys not found, generating new keys...");
         let mut rng = rand::thread_rng();
@@ -137,14 +136,24 @@ pub fn load_server_keys() -> Result<ServerKeys> {
         let mut jwt_seed = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rng, &mut jwt_seed);
         
-        let keys = ServerKeys {
+        let k = ServerKeys {
             house_salt: house_salt.to_vec(),
             jwt_key_bytes: jwt_seed.to_vec(),
         };
         
         // Ensure config dir exists
         std::fs::create_dir_all("config")?;
-        std::fs::write(path, serde_json::to_string_pretty(&keys)?)?;
-        Ok(keys)
+        std::fs::write(path, serde_json::to_string_pretty(&k)?)?;
+        k
+    };
+
+    // Override JWT key if environment variable is set (synchronization for dev mode)
+    if let Ok(env_secret) = std::env::var("JWT_SECRET") {
+        if !env_secret.is_empty() {
+            tracing::info!("🔐 Syncing JWT key with environment (JWT_SECRET set, len={})", env_secret.len());
+            keys.jwt_key_bytes = env_secret.as_bytes().to_vec();
+        }
     }
+
+    Ok(keys)
 }

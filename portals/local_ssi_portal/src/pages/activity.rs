@@ -217,7 +217,7 @@ pub fn Activity(
             }
 
             // Source 2: Gateway governance actions
-            if let Ok(gw_actions) = fetch_gateway_actions(&gw).await {
+            if let Ok(gw_actions) = fetch_gateway_actions(&gw, &tok).await {
                 all_items.extend(gw_actions);
             }
 
@@ -292,7 +292,7 @@ pub fn Activity(
                                     set_loading.set(true);
                                     let mut all_items = Vec::new();
                                     if let Ok(h) = fetch_host_events(&b, &t).await { all_items.extend(h); }
-                                    if let Ok(g) = fetch_gateway_actions(&g).await { all_items.extend(g); }
+                                    if let Ok(g) = fetch_gateway_actions(&g, &t).await { all_items.extend(g); }
                                     all_items.sort_by_key(|i| std::cmp::Reverse(i.timestamp));
                                     set_items.set(all_items);
                                     set_loading.set(false);
@@ -544,9 +544,10 @@ async fn fetch_host_events(base: &str, tok: &str) -> Result<Vec<ActivityItem>, S
     Ok(items)
 }
 
-async fn fetch_gateway_actions(gateway_url: &str) -> Result<Vec<ActivityItem>, String> {
+async fn fetch_gateway_actions(gateway_url: &str, tok: &str) -> Result<Vec<ActivityItem>, String> {
     let url = format!("{}/api/actions?limit=50", gateway_url);
     let resp = reqwasm::http::Request::get(&url)
+        .header("Authorization", &format!("Bearer {}", tok))
         .send()
         .await
         .map_err(|e| format!("{}", e))?;

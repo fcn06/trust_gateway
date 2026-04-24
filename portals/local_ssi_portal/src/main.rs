@@ -34,6 +34,8 @@ fn App() -> impl IntoView {
     );
     let (policies, set_policies) = signal(Vec::<ConnectionPolicy>::new());
     let (identities, set_identities) = signal(Vec::<EnrichedIdentity>::new());
+    let (active_did, set_active_did) = signal(String::new());
+    let (refresh_trigger, set_refresh_trigger) = signal(0);
     let (show_mobile_menu, set_show_mobile_menu) = signal(false);
     let (show_audit_menu, set_show_audit_menu) = signal(false);
     let (config, set_config) = signal(PortalConfig::default());
@@ -109,11 +111,29 @@ fn App() -> impl IntoView {
         }
     });
 
-    // Load policies and identities when logged in
+    // Fetch active DID when logged in
     Effect::new(move |_| {
         let logged_in = is_logged_in.get();
         let tok = token.get();
         let api_base = config.get().api_base_url;
+        let _ = refresh_trigger.get();
+        if logged_in && !api_base.is_empty() {
+            spawn_local(async move {
+                if let Ok(did) = api::get_active_did(&api_base, tok).await {
+                    set_active_did.set(did);
+                }
+            });
+        }
+    });
+
+    // Load policies and identities when logged in OR active_did changes OR refresh_trigger fires
+    Effect::new(move |_| {
+        let logged_in = is_logged_in.get();
+        let tok = token.get();
+        let api_base = config.get().api_base_url;
+        let _active = active_did.get();
+        let _refresh = refresh_trigger.get();
+
         if logged_in && !api_base.is_empty() {
             spawn_local(async move {
                 if let Ok(list) = api::get_policies(&api_base, tok.clone()).await {
@@ -324,10 +344,10 @@ fn App() -> impl IntoView {
                             let api_base = config.get().api_base_url;
                             match active_section.get().as_str() {
                                 "dashboard" => view! { <pages::Dashboard username=username.get() token=token.get() base_url=api_base.clone() /> }.into_any(),
-                                "unified_inbox" | "inbox" | "hub" => view! { <pages::Inbox base_url=api_base.clone() token=token.get() policies=policies identities=identities /> }.into_any(),
+                                "unified_inbox" | "inbox" | "hub" => view! { <pages::Inbox base_url=api_base.clone() token=token.get() policies=policies identities=identities refresh_trigger=refresh_trigger set_refresh_trigger=set_refresh_trigger /> }.into_any(),
                                 "validation" => view! { <pages::EscalationRequestsSection base_url=api_base.clone() token=token.get() identities=identities /> }.into_any(),
-                                "manage_identities" => view! { <pages::Identities base_url=api_base.clone() username=username.get() token=token.get() user_id=user_id.get() identities=identities set_identities=set_identities /> }.into_any(),
-                                "contact_requests" => view! { <pages::ContactsAndInvitations base_url=api_base.clone() token=token.get() identities=identities /> }.into_any(),
+                                "manage_identities" => view! { <pages::Identities base_url=api_base.clone() username=username.get() token=token.get() user_id=user_id.get() identities=identities set_identities=set_identities active_did=active_did set_active_did=set_active_did refresh_trigger=refresh_trigger set_refresh_trigger=set_refresh_trigger policies=policies /> }.into_any(),
+                                "contact_requests" => view! { <pages::ContactsAndInvitations base_url=api_base.clone() token=token.get() identities=identities refresh_trigger=refresh_trigger set_refresh_trigger=set_refresh_trigger /> }.into_any(),
                                 "setup_web_identity" => view! { <pages::SetupWebIdentity base_url=api_base.clone() token=token.get() /> }.into_any(),
                                 "activity" | "trust_center" => view! { <pages::Activity base_url=api_base.clone() token=token.get() /> }.into_any(),
                                 "replay" | "trust_replay" => view! { <pages::TrustReplay base_url=api_base.clone() token=token.get() /> }.into_any(),
@@ -339,13 +359,13 @@ fn App() -> impl IntoView {
                                     if config.get().kitchen_menu_visible {
                                         view! { <pages::KitchenOrders config=config.get() identities=identities registration_cookie=registration_cookie /> }.into_any()
                                     } else {
-                                        view! { <pages::Inbox base_url=api_base.clone() token=token.get() policies=policies identities=identities /> }.into_any()
+                                        view! { <pages::Inbox base_url=api_base.clone() token=token.get() policies=policies identities=identities refresh_trigger=refresh_trigger set_refresh_trigger=set_refresh_trigger /> }.into_any()
                                     }
                                 },
                                 "messaging" => view! { <pages::Messaging base_url=api_base.clone() username=username.get() token=token.get() policies=policies identities=identities initial_msg=shared_msg.get() /> }.into_any(),
                                 "profile" => view! { <pages::Profile base_url=api_base.clone() token=token.get() user_id=user_id.get() username=username.get() /> }.into_any(),
                                 "self_service" => view! { <pages::SelfService base_url=api_base.clone() token=token.get() initial_msg=shared_msg.get() /> }.into_any(),
-                                _ => view! { <pages::Inbox base_url=api_base.clone() token=token.get() policies=policies identities=identities /> }.into_any(),
+                                _ => view! { <pages::Inbox base_url=api_base.clone() token=token.get() policies=policies identities=identities refresh_trigger=refresh_trigger set_refresh_trigger=set_refresh_trigger /> }.into_any(),
                             }
                         }}
                     </main>

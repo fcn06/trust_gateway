@@ -429,17 +429,32 @@ pub async fn finish_login_logic(shared: Arc<WebauthnSharedState>, session_id: St
                 Err(e) => tracing::error!("⚠️ Failed to unlock vault for {}: Channel error: {:?}", user_id, e),
             }
             
+            // Look up user's existing tenant membership
+            let tenant_id = lookup_user_tenant(&shared, &user_id).await;
+
+            // Generate random JTI for session correlation
+            let session_jti = uuid::Uuid::new_v4().to_string();
+
             // Generate JWT
             let my_claims = MyClaims {
                 user_id: user_id.clone(),
                 username: username.clone(),
+                tenant_id: tenant_id.clone(),
+                jti: None,
             };
+            
+            // Resolve primary DID for issuer
+            let (tx_did, rx_did) = tokio::sync::oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ListIdentities(user_id.clone(), tx_did)).await;
+            let my_dids = rx_did.await.unwrap_or_default();
+            let issuer = my_dids.first().cloned().unwrap_or_else(|| user_id.clone());
+
             let claims = jwt_simple::prelude::Claims::with_custom_claims(my_claims, Duration::from_hours(24))
-                .with_subject(user_id.clone());
+                .with_subject(user_id.clone())
+                .with_issuer(issuer)
+                .with_jwt_id(session_jti);
             let token = shared.jwt_key.authenticate(claims).unwrap_or_else(|_| "error".to_string());
             
-            // Look up user's existing tenant membership for the cookie
-            let tenant_id = lookup_user_tenant(&shared, &user_id).await;
             let cookie = derive_registration_cookie(shared.clone(), &user_id, &username, tenant_id).await?;
             
             // Trigger global subscriptions if not already active
@@ -473,12 +488,12 @@ pub async fn extract_claims(shared: &WebauthnSharedState, headers: &HeaderMap) -
     };
         
     let claims = shared.jwt_key.verify_token::<MyClaims>(token, None)
-        .map_err(|e| {
-            tracing::warn!("❌ JWT Verification Error: {:?}", e);
-            StatusCode::UNAUTHORIZED
-        })?;
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    
+    let mut custom = claims.custom;
+    custom.jti = claims.jwt_id;
         
-    Ok(claims.custom)
+    Ok(custom)
 }
 
 pub async fn resolve_active_did(shared: Arc<WebauthnSharedState>, headers: &HeaderMap) -> Result<String, StatusCode> {

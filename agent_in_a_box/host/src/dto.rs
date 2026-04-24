@@ -115,6 +115,10 @@ pub fn map_dto_to_wit(payload: PlainDidcommDto) -> MlsMessage {
 pub struct MyClaims {
     pub user_id: String,
     pub username: String,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    #[serde(skip)]
+    pub jti: Option<String>,
 }
 
 // === Identity DTOs ===

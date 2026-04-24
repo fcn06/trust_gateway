@@ -40,6 +40,12 @@ pub fn TrustReplay(
         let url = gw.clone();
         let tok = tok_on_mount.clone();
         set_loading.set(true);
+        
+        if tok.is_empty() {
+            log::warn!("🚫 TrustReplay: No token available for fetch!");
+        }
+        log::debug!("🌐 TrustReplay: Fetching from {} (tok len={})", url, tok.len());
+        
         spawn_local(async move {
             match reqwasm::http::Request::get(&format!("{}/api/actions?limit=100", url))
                 .header("Authorization", &format!("Bearer {}", tok))

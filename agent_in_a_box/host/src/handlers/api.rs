@@ -876,15 +876,9 @@ pub async fn export_audit_events_handler(
                                 }
                             }
                         }
-
-                        if !belongs_to_user {
-                            if let Some(tid) = event.get("tenant_id").and_then(|v| v.as_str()) {
-                                if tid == my_tenant_id {
-                                    belongs_to_user = true;
-                                }
-                            }
-                        }
-
+                        
+                        // We NO LONGER filter by tenant_id alone, as it's too permissive in community edition.
+                        // Only session JTI match is allowed as a secondary fallback.
                         if !belongs_to_user {
                             if let Some(jti) = event.get("session_jti").and_then(|v| v.as_str()) {
                                 if Some(jti) == claims.jti.as_deref() {
@@ -1737,26 +1731,13 @@ pub async fn get_escalation_requests_handler(
             }
         }
         
+        // Fallback for transition/legacy records: only allow if requester_did resolves to this user
         if !belongs_to_user {
-            if my_dids.contains(&req.requester_did) || my_dids.contains(&req.user_did) {
-                belongs_to_user = true;
-            } else {
-                let (tx1, rx1) = tokio::sync::oneshot::channel();
-                let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: req.requester_did.clone(), resp: tx1 }).await;
-                if let Ok(Some(uid)) = rx1.await {
-                    if uid == claims.user_id {
-                        belongs_to_user = true;
-                    }
-                }
-                
-                if !belongs_to_user {
-                    let (tx2, rx2) = tokio::sync::oneshot::channel();
-                    let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: req.user_did.clone(), resp: tx2 }).await;
-                    if let Ok(Some(uid)) = rx2.await {
-                        if uid == claims.user_id {
-                            belongs_to_user = true;
-                        }
-                    }
+            let (tx1, rx1) = tokio::sync::oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: req.requester_did.clone(), resp: tx1 }).await;
+            if let Ok(Some(uid)) = rx1.await {
+                if uid == claims.user_id {
+                    belongs_to_user = true;
                 }
             }
         }

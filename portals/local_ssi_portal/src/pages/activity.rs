@@ -525,6 +525,7 @@ fn StatCard(title: &'static str, value: impl Fn() -> String + Send + Sync + 'sta
 
 async fn fetch_host_events(base: &str, tok: &str) -> Result<Vec<ActivityItem>, String> {
     let url = format!("{}/tenant/current/audit/export?limit=200", base);
+    log::debug!("🌐 Activity: Fetching Host events from {} (tok len={})", url, tok.len());
     let resp = reqwasm::http::Request::get(&url)
         .header("Authorization", &format!("Bearer {}", tok))
         .send()
@@ -546,6 +547,7 @@ async fn fetch_host_events(base: &str, tok: &str) -> Result<Vec<ActivityItem>, S
 
 async fn fetch_gateway_actions(gateway_url: &str, tok: &str) -> Result<Vec<ActivityItem>, String> {
     let url = format!("{}/api/actions?limit=50", gateway_url);
+    log::debug!("🌐 Activity: Fetching Gateway actions from {} (tok len={})", url, tok.len());
     let resp = reqwasm::http::Request::get(&url)
         .header("Authorization", &format!("Bearer {}", tok))
         .send()

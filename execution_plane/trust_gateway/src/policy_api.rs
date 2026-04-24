@@ -62,7 +62,7 @@ pub struct SimulateResponse {
 pub async fn list_rules_handler(
     State(state): State<Arc<GatewayState>>,
 ) -> Json<serde_json::Value> {
-    let rules = state.policy_engine.list_rules_json();
+    let rules = state.security.policy_engine.list_rules_json();
     let total = rules.len();
     Json(serde_json::json!({
         "rules": rules,
@@ -173,7 +173,7 @@ pub async fn simulate_handler(
         },
     };
 
-    match state.policy_engine.evaluate(&action_req).await {
+    match state.security.policy_engine.evaluate(&action_req).await {
         Ok(decision) => {
             let (decision_str, reason, tier, proof_required, policy_id) = match &decision {
                 ActionDecision::Allow { policy_id } => {

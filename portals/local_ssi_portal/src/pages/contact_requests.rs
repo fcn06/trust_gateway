@@ -223,6 +223,18 @@ pub fn ContactRequestsSection(
                                         
                                         let is_incoming_role = req.role.as_deref() == Some("INCOMING");
                                         
+                                        let from_did = if is_incoming_role {
+                                            req.sender_did.clone()
+                                        } else {
+                                            req.owner_did.clone()
+                                        };
+                                        
+                                        let to_did = if is_incoming_role {
+                                            req.owner_did.clone()
+                                        } else {
+                                            req.sender_did.clone()
+                                        };
+                                        
                                         let date_str = {
                                             let timestamp = js_sys::Date::parse(&req.created_at); // Fixed date parsing for RFC3339
                                             let date = js_sys::Date::new(&timestamp.into());
@@ -247,7 +259,7 @@ pub fn ContactRequestsSection(
                                                         <span class="text-[10px] text-slate-500 font-mono truncate max-w-32 group relative cursor-help">
                                                             "View Details"
                                                             <div class="invisible group-hover:visible absolute left-0 bottom-full mb-1 p-2 bg-slate-800 border border-slate-600 rounded shadow-xl text-xs z-50 whitespace-nowrap">
-                                                                {req.sender_did.clone()}
+                                                                {from_did}
                                                             </div>
                                                         </span>
                                                     </div>
@@ -256,7 +268,7 @@ pub fn ContactRequestsSection(
                                                     <span class="text-[10px] text-slate-400 font-mono truncate max-w-32 group relative cursor-help">
                                                         "View Details"
                                                         <div class="invisible group-hover:visible absolute left-0 bottom-full mb-1 p-2 bg-slate-800 border border-slate-600 rounded shadow-xl text-xs z-50 whitespace-nowrap">
-                                                            {req.owner_did.clone()}
+                                                            {to_did}
                                                         </div>
                                                     </span>
                                                 </td>

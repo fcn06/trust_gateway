@@ -19,20 +19,28 @@ use crate::router;
 /// Uses trait objects for pluggability — enterprise editions can
 /// inject their own PolicyEngine, GrantIssuer, and AuditSink
 /// implementations without forking this module.
-pub struct GatewayState {
-    pub policy_engine: Arc<dyn PolicyEngine>,
-    pub grant_issuer: Arc<dyn GrantIssuer>,
-    pub audit_sink: Arc<dyn AuditSink>,
-    pub approval_store: Arc<dyn trust_core::traits::ApprovalStore>,
-    pub agent_registry: Arc<dyn trust_core::traits::AgentRegistry>,
-    pub nats: async_nats::Client,
-    pub jetstream: async_nats::jetstream::Context,
-    pub http_client: reqwest::Client,
+pub struct ConnectorConfig {
     pub connector_mcp_url: String,
     pub skill_executor_url: String,
     pub restaurant_service_url: String,
     pub vp_mcp_url: String,
     pub host_url: String,
+}
+
+pub struct SecurityState {
+    pub policy_engine: Arc<dyn PolicyEngine>,
+    pub grant_issuer: Arc<dyn GrantIssuer>,
+    pub audit_sink: Arc<dyn AuditSink>,
+}
+
+pub struct GatewayState {
+    pub security: SecurityState,
+    pub connectors: ConnectorConfig,
+    pub approval_store: Arc<dyn trust_core::traits::ApprovalStore>,
+    pub agent_registry: Arc<dyn trust_core::traits::AgentRegistry>,
+    pub nats: async_nats::Client,
+    pub jetstream: async_nats::jetstream::Context,
+    pub http_client: reqwest::Client,
     /// Phase 6: In-memory tool registry for registry-driven routing.
     pub tool_registry: Option<router::ToolRegistry>,
     /// WS1.2: Per-connector circuit breakers for resilience.
@@ -98,7 +106,7 @@ pub async fn process_action(
 
     // 1. Publish audit: action.proposed (Phase 7: enriched)
     crate::audit_sink::emit_audit(
-        &*state.audit_sink,
+        &*state.security.audit_sink,
         &tenant_id,
         AuditEventType::ActionProposed,
         "trust_gateway",
@@ -186,12 +194,12 @@ pub async fn process_action(
     }
 
     // 2. Evaluate policy
-    let decision = state.policy_engine.evaluate(&action_req).await
+    let decision = state.security.policy_engine.evaluate(&action_req).await
         .map_err(|e| anyhow::anyhow!("Policy evaluation failed: {}", e))?;
 
     // 3. Publish audit: policy.evaluated (enriched with agent_id)
     crate::audit_sink::emit_audit(
-        &*state.audit_sink,
+        &*state.security.audit_sink,
         &tenant_id,
         AuditEventType::PolicyEvaluated,
         "trust_gateway",
@@ -209,15 +217,15 @@ pub async fn process_action(
             tracing::info!("✅ Action '{}' allowed by policy '{}'", action_name, policy_id);
 
             // Issue ExecutionGrant
-            let grant = state.grant_issuer.issue_execution_grant(
+            let grant = state.security.grant_issuer.issue_execution_grant(
                 &action_req,
                 GrantClearance::AutoApproved,
                 std::time::Duration::from_secs(30),
             )?;
 
             // Publish audit: grant.issued
-            crate::audit_sink::emit_audit(
-        &*state.audit_sink,
+    crate::audit_sink::emit_audit(
+        &*state.security.audit_sink,
                 &tenant_id,
                 AuditEventType::GrantIssued,
                 "trust_gateway",
@@ -242,7 +250,7 @@ pub async fn process_action(
 
                     if action_result.status == ActionStatus::Succeeded {
                         crate::audit_sink::emit_audit(
-        &*state.audit_sink,
+        &*state.security.audit_sink,
                             &tenant_id,
                             AuditEventType::ActionSucceeded,
                             "trust_gateway",
@@ -266,7 +274,7 @@ pub async fn process_action(
                         })
                     } else {
                         crate::audit_sink::emit_audit(
-        &*state.audit_sink,
+        &*state.security.audit_sink,
                             &tenant_id,
                             AuditEventType::ActionFailed,
                             "trust_gateway",
@@ -301,7 +309,7 @@ pub async fn process_action(
                 Err(e) => {
                     let latency_ms = start_time.elapsed().as_millis();
                     crate::audit_sink::emit_audit(
-        &*state.audit_sink,
+        &*state.security.audit_sink,
                         &tenant_id,
                         AuditEventType::ActionFailed,
                         "trust_gateway",
@@ -376,7 +384,7 @@ pub async fn process_action(
 
             // Publish audit
             crate::audit_sink::emit_audit(
-                &*state.audit_sink,
+                &*state.security.audit_sink,
                 &tenant_id,
                 AuditEventType::ApprovalRequested,
                 "trust_gateway",
@@ -470,7 +478,7 @@ pub async fn process_action(
             }
 
             crate::audit_sink::emit_audit(
-                &*state.audit_sink,
+                &*state.security.audit_sink,
                 &tenant_id,
                 AuditEventType::ProofRequested,
                 "trust_gateway",

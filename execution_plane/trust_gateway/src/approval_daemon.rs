@@ -239,7 +239,7 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
         _ => trust_core::grant::GrantClearance::HumanApproved,
     };
         
-    let grant = match state.grant_issuer.issue_execution_grant(
+    let grant = match state.security.grant_issuer.issue_execution_grant(
         &action_req, clearance, std::time::Duration::from_secs(30)
     ) {
         Ok(g) => g,
@@ -256,7 +256,7 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
     
     // Audit: grant issued
     crate::audit_sink::emit_audit(
-        &*state.audit_sink, &tenant_id,
+        &*state.security.audit_sink, &tenant_id,
         AuditEventType::GrantIssued, "trust_gateway_daemon", &action_id, 
         serde_json::json!({
             "approval_id": approval_id,
@@ -293,7 +293,7 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
             }
 
             crate::audit_sink::emit_audit(
-                &*state.audit_sink, &tenant_id,
+                &*state.security.audit_sink, &tenant_id,
                 AuditEventType::ActionSucceeded, "trust_gateway_daemon", &action_id, 
                 serde_json::json!({
                     "connector": action_result.connector,
@@ -339,7 +339,7 @@ async fn execute_approved_action(state: Arc<GatewayState>, record: ApprovalRecor
             }
 
             crate::audit_sink::emit_audit(
-                &*state.audit_sink, &tenant_id,
+                &*state.security.audit_sink, &tenant_id,
                 AuditEventType::ActionFailed, "trust_gateway_daemon", &action_id, 
                 serde_json::json!({
                     "error": format!("{}", e),

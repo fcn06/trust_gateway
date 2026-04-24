@@ -207,7 +207,7 @@ async fn handle_tools_list(
 
     // Pull from ToolRegistry cache (same as HTTP tools_list_handler)
     if let Some(ref registry) = state.tool_registry {
-        registry.refresh_if_stale(&state.http_client, &state.host_url, &state.vp_mcp_url).await;
+        registry.refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url).await;
 
         for (name, entry) in registry.all_tools().await {
             tools.push(serde_json::json!({
@@ -218,7 +218,7 @@ async fn handle_tools_list(
         }
     } else {
         // Fallback: direct fetch if no registry configured (shouldn't happen in normal operation)
-        let url = format!("{}/.well-known/skills.json", state.host_url);
+        let url = format!("{}/.well-known/skills.json", state.connectors.host_url);
         let skills = match state.http_client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 resp.json::<serde_json::Value>().await.unwrap_or_default()

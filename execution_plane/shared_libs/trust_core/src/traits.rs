@@ -140,6 +140,7 @@ pub trait ProofVerifier: Send + Sync {
 #[async_trait::async_trait]
 pub trait AuditSink: Send + Sync {
     async fn publish(&self, event: AuditEvent) -> Result<(), AuditError>;
+    async fn flush(&self) {}
 }
 
 // ── Nonce Store (JTI Replay Prevention) ────────────────

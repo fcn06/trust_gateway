@@ -481,23 +481,23 @@ impl McpAgent {
 
         if let Some(first_choice) = response.choices.get(0) {
             if let Some(content) = &first_choice.message.content {
-                // Attempt to parse structured evaluation response
-                let is_unsatisfactory = match serde_json::from_str::<serde_json::Value>(content) {
-                    Ok(json) => json.get("satisfactory")
-                        .and_then(|v| v.as_bool())
-                        .map(|s| !s)
-                        .unwrap_or(false),
-                    Err(_) => {
-                        // Fallback: check for keyword (backward compat with non-JSON models)
-                        content.to_lowercase().contains("unsatisfactory")
+                // Parse structured evaluation response
+                #[derive(serde::Deserialize)]
+                struct EvalResult {
+                    satisfactory: bool,
+                    reason: String,
+                }
+
+                let (is_unsatisfactory, reason) = match serde_json::from_str::<EvalResult>(content) {
+                    Ok(eval) => (!eval.satisfactory, eval.reason),
+                    Err(e) => {
+                        tracing::warn!("⚠️ Failed to parse EvalResult JSON: {} - Raw: {}", e, content);
+                        // Fallback: If it's not valid JSON, treat it as unsatisfactory to force a retry
+                        (true, format!("Evaluation failed to produce valid JSON: {}", content))
                     }
                 };
 
                 if is_unsatisfactory {
-                    let reason = serde_json::from_str::<serde_json::Value>(content)
-                        .ok()
-                        .and_then(|j| j.get("reason").and_then(|r| r.as_str()).map(String::from))
-                        .unwrap_or_else(|| content.clone());
                     warn!("Tool execution unsatisfactory: {}", reason);
                     return Ok(AgentState::Correcting(reason));
                 }

@@ -67,7 +67,7 @@ pub async fn register_agent_handler(
         Ok(record) => {
             // Emit audit event for agent registration
             crate::audit_sink::emit_audit(
-                &*state.audit_sink,
+                &*state.security.audit_sink,
                 "system",
                 trust_core::audit::AuditEventType::ActionProposed,
                 "agent_registry",
@@ -149,7 +149,7 @@ pub async fn revoke_agent_handler(
         Ok(updated) => {
             // Emit audit event
             crate::audit_sink::emit_audit(
-                &*state.audit_sink,
+                &*state.security.audit_sink,
                 "system",
                 trust_core::audit::AuditEventType::ActionFailed,
                 "agent_registry",
@@ -182,7 +182,7 @@ pub async fn kill_agent_handler(
         Ok(()) => {
             // Emit audit event
             crate::audit_sink::emit_audit(
-                &*state.audit_sink,
+                &*state.security.audit_sink,
                 "system",
                 trust_core::audit::AuditEventType::ActionFailed,
                 "agent_registry",

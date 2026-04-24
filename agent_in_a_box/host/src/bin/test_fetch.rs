@@ -16,8 +16,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     
+    let consumer_name = format!("audit_export_test_{}", uuid::Uuid::new_v4());
     let consumer = stream.create_consumer(async_nats::jetstream::consumer::pull::Config {
         deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+        inactive_threshold: std::time::Duration::from_secs(10),
+        name: Some(consumer_name.clone()),
         ..Default::default()
     }).await?;
     
@@ -46,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
+    let _ = stream.delete_consumer(&consumer_name).await;
     println!("Total fetched with 50ms: {}", events);
     Ok(())
 }

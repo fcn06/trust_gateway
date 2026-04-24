@@ -48,7 +48,7 @@ make build
 
 The `start_dev.sh` script auto-generates a random `JWT_SECRET` if one is not set in `.env`.
 
-Once running, open the **Local SSI Portal** at **[http://localhost:8080/](http://localhost:8080/)** — a WebAuthn-authenticated web interface for identity management, agent interaction, and approval workflows.
+Once running, open the **Local SSI Portal** at **[http://localhost:8080/](http://localhost:8080/)** — a WebAuthn-authenticated web interface for identity management, agent interaction, and approval workflows. Once logged in, through developer console, you can get a JWT token, that you can use to interact with the gateway.
 
 ### Verify
 

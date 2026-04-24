@@ -114,6 +114,10 @@ impl trust_core::traits::AuditSink for JetStreamAuditSink {
                 AuditError::PublishFailed(e.to_string())
             })
     }
+
+    async fn flush(&self) {
+        let _ = self.nc.flush().await;
+    }
 }
 
 /// Helper to build and publish an audit event via the AuditSink trait.

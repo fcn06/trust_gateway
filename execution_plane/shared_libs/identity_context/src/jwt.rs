@@ -50,8 +50,10 @@ pub struct JwtClaims {
 
 /// Decode a JWT's payload section into structured claims.
 ///
-/// This does NOT validate signatures — it only base64-decodes the
-/// middle segment and deserializes the JSON payload.
+/// **WARNING:** This does NOT verify signatures. For authorization, verify via 
+/// the ssi_vault first. This function only base64-decodes the middle segment 
+/// and deserializes the JSON payload.
+#[must_use]
 pub fn decode_jwt_claims(jwt: &str) -> Option<JwtClaims> {
     let parts: Vec<&str> = jwt.split('.').collect();
     if parts.len() < 2 {
@@ -79,12 +81,14 @@ pub fn decode_jwt_claims(jwt: &str) -> Option<JwtClaims> {
 // so migration is a simple re-export.
 
 /// Extract owner_did (iss) and requester_did (sub) from a session JWT.
+#[must_use]
 pub fn extract_dids_from_jwt(jwt: &str) -> Option<(String, String)> {
     let claims = decode_jwt_claims(jwt)?;
     Some((claims.iss, claims.sub))
 }
 
 /// Extract tenant_id from a session JWT.
+#[must_use]
 pub fn extract_tenant_id_from_jwt(jwt: &str) -> Option<String> {
     let claims = decode_jwt_claims(jwt)?;
     if claims.tenant_id.is_empty() {
@@ -95,6 +99,7 @@ pub fn extract_tenant_id_from_jwt(jwt: &str) -> Option<String> {
 }
 
 /// Extract JTI (session correlation ID) from a session JWT.
+#[must_use]
 pub fn extract_jti_from_jwt(jwt: &str) -> Option<String> {
     let claims = decode_jwt_claims(jwt)?;
     if claims.jti.is_empty() {

@@ -61,7 +61,7 @@ pub async fn registry_handler(
     // Source 1: Existing ToolRegistry (Host skills.json + VP MCP)
     if let Some(ref registry) = state.tool_registry {
         registry
-            .refresh_if_stale(&state.http_client, &state.host_url, &state.vp_mcp_url)
+            .refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url)
             .await;
 
         for (name, entry) in registry.all_tools().await {

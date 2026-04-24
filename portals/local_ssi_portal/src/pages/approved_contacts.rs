@@ -60,11 +60,7 @@ pub fn ApprovedContactsSection(
                             each=move || requests.get()
                             key=|r| r.id.clone()
                             children=move |req| {
-                                let contact_did = if req.role.as_deref() == Some("INCOMING") {
-                                    req.sender_did.clone()
-                                } else {
-                                    req.owner_did.clone()
-                                };
+                                let contact_did = req.sender_did.clone();
                                 
                                 let did_short = if contact_did.len() > 18 {
                                     format!("{}...{}", &contact_did[..10], &contact_did[contact_did.len()-4..])

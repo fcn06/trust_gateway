@@ -288,7 +288,7 @@ pub async fn discover_vp_mcp_tools(uri: &str) -> Result<Vec<rmcp::model::Tool>> 
 async fn determine_executor_target(state: &GatewayState, tool_name: &str) -> ExecutorTarget {
     // Phase 6: Registry-first lookup
     if let Some(ref registry) = state.tool_registry {
-        registry.refresh_if_stale(&state.http_client, &state.host_url, &state.vp_mcp_url).await;
+        registry.refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url).await;
 
         if let Some(entry) = registry.lookup(tool_name).await {
             tracing::info!("📋 Registry-driven routing: '{}' → executor='{}'", tool_name, entry.executor_type);
@@ -451,7 +451,7 @@ async fn dispatch_to_connector_mcp(
     });
 
     let resp = state.http_client
-        .post(format!("{}/tools/execute", state.connector_mcp_url))
+        .post(format!("{}/tools/execute", state.connectors.connector_mcp_url))
         .json(&req_body)
         .send()
         .await
@@ -508,7 +508,7 @@ async fn dispatch_to_claw_executor(
     });
 
     let resp = state.http_client
-        .post(format!("{}/invoke", state.skill_executor_url))
+        .post(format!("{}/invoke", state.connectors.skill_executor_url))
         .json(&req_body)
         .send()
         .await
@@ -552,7 +552,7 @@ async fn dispatch_to_vp_mcp(
     tracing::info!("📡 Routing action '{}' directly to VP MCP Server", req.action.name);
 
     // Ensure the URI has /sse path
-    let mut sse_uri = state.vp_mcp_url.trim_end_matches('/').to_string();
+    let mut sse_uri = state.connectors.vp_mcp_url.trim_end_matches('/').to_string();
     if !sse_uri.ends_with("/sse") {
         sse_uri = format!("{}/sse", sse_uri);
     }
@@ -607,7 +607,7 @@ async fn dispatch_to_restaurant_service(
     });
 
     let resp = state.http_client
-        .post(format!("{}/invoke", state.restaurant_service_url))
+        .post(format!("{}/invoke", state.connectors.restaurant_service_url))
         .json(&req_body)
         .send()
         .await

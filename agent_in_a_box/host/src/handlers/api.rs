@@ -110,12 +110,13 @@ pub async fn handle_incoming_message_bypass_logic(
              if let Some(did_doc_val) = body_json.get("did_document") {
                  if let Ok(did_doc) = serde_json::from_value::<crate::sovereign::gateway::common_types::DidDocument>(did_doc_val.clone()) {
                      tracing::info!("📇 [BYPASS] Extracting Peer DID Document for {}", sender);
-                     let (cs_tx, _cs_rx) = tokio::sync::oneshot::channel();
+                     // Fire-and-forget: contact store confirmation not needed for bypass flow.
+                     // The receiver is intentionally dropped.
+                     let (cs_tx, _cs_rx_unused) = tokio::sync::oneshot::channel();
                      let _ = state.contact_cmd_tx.send(ContactStoreCommand::StoreContact {
                          did_doc,
                          resp: cs_tx,
                      }).await;
-                     // We don't necessarily need to wait for store confirmation to continue the bypass flow
                  }
              }
 
@@ -148,7 +149,9 @@ pub async fn handle_incoming_message_bypass_logic(
              if let Some(did_doc_val) = body_json.get("did_document") {
                  if let Ok(did_doc) = serde_json::from_value::<crate::sovereign::gateway::common_types::DidDocument>(did_doc_val.clone()) {
                      tracing::info!("📇 [BYPASS] Storing Accepter's DID Document for {}", sender);
-                     let (cs_tx, _cs_rx) = tokio::sync::oneshot::channel();
+                     // Fire-and-forget: contact store confirmation not needed for bypass flow.
+                     // The receiver is intentionally dropped.
+                     let (cs_tx, _cs_rx_unused) = tokio::sync::oneshot::channel();
                      let _ = state.contact_cmd_tx.send(ContactStoreCommand::StoreContact {
                          did_doc,
                          resp: cs_tx,
@@ -550,6 +553,26 @@ pub async fn process_send_message_logic(
                 let _ = kv.put(msg_id.clone(), val.into()).await;
             }
         }
+        
+        // Bug Fix: Store the OUTGOING contact request in the KV store so we can track its acceptance
+        if typ == "https://lianxi.io/protocols/contact/1.0/request" {
+            if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("contact_requests")) {
+                let req_id = uuid::Uuid::new_v4().to_string();
+                let now_str = chrono::Utc::now().to_rfc3339();
+                let pending_req = crate::dto::ContactRequest {
+                    id: req_id.clone(),
+                    owner_did: sender_did.clone(), 
+                    sender_did: recipient.clone(),
+                    role: Some("OUTGOING".to_string()),
+                    request_msg: serde_json::json!({ "message": message }),
+                    status: "PENDING".to_string(),
+                    created_at: now_str,
+                };
+                let _ = kv.put(req_id, serde_json::to_vec(&pending_req).unwrap().into()).await;
+                tracing::info!("📝 Recorded OUTGOING contact request from {} to {}", sender_did, recipient);
+            }
+        }
+
         Ok(serde_json::json!(msg_id))
     } else {
         tracing::error!("❌ Message distribution failed. Not persisting to outbox.");
@@ -808,8 +831,11 @@ pub async fn export_audit_events_handler(
         
         let limit = params.limit.unwrap_or(300);
         
+        let consumer_name = format!("audit_export_{}", uuid::Uuid::new_v4());
         let consumer = match stream.create_consumer(async_nats::jetstream::consumer::pull::Config {
             deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+            inactive_threshold: std::time::Duration::from_secs(10),
+            name: Some(consumer_name.clone()),
             ..Default::default()
         }).await {
             Ok(c) => c,
@@ -837,6 +863,8 @@ pub async fn export_audit_events_handler(
                 }
             }
         }
+        
+        let _ = stream.delete_consumer(&consumer_name).await;
         
         Ok(Json(serde_json::json!({
             "tenant_id": shared.config.tenant_id.clone(),
@@ -993,8 +1021,7 @@ pub async fn build_complete_did_document(
 ) -> Result<serde_json::Value, StatusCode> {
     // 1. Extract public key from did:twin:z or did:peer:z string
     let mut verification_methods = vec![];
-    if (active_did.starts_with("did:twin:z") || active_did.starts_with("did:peer:z")) && active_did.len() >= 74 {
-        let hex_part = &active_did[10..74];
+    if let Some(hex_part) = identity_context::did::extract_hex_pubkey(active_did) {
         if let Ok(pub_bytes) = hex::decode(hex_part) {
             use base64::Engine;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&pub_bytes);
@@ -1237,7 +1264,25 @@ pub async fn get_acl_policies_handler(
         
     let (tx, rx) = oneshot::channel();
     let _ = shared.acl_cmd_tx.send(AclCommand::GetPolicies { owner: active_did, resp: tx }).await;
-    let policies = rx.await.unwrap_or_default();
+    let mut policies = rx.await.unwrap_or_default();
+    
+    // Bug Fix: Enrich policies with aliases from user_identity_metadata
+    if let Some(kv_stores) = &shared.kv_stores {
+        if let Some(store) = kv_stores.get("user_identity_metadata") {
+            for policy in policies.iter_mut() {
+                let safe_did = policy.did.trim().replace(":", "_");
+                let key = format!("{}.{}", claims.user_id, safe_did);
+                if let Ok(Some(entry)) = store.get(&key).await {
+                    if let Ok(meta) = serde_json::from_slice::<crate::dto::UserIdentityMetadata>(&entry) {
+                        if !meta.alias.is_empty() {
+                            policy.alias = meta.alias;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     Ok(Json(policies))
 }
 
@@ -1615,25 +1660,59 @@ pub async fn get_escalation_requests_handler(
 
     let mut requests = Vec::new();
 
+    let mut raw_requests = Vec::new();
+
     if let Some(kv_stores) = &shared.kv_stores {
         if let Some(store) = kv_stores.get("escalation_requests") {
             if let Ok(mut keys) = store.keys().await {
                 while let Some(Ok(key)) = keys.next().await {
                     if let Ok(Some(entry)) = store.get(&key).await {
                         if let Ok(req) = serde_json::from_slice::<EscalationRequest>(&entry) {
-                            // Primary filter: match owner_user_id against the authenticated user
-                            let belongs_to_user = match &req.owner_user_id {
-                                Some(uid) => uid == &claims.user_id,
-                                // Fallback for legacy data without owner_user_id: match by DID
-                                None => my_dids.contains(&req.user_did),
-                            };
-                            if belongs_to_user {
-                                requests.push(req);
-                            }
+                            raw_requests.push((key, req));
                         }
                     }
                 }
             }
+        }
+    }
+
+    // Now process them outside the KV keys stream to prevent async deadlocks
+    for (key, req) in raw_requests {
+        let mut belongs_to_user = false;
+        
+        if let Some(uid) = &req.owner_user_id {
+            if uid == &claims.user_id {
+                belongs_to_user = true;
+            }
+        }
+        
+        if !belongs_to_user {
+            if my_dids.contains(&req.requester_did) || my_dids.contains(&req.user_did) {
+                belongs_to_user = true;
+            } else {
+                let (tx1, rx1) = tokio::sync::oneshot::channel();
+                let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: req.requester_did.clone(), resp: tx1 }).await;
+                if let Ok(Some(uid)) = rx1.await {
+                    if uid == claims.user_id {
+                        belongs_to_user = true;
+                    }
+                }
+                
+                if !belongs_to_user {
+                    let (tx2, rx2) = tokio::sync::oneshot::channel();
+                    let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: req.user_did.clone(), resp: tx2 }).await;
+                    if let Ok(Some(uid)) = rx2.await {
+                        if uid == claims.user_id {
+                            belongs_to_user = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!("🔍 Escalation filter: key={}, req.owner={:?}, claims.user_id={}, belongs_to_user={}", key, req.owner_user_id, claims.user_id, belongs_to_user);
+        if belongs_to_user {
+            requests.push(req);
         }
     }
 
@@ -1653,18 +1732,76 @@ pub async fn approve_escalation_handler(
     let kv_stores = shared.kv_stores.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let store = kv_stores.get("escalation_requests").ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let entry = store.get(&req_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut entry_opt = None;
+    let mut actual_key = String::new();
+    
+    // First try the expected new key format (approver == owner)
+    let expected_key = format!("{}_{}", claims.user_id, req_id);
+    if let Ok(Some(e)) = store.get(&expected_key).await {
+        entry_opt = Some(e);
+        actual_key = expected_key;
+    } else if let Ok(Some(e)) = store.get(&req_id).await {
+        // Try legacy format
+        entry_opt = Some(e);
+        actual_key = req_id.clone();
+    } else {
+        // We might be the requester approving an institutional agent's request.
+        // We must scan for a key ending with :req_id
+        if let Ok(mut keys) = store.keys().await {
+            while let Some(Ok(k)) = keys.next().await {
+                if k.ends_with(&format!("_{}", req_id)) {
+                    if let Ok(Some(e)) = store.get(&k).await {
+                        entry_opt = Some(e);
+                        actual_key = k;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    let entry = entry_opt.ok_or(StatusCode::NOT_FOUND)?;
 
     let mut request: EscalationRequest = serde_json::from_slice(&entry)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // SECURITY: Verify the authenticated user owns this escalation request
+    // SECURITY: Verify the authenticated user owns this escalation request OR is the requester
+    let mut authorized = false;
     if let Some(ref owner_uid) = request.owner_user_id {
-        if owner_uid != &claims.user_id {
-            tracing::warn!("🔒 Unauthorized escalation approval: user {} tried to approve request owned by {}", claims.user_id, owner_uid);
-            return Err(StatusCode::FORBIDDEN);
+        if owner_uid == &claims.user_id {
+            authorized = true;
         }
+    }
+    
+    if !authorized {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ListIdentities(claims.user_id.clone(), tx)).await;
+        let my_dids = rx.await.unwrap_or_default();
+        if my_dids.contains(&request.requester_did) || my_dids.contains(&request.user_did) {
+            authorized = true;
+        } else {
+            let (tx1, rx1) = tokio::sync::oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: request.requester_did.clone(), resp: tx1 }).await;
+            if let Ok(Some(uid)) = rx1.await {
+                if uid == claims.user_id {
+                    authorized = true;
+                }
+            }
+            if !authorized {
+                let (tx2, rx2) = tokio::sync::oneshot::channel();
+                let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: request.user_did.clone(), resp: tx2 }).await;
+                if let Ok(Some(uid)) = rx2.await {
+                    if uid == claims.user_id {
+                        authorized = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !authorized {
+        tracing::warn!("🔒 Unauthorized escalation approval: user {} tried to approve request", claims.user_id);
+        return Err(StatusCode::FORBIDDEN);
     }
 
     if request.status != "PENDING" {
@@ -1763,7 +1900,8 @@ pub async fn approve_escalation_handler(
 
     // Update status
     request.status = "APPROVED".to_string();
-    let _ = store.put(req_id, serde_json::to_vec(&request).unwrap().into()).await;
+    let save_key = if let Some(ref uid) = request.owner_user_id { format!("{}_{}", uid, req_id) } else { req_id.clone() };
+    let _ = store.put(save_key, serde_json::to_vec(&request).unwrap().into()).await;
 
     Ok(Json(serde_json::json!({"status": "approved"})))
 }
@@ -1778,18 +1916,72 @@ pub async fn deny_escalation_handler(
     let kv_stores = shared.kv_stores.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let store = kv_stores.get("escalation_requests").ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let entry = store.get(&req_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut entry_opt = None;
+    let mut actual_key = String::new();
+    
+    let expected_key = format!("{}_{}", claims.user_id, req_id);
+    if let Ok(Some(e)) = store.get(&expected_key).await {
+        entry_opt = Some(e);
+        actual_key = expected_key;
+    } else if let Ok(Some(e)) = store.get(&req_id).await {
+        entry_opt = Some(e);
+        actual_key = req_id.clone();
+    } else {
+        if let Ok(mut keys) = store.keys().await {
+            while let Some(Ok(k)) = keys.next().await {
+                if k.ends_with(&format!("_{}", req_id)) {
+                    if let Ok(Some(e)) = store.get(&k).await {
+                        entry_opt = Some(e);
+                        actual_key = k;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    let entry = entry_opt.ok_or(StatusCode::NOT_FOUND)?;
 
     let mut request: EscalationRequest = serde_json::from_slice(&entry)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // SECURITY: Verify the authenticated user owns this escalation request
+    // SECURITY: Verify the authenticated user owns this escalation request OR is the requester
+    let mut authorized = false;
     if let Some(ref owner_uid) = request.owner_user_id {
-        if owner_uid != &claims.user_id {
-            tracing::warn!("🔒 Unauthorized escalation denial: user {} tried to deny request owned by {}", claims.user_id, owner_uid);
-            return Err(StatusCode::FORBIDDEN);
+        if owner_uid == &claims.user_id {
+            authorized = true;
         }
+    }
+    
+    if !authorized {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ListIdentities(claims.user_id.clone(), tx)).await;
+        let my_dids = rx.await.unwrap_or_default();
+        if my_dids.contains(&request.requester_did) || my_dids.contains(&request.user_did) {
+            authorized = true;
+        } else {
+            let (tx1, rx1) = tokio::sync::oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: request.requester_did.clone(), resp: tx1 }).await;
+            if let Ok(Some(uid)) = rx1.await {
+                if uid == claims.user_id {
+                    authorized = true;
+                }
+            }
+            if !authorized {
+                let (tx2, rx2) = tokio::sync::oneshot::channel();
+                let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid { did: request.user_did.clone(), resp: tx2 }).await;
+                if let Ok(Some(uid)) = rx2.await {
+                    if uid == claims.user_id {
+                        authorized = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !authorized {
+        tracing::warn!("🔒 Unauthorized escalation denial: user {} tried to deny request", claims.user_id);
+        return Err(StatusCode::FORBIDDEN);
     }
 
     if request.status != "PENDING" {
@@ -1829,7 +2021,8 @@ pub async fn deny_escalation_handler(
 
     // Update status
     request.status = "DENIED".to_string();
-    let _ = store.put(req_id, serde_json::to_vec(&request).unwrap().into()).await;
+    let save_key = if let Some(ref uid) = request.owner_user_id { format!("{}_{}", uid, req_id) } else { req_id.clone() };
+    let _ = store.put(save_key, serde_json::to_vec(&request).unwrap().into()).await;
 
     Ok(Json(serde_json::json!({"status": "denied"})))
 }
@@ -2023,10 +2216,8 @@ pub async fn send_ledgerless_request_handler(
         tracing::error!("❌ Failed to create peer identity for ledgerless request");
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    // Set the new peer identity as the active DID immediately for a smoother UI experience
-    let (act_tx, act_rx) = oneshot::channel();
-    let _ = shared.vault_cmd_tx.send(VaultCommand::SetActiveDid(user_id.clone(), peer_did.clone(), act_tx)).await;
-    let _ = act_rx.await;
+    // REMOVED SetActiveDid here. We should NEVER forcibly switch the user's active DID
+    // to a throwaway did:peer. Doing so breaks Contacts and other DID-linked portal features.
 
     tracing::info!("🤝 Generated and Activated Peer DID for ledgerless request: {}", peer_did);
 

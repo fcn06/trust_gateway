@@ -272,9 +272,18 @@ async fn main() -> Result<()> {
 
     // Build shared gateway state
     let state = Arc::new(GatewayState {
-        policy_engine: Arc::new(policy_engine),
-        grant_issuer,
-        audit_sink,
+        security: gateway::SecurityState {
+            policy_engine: Arc::new(policy_engine),
+            grant_issuer,
+            audit_sink,
+        },
+        connectors: gateway::ConnectorConfig {
+            connector_mcp_url: args.connector_mcp_url.clone(),
+            skill_executor_url: args.skill_executor_url.clone(),
+            restaurant_service_url: args.restaurant_service_url.clone(),
+            vp_mcp_url: args.vp_mcp_url.clone(),
+            host_url: args.host_url.clone(),
+        },
         approval_store,
         agent_registry,
         nats: nc.clone(),
@@ -284,11 +293,6 @@ async fn main() -> Result<()> {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_default(),
-        connector_mcp_url: args.connector_mcp_url.clone(),
-        skill_executor_url: args.skill_executor_url.clone(),
-        restaurant_service_url: args.restaurant_service_url.clone(),
-        vp_mcp_url: args.vp_mcp_url.clone(),
-        host_url: args.host_url.clone(),
         tool_registry: Some(router::ToolRegistry::new(
             std::time::Duration::from_secs(300), // 5-minute TTL
         )),
@@ -350,8 +354,8 @@ async fn main() -> Result<()> {
                         if let Some(ref registry) = hotreload_state.tool_registry {
                             registry.force_refresh(
                                 &hotreload_state.http_client,
-                                &hotreload_state.host_url,
-                                &hotreload_state.vp_mcp_url,
+                                &hotreload_state.connectors.host_url,
+                                &hotreload_state.connectors.vp_mcp_url,
                             ).await;
                         }
                     }
@@ -375,8 +379,8 @@ async fn main() -> Result<()> {
                         if let Some(ref registry) = claw_state.tool_registry {
                             registry.force_refresh(
                                 &claw_state.http_client,
-                                &claw_state.host_url,
-                                &claw_state.vp_mcp_url,
+                                &claw_state.connectors.host_url,
+                                &claw_state.connectors.vp_mcp_url,
                             ).await;
                         }
                     }
@@ -411,7 +415,7 @@ async fn main() -> Result<()> {
     
     background_tasks.close();
 
-    // Build and run HTTP server with graceful shutdown
+    let shutdown_state = state.clone();
     let app = api::build_router(state);
 
     let addr: std::net::SocketAddr = args
@@ -450,7 +454,13 @@ async fn main() -> Result<()> {
                 .await
                 .ok();
 
+            // WS-B3: Explicitly drop handles to ensure audit sinks stop producing
+            drop(background_tasks);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
             tracing::info!("🧹 Waiting for final NATS flush...");
+            // WS-B3: Flush audit sink explicitly before flushing NATS connection
+            shutdown_state.security.audit_sink.flush().await;
             let _ = shutdown_nc.flush().await;
             tracing::info!("👋 Trust Gateway shut down cleanly");
         })

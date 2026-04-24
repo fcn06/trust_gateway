@@ -202,7 +202,7 @@ async fn tools_list_handler(
     // Pull from ToolRegistry cache (Phase 6 centralization)
     if let Some(ref registry) = state.tool_registry {
         // Ensure cache is populated (including VP MCP tools)
-        registry.refresh_if_stale(&state.http_client, &state.host_url, &state.vp_mcp_url).await;
+        registry.refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url).await;
         
         for (name, entry) in registry.all_tools().await {
             tools.push(serde_json::json!({

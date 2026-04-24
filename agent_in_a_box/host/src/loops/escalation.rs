@@ -268,8 +268,15 @@ pub fn subscribe_to_escalation_requests(shared: Arc<WebauthnSharedState>) {
                         if let Some(store) = kv_stores.get("escalation_requests") {
                             match serde_json::to_vec(&request) {
                                 Ok(bytes) => {
-                                    let _ = store.put(correlation_id.clone(), bytes.into()).await;
-                                    tracing::info!("💾 Stored escalation request '{}' for tool '{}' (tier: {:?}, proof_required: {})", correlation_id, tool_name, request.tier, request.proof_required);
+                                    let key_name = if let Some(ref uid) = request.owner_user_id {
+                                        format!("{}_{}", uid, correlation_id)
+                                    } else {
+                                        correlation_id.clone()
+                                    };
+                                    match store.put(key_name.clone(), bytes.into()).await {
+                                        Ok(_) => tracing::info!("💾 Stored escalation request '{}' for tool '{}' (tier: {:?}, proof_required: {})", correlation_id, tool_name, request.tier, request.proof_required),
+                                        Err(e) => tracing::error!("❌ Failed to store escalation request in KV: {}", e),
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::error!("❌ Failed to serialize escalation request: {}", e);
@@ -439,22 +446,51 @@ pub fn subscribe_to_escalation_results(shared: Arc<WebauthnSharedState>) {
                     );
 
                     // Look up the stored EscalationRequest to get conversation context
-                    let escalation = if let Some(kv) = shared.kv_stores.as_ref()
-                        .and_then(|m| m.get("escalation_requests"))
-                    {
+                    let mut escalation = None;
+                    if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("escalation_requests")) {
+                        // 1. Try direct lookup (legacy or un-prefixed)
                         if let Ok(Some(entry)) = kv.get(approval_id).await {
-                            serde_json::from_slice::<crate::dto::EscalationRequest>(&entry).ok()
-                        } else {
-                            None
+                            escalation = serde_json::from_slice::<crate::dto::EscalationRequest>(&entry).ok();
                         }
-                    } else {
-                        None
-                    };
+                        
+                        // 2. If not found, try resolving the uid from owner_did to build the prefixed key
+                        if escalation.is_none() {
+                            let owner_did = parsed["owner_did"].as_str().unwrap_or("");
+                            if !owner_did.is_empty() {
+                                let (tx, rx) = tokio::sync::oneshot::channel();
+                                let _ = shared.vault_cmd_tx.send(crate::commands::VaultCommand::ResolveDid {
+                                    did: owner_did.to_string(),
+                                    resp: tx,
+                                }).await;
+                                if let Ok(Some(uid)) = rx.await {
+                                    let prefixed_key = format!("{}_{}", uid, approval_id);
+                                    if let Ok(Some(entry)) = kv.get(&prefixed_key).await {
+                                        escalation = serde_json::from_slice::<crate::dto::EscalationRequest>(&entry).ok();
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. Last resort: scan all keys for the one ending in _approval_id
+                        if escalation.is_none() {
+                            if let Ok(mut keys) = kv.keys().await {
+                                use futures::StreamExt;
+                                while let Some(Ok(key)) = keys.next().await {
+                                    if key.ends_with(&format!("_{}", approval_id)) {
+                                        if let Ok(Some(entry)) = kv.get(&key).await {
+                                            escalation = serde_json::from_slice::<crate::dto::EscalationRequest>(&entry).ok();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     let Some(esc) = escalation else {
                         tracing::warn!(
-                            "⚠️ Could not find escalation request for approval_id '{}' — cannot route notification",
-                            approval_id
+                            "⚠️ Could not find escalation request for approval_id '{}' (tool: {}) — cannot route notification",
+                            approval_id, tool_name
                         );
                         continue;
                     };

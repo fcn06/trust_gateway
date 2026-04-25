@@ -27,6 +27,43 @@ Existing security frameworks were built for two kinds of actors: humans and stat
 
 ---
 
+## The Active Control Plane: Intent vs. Execution
+
+Most security layers are passive filters—they just watch traffic pass by. Trust Gateway is an **active execution plane**. It doesn't just watch; it **owns** the execution process.
+
+Think of it like a **Notary Public** for AI. An agent can draft a contract (a tool call), but it has no power to sign it. Only the Notary (Trust Gateway) has the official stamp (cryptographic keys) to validate the intent and actually "file" it (execute the tool).
+
+### High-Level Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Agent as AI Agent (Intelligence)
+    participant TG as Trust Gateway (Active Control)
+    participant Tool as Business Tool (Capability)
+
+    User->>Agent: "Refund the last order"
+    Agent->>TG: PROPOSE: Refund(order_123)
+    
+    rect rgb(240, 240, 240)
+        Note over TG: ACTIVE GOVERNANCE
+        TG-->>User: 🔔 Approval Needed: "Refund $50.00?"
+        User->>TG: ✅ Approve
+        Note over TG: Issues Signed Execution Grant
+    end
+
+    TG->>Tool: EXECUTE: Refund(order_123)
+    Tool-->>TG: Success Result
+    TG-->>Agent: Action Outcome
+    Agent-->>User: "Refund processed successfully."
+```
+
+By decoupling **intelligence** (the AI) from **capability** (the tools), we ensure that even if an agent "hallucinates" a dangerous command, it lacks the cryptographic authority to actually make it happen.
+
+---
+
+
 ## Quick Start
 
 ### Prerequisites

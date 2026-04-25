@@ -32,7 +32,7 @@ Existing security frameworks were built for two kinds of actors: humans and stat
 ### Prerequisites
 
 - **Rust** 1.75+ (`rustup` recommended)
-- **Wasmtime** 25+ with Component Model support (`cargo install wasmtime-cli`)
+- **Wasmtime** — consumed as the `wasmtime` Rust crate (no separate binary install needed)
 - **Wasm target**: `rustup target add wasm32-wasip2`
 - **NATS Server** with JetStream: `nats-server -js`
 - **Trunk** for the Web UI: `cargo install --locked trunk`

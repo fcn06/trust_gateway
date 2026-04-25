@@ -118,20 +118,20 @@ async fn main() -> Result<()> {
         tracing::info!("   MCP Server URL: {}", url);
     }
 
-    let mcp_client = initialize_mcp_client_v2(mcp_config)
+    // Setup HTTP client for calling the connector_mcp_server and for the MCP client transport
+    let http_client = reqwest::Client::builder()
+        .pool_max_idle_per_host(10)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+    
+    let mcp_client = initialize_mcp_client_v2(mcp_config, http_client.clone())
         .await
         .context("Failed to initialize MCP client")?;
     let mcp_client = Arc::new(mcp_client);
     tracing::info!("✅ Connected to MCP Server");
     
-    // Setup HTTP client for calling the connector_mcp_server
-    let http_client = Arc::new(
-        reqwest::Client::builder()
-            .pool_max_idle_per_host(10)
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_default(),
-    );
+    let http_client = Arc::new(http_client);
     let connector_mcp_url = std::env::var("CONNECTOR_MCP_URL").unwrap_or_else(|_| "http://127.0.0.1:3050".to_string());
     tracing::info!("   Connector MCP URL: {}", connector_mcp_url);
 

@@ -84,7 +84,10 @@ impl Authenticator for WebAuthnAuthenticator {
                     if let Some(cred_store) = kv_stores.get("user_credentials") {
                         if let Ok(Some(entry)) = cred_store.get(user_id).await {
                             serde_json::from_slice(&entry)
-                                .map_err(|e| AuthError::Internal(format!("credential parse: {}", e)))?
+                                .map_err(|e| {
+                                    tracing::error!("Failed to parse credentials for user {}: {}", user_id, e);
+                                    AuthError::Internal("credential store corrupted".to_string())
+                                })?
                         } else {
                             return Err(AuthError::UserNotFound { user_id: user_id.to_string() });
                         }

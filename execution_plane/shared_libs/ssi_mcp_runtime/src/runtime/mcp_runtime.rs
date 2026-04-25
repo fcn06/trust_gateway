@@ -32,6 +32,7 @@ impl McpRuntime {
     /// An initialized `McpRuntime` ready for tool operations
     pub async fn initialize_mcp_client_v2(
         agent_mcp_config: McpRuntimeConfig,
+        client: reqwest::Client,
     ) -> anyhow::Result<Self> {
         let mcp_server_url_string = agent_mcp_config
             .agent_mcp_server_url
@@ -41,7 +42,7 @@ impl McpRuntime {
 
         let api_key = agent_mcp_config.agent_mcp_server_api_key.clone();
 
-        let transport = create_transport(mcp_server_url, api_key);
+        let transport = create_transport(mcp_server_url, api_key, client);
 
         let client_info = InitializeRequestParams::new(
             ClientCapabilities::default(),

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::{HashMap, HashSet};
+use tokio_util::sync::CancellationToken;
 use clap::Parser;
 use tokio::sync::mpsc;
 use axum::{
@@ -313,12 +314,29 @@ async fn main() -> anyhow::Result<()> {
         .with_state(shared.clone())
         .layer(cors);
 
-    // 12. Run Server
+    // 12. Graceful Shutdown Token
+    let cancel = CancellationToken::new();
+    let cancel_for_signal = cancel.clone();
+
+    // 13. Run Server
     let addr: std::net::SocketAddr = config.api_listen_url.parse().expect("Invalid api_listen_url provided in configuration");
     tracing::info!("🚀 Host listening on {}", addr);
     
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("🛑 Received shutdown signal, draining connections...");
+            cancel_for_signal.cancel();
+        })
+        .await?;
+
+    // Flush NATS before exit to guarantee audit event delivery
+    if let Some(nc) = &shared.nats {
+        tracing::info!("🔄 Flushing NATS connection...");
+        let _ = nc.flush().await;
+    }
+    tracing::info!("✅ Host shutdown complete");
 
     Ok(())
 }

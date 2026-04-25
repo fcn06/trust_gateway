@@ -43,6 +43,7 @@ trust_core = { path = "../../execution_plane/shared_libs/trust_core" }
 async-trait = "0.1"
 jsonwebtoken = "9.3"
 identity_context = { path = "../../execution_plane/shared_libs/identity_context" }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [features]
 default = []

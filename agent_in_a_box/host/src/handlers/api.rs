@@ -551,6 +551,10 @@ pub async fn process_send_message_logic(
         if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("sovereign_kv")) {
             if let Ok(val) = serde_json::to_vec(&dto) {
                 let _ = kv.put(msg_id.clone(), val.into()).await;
+                // Index by thid for O(1) lookup by check_handshake_status_handler
+                if let Some(ref thid) = dto.thid {
+                    let _ = kv.put(format!("thid_{}", thid), msg_id.clone().into()).await;
+                }
             }
         }
         

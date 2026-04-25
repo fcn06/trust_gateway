@@ -243,7 +243,7 @@ impl ToolRegistry {
         }
 
         // 2. Discovery from VP MCP Server (Dynamic - Safe timeout)
-        if let Ok(vp_tools) = discover_vp_mcp_tools(vp_mcp_url).await {
+        if let Ok(vp_tools) = discover_vp_mcp_tools(vp_mcp_url, client.clone()).await {
             for tool in vp_tools {
                 new_entries.insert(tool.name.to_string(), ToolRegistryEntry {
                     executor_type: "vp_mcp".to_string(),
@@ -262,13 +262,13 @@ impl ToolRegistry {
 }
 
 /// Discover tools from a standard MCP SSE server.
-pub async fn discover_vp_mcp_tools(uri: &str) -> Result<Vec<rmcp::model::Tool>> {
+pub async fn discover_vp_mcp_tools(uri: &str, client: reqwest::Client) -> Result<Vec<rmcp::model::Tool>> {
     let mut sse_uri = uri.trim_end_matches('/').to_string();
     if !sse_uri.ends_with("/sse") {
         sse_uri = format!("{}/sse", sse_uri);
     }
 
-    let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(sse_uri, None);
+    let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(sse_uri, None, client);
 
     let client_info = rmcp::model::InitializeRequestParams::new(
         rmcp::model::ClientCapabilities::default(),
@@ -558,7 +558,7 @@ async fn dispatch_to_vp_mcp(
     }
 
     // 1. Create transport to VP server
-    let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(sse_uri, None);
+    let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(sse_uri, None, state.http_client.clone());
 
     // 2. Handshake
     let client_info = rmcp::model::InitializeRequestParams::default();

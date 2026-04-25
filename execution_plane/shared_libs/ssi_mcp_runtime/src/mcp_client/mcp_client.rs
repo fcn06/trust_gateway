@@ -23,15 +23,17 @@ use crate::mcp_client::transport::{create_transport, McpClient};
 /// An initialized `McpClient` ready for tool calls
 pub async fn initialize_mcp_client_v2(
     agent_mcp_config: McpRuntimeConfig,
+    client: reqwest::Client,
 ) -> anyhow::Result<McpClient> {
     let mcp_server_url_string = agent_mcp_config
         .agent_mcp_server_url
-        .expect("Missing mcp server Url");
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Missing mcp server Url"))?;
     let mcp_server_url = mcp_server_url_string.as_str();
 
     let api_key = agent_mcp_config.agent_mcp_server_api_key.clone();
 
-    let transport = create_transport(mcp_server_url, api_key);
+    let transport = create_transport(mcp_server_url, api_key, client);
 
     let client_info = InitializeRequestParams::new(
         ClientCapabilities::default(),

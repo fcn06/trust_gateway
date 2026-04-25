@@ -416,8 +416,33 @@ pub async fn check_handshake_status_handler(
 
     if let Some(kv_stores) = &shared.kv_stores {
         if let Some(store) = kv_stores.get("sovereign_kv") {
-             if let Ok(mut keys_stream) = store.keys().await {
+            // O(1) lookup via thid index (written by process_send_message_logic)
+            if let Ok(Some(msg_id_entry)) = store.get(&format!("thid_{}", thid)).await {
+                if let Ok(msg_id) = String::from_utf8(msg_id_entry.to_vec()) {
+                    if let Ok(Some(entry)) = store.get(&msg_id).await {
+                        if let Ok(json_msg) = serde_json::from_slice::<serde_json::Value>(&entry) {
+                            let msg_typ = json_msg["typ"].as_str().or_else(|| json_msg["type"].as_str());
+                            if let Some(typ) = msg_typ {
+                                let typ_lower = typ.to_lowercase();
+                                if typ_lower.contains("response") || 
+                                   typ_lower.contains("success") || 
+                                   typ_lower.contains("accepted") ||
+                                   typ_lower.contains("handshake") ||
+                                   typ_lower.contains("login") ||
+                                   typ_lower.contains("newsletter")
+                                {
+                                    return Ok(Json(json_msg));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Legacy fallback: scan for messages written before the thid_ index was introduced
+            if let Ok(mut keys_stream) = store.keys().await {
                  while let Some(Ok(key)) = keys_stream.next().await {
+                      if key.starts_with("thid_") { continue; } // Skip index keys
                       if let Ok(Some(entry)) = store.get(&key).await {
                           match serde_json::from_slice::<serde_json::Value>(&entry) {
                               Ok(json_msg) => {

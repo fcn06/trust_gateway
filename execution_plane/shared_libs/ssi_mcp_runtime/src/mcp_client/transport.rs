@@ -24,6 +24,7 @@ pub type McpClient = RunningService<RoleClient, InitializeRequestParams>;
 pub fn create_transport(
     uri: impl Into<Arc<str>>,
     api_key: Option<String>,
+    client: reqwest::Client,
 ) -> StreamableHttpClientTransport<reqwest::Client> {
     let mut config = StreamableHttpClientTransportConfig::with_uri(uri);
 
@@ -32,5 +33,5 @@ pub fn create_transport(
         config = config.auth_header(format!("Bearer {}", key));
     }
 
-    StreamableHttpClientTransport::with_client(reqwest::Client::new(), config)
+    StreamableHttpClientTransport::with_client(client, config)
 }

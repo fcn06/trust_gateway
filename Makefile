@@ -49,7 +49,7 @@ update:
 	@echo "🔄 Updating all Cargo crates in lianxi-community..."
 	cd agent_in_a_box && cargo update
 	cd execution_plane && cargo update
-	cd agents/ssi_agent && cargo update
+	cd execution_plane/shared_libs/ssi_mcp_runtime && cargo update
 	cd platform && cargo update
 	cd examples/restaurant_demo/state_service && cargo update || true
 	cd portals/local_ssi_portal && cargo update || true
@@ -64,7 +64,7 @@ reset:
 clean:
 	cd agent_in_a_box && $(MAKE) clean || true
 	cd execution_plane && cargo clean || true
-	cd agents/ssi_agent && cargo clean || true
+	cd execution_plane/shared_libs/ssi_mcp_runtime && cargo clean || true
 	cd platform && cargo clean || true
 	cd examples/restaurant_demo/state_service && cargo clean || true
 	cd portals/local_ssi_portal && cargo clean || true

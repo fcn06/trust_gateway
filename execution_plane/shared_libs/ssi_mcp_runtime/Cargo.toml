@@ -10,8 +10,8 @@ crate-type = ["rlib"]
 #llm_api = { workspace = true }
 #configuration = { workspace = true }
 #rmcp = { workspace = true }
-configuration={git = "https://github.com/fcn06/swarm_commons.git"}
-llm_api = {git = "https://github.com/fcn06/swarm_commons.git"}
+configuration={git = "https://github.com/fcn06/swarm_commons.git", rev = "ac6bcf1154675cda3999344a9907e7c303e3d3f9"}
+llm_api = {git = "https://github.com/fcn06/swarm_commons.git", rev = "ac6bcf1154675cda3999344a9907e7c303e3d3f9"}
 
 rmcp = { version = "1.3", features = ["client", "client-side-sse", "auth", "transport-streamable-http-client-reqwest"] }
 

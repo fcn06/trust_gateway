@@ -27,7 +27,7 @@ impl VaultCommand for UnlockVaultCommand {
         let key = format!("master_seed:{}", self.user_id);
         
         // 1. Fetch encrypted blob (Hashed Key)
-        let blob = persistence::get(&blind_key(&key)).ok_or("No Master Seed found")?;
+        let blob = persistence::get(&blind_key(&key)).map_err(|e| format!("Persistence error: {:?}", e))?.ok_or("No Master Seed found")?;
         
         // Support Legacy V1 (Unencrypted) Master Seed
         if blob.len() == 32 {
@@ -89,7 +89,7 @@ impl UnlockVaultCommand {
         
         if hk.expand(INFO_HMAC_SECRET, &mut routing_secret).is_ok() {
             let h_key = blind_key(&format!("hmac_secret:{}", self.user_id));
-            persistence::set(&h_key, &routing_secret.to_vec());
+            let _ = persistence::set(&h_key, &routing_secret.to_vec());
             tracing::info!("🔒 Verified/Updated hmac_secret for user: {}", self.user_id);
         }
         

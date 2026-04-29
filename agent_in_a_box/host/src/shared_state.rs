@@ -72,6 +72,9 @@ pub struct HostConfig {
     /// Shop Token
     #[serde(default)]
     pub shop_token: Option<String>,
+    /// List of tenant IDs allowed to enable the 'is_institutional' (Agent) flag (comma-separated).
+    #[serde(default)]
+    pub allowed_agent_tenants: String,
 }
 
 fn default_connector_mcp_url() -> String {

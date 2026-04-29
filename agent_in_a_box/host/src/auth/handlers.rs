@@ -56,7 +56,14 @@ pub async fn finish_registration_handler(State(shared): State<Arc<WebauthnShared
                     "registration_cookie": cookie
                 })).into_response();
 
-                if let Ok(hv) = axum::http::HeaderValue::from_str(&format!("ssi_registration_cookie={}; Secure; SameSite=None; Path=/; Max-Age=31536000", urlencoding::encode(&cookie_json))) {
+                let domain = shared.config.webauthn_rp_id.clone();
+                let domain_attr = if domain.contains('.') {
+                    format!("; Domain=.{}", domain.split('.').collect::<Vec<&str>>().into_iter().rev().take(2).collect::<Vec<&str>>().into_iter().rev().collect::<Vec<&str>>().join("."))
+                } else {
+                    "".to_string()
+                };
+
+                if let Ok(hv) = axum::http::HeaderValue::from_str(&format!("ssi_registration_cookie={}; Secure; SameSite=None; Path=/; Max-Age=31536000{}", urlencoding::encode(&cookie_json), domain_attr)) {
                     response.headers_mut().append(axum::http::header::SET_COOKIE, hv);
                 }
                 response
@@ -99,11 +106,23 @@ pub async fn finish_login_handler(State(shared): State<Arc<WebauthnSharedState>>
 
             let headers = response.headers_mut();
             
+            let domain = shared.config.webauthn_rp_id.clone();
+            let domain_attr = if domain.contains('.') {
+                let parts: Vec<&str> = domain.split('.').collect();
+                if parts.len() >= 2 {
+                    format!("; Domain=.{}", parts[parts.len()-2..].join("."))
+                } else {
+                    format!("; Domain=.{}", domain)
+                }
+            } else {
+                "".to_string()
+            };
+
             let cookies = vec![
-                format!("ssi_token={}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=7200", token),
-                format!("ssi_username={}; Secure; SameSite=None; Path=/; Max-Age=7200", username),
-                format!("ssi_user_id={}; Secure; SameSite=None; Path=/; Max-Age=7200", user_id),
-                format!("ssi_registration_cookie={}; Secure; SameSite=None; Path=/; Max-Age=31536000", urlencoding::encode(&cookie_json)),
+                format!("ssi_token={}; Secure; SameSite=None; Path=/; Max-Age=7200{}", token, domain_attr),
+                format!("ssi_username={}; Secure; SameSite=None; Path=/; Max-Age=7200{}", username, domain_attr),
+                format!("ssi_user_id={}; Secure; SameSite=None; Path=/; Max-Age=7200{}", user_id, domain_attr),
+                format!("ssi_registration_cookie={}; Secure; SameSite=None; Path=/; Max-Age=31536000{}", urlencoding::encode(&cookie_json), domain_attr),
             ];
 
             for cookie_str in cookies {
@@ -288,6 +307,19 @@ pub async fn link_remote_access_handler(
     // Look up tenant for the cookie
     let tenant_id = lookup_user_tenant(&shared, &user_id).await;
 
+    let is_agent_allowed = if let Some(ref tid) = tenant_id {
+        let allowed = &shared.config.allowed_agent_tenants;
+        if allowed.is_empty() {
+            false
+        } else {
+            allowed.split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\''))
+                .any(|s| s == tid)
+        }
+    } else {
+        false
+    };
+
     let record = RegistrationCookie {
         aid: account_id,
         lpk: link_public_key,
@@ -295,6 +327,7 @@ pub async fn link_remote_access_handler(
         nid: crate::logic::compute_node_id(&shared.house_salt),
         uid: Some(hex::encode(sha2::Sha256::digest(username.as_bytes()))[0..16].to_string()),
         tenant_id,
+        is_agent_allowed,
     };
 
     if let Some(kv_stores) = &shared.kv_stores {
@@ -383,11 +416,20 @@ pub async fn get_tenant_info_handler(
         if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("tenant_registry")) {
             if let Ok(Some(entry)) = kv.get(&mem.tenant_id).await {
                 if let Ok(record) = serde_json::from_slice::<TenantRecord>(&entry) {
+                    let allowed = &shared.config.allowed_agent_tenants;
+                    let is_agent_allowed = if allowed.is_empty() {
+                        false
+                    } else {
+                        allowed.split(',')
+                            .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\''))
+                            .any(|s| s == record.tenant_id)
+                    };
                     return Ok(Json(serde_json::json!({
                         "tenant_id": record.tenant_id,
                         "display_name": record.display_name,
                         "owner_user_id": record.owner_user_id,
-                        "role": mem.role
+                        "role": mem.role,
+                        "is_agent_allowed": is_agent_allowed
                     })));
                 }
             }

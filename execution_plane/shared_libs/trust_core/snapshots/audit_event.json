@@ -1,0 +1,177 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AuditEvent",
+  "description": "A single audit event in the action lifecycle.\n\nPublished to NATS JetStream subjects: - `audit.action.{action_id}` - `audit.session.{jti}` - `audit.tenant.{tenant_id}`",
+  "type": "object",
+  "required": [
+    "component",
+    "event_id",
+    "event_type",
+    "payload",
+    "tenant_id",
+    "timestamp"
+  ],
+  "properties": {
+    "action_id": {
+      "description": "Correlates to the `ActionRequest.action_id` (if action-related).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "component": {
+      "description": "Which service/component emitted this event.",
+      "type": "string"
+    },
+    "event_hash": {
+      "description": "SHA-256 hash of this event's canonical form (for chain verification).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_id": {
+      "description": "Unique event identifier.",
+      "type": "string"
+    },
+    "event_type": {
+      "description": "The lifecycle event type.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/AuditEventType"
+        }
+      ]
+    },
+    "payload": {
+      "description": "Structured payload with event-specific data."
+    },
+    "prev_hash": {
+      "description": "SHA-256 hash of the previous event in the chain (None for genesis).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_jti": {
+      "description": "Session correlation token from the original JWT.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tenant_id": {
+      "description": "Tenant scope.",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "When this event occurred.",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "definitions": {
+    "AuditEventType": {
+      "description": "All possible lifecycle event types in the trust gateway audit trail.\n\nEvents are ordered by their typical occurrence in the action lifecycle: proposed → evaluated → (approval/proof cycle) → granted → invoked → result.",
+      "oneOf": [
+        {
+          "description": "An action was proposed by an agent or automation.",
+          "type": "string",
+          "enum": [
+            "action_proposed"
+          ]
+        },
+        {
+          "description": "The policy engine evaluated the action and rendered a decision.",
+          "type": "string",
+          "enum": [
+            "policy_evaluated"
+          ]
+        },
+        {
+          "description": "An approval request was created (Tier 1 or Tier 2).",
+          "type": "string",
+          "enum": [
+            "approval_requested"
+          ]
+        },
+        {
+          "description": "A human approved the action.",
+          "type": "string",
+          "enum": [
+            "approval_approved"
+          ]
+        },
+        {
+          "description": "A human denied the action.",
+          "type": "string",
+          "enum": [
+            "approval_denied"
+          ]
+        },
+        {
+          "description": "A proof challenge was created and rendered in the portal. The user must now scan the QR with their wallet.",
+          "type": "string",
+          "enum": [
+            "proof_requested"
+          ]
+        },
+        {
+          "description": "The user presented a verifiable credential via their wallet. The VP token was received but not yet verified.",
+          "type": "string",
+          "enum": [
+            "proof_presented"
+          ]
+        },
+        {
+          "description": "The host verified the presented VP. Payload includes: verified (bool), credential_issuer, presented_claims.",
+          "type": "string",
+          "enum": [
+            "proof_verified"
+          ]
+        },
+        {
+          "description": "An ExecutionGrant JWT was issued.",
+          "type": "string",
+          "enum": [
+            "grant_issued"
+          ]
+        },
+        {
+          "description": "A connector or skill executor was invoked.",
+          "type": "string",
+          "enum": [
+            "connector_invoked"
+          ]
+        },
+        {
+          "description": "The action completed successfully.",
+          "type": "string",
+          "enum": [
+            "action_succeeded"
+          ]
+        },
+        {
+          "description": "The action failed.",
+          "type": "string",
+          "enum": [
+            "action_failed"
+          ]
+        },
+        {
+          "description": "A dispatch attempt failed and is being retried.",
+          "type": "string",
+          "enum": [
+            "action_retried"
+          ]
+        },
+        {
+          "description": "An ExecutionGrant JWT was replayed (same JTI presented twice).",
+          "type": "string",
+          "enum": [
+            "grant_replay_blocked"
+          ]
+        }
+      ]
+    }
+  }
+}

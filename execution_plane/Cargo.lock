@@ -746,7 +746,20 @@ dependencies = [
 [[package]]
 name = "configuration"
 version = "0.1.0"
-source = "git+https://github.com/fcn06/swarm_commons.git#ac6bcf1154675cda3999344a9907e7c303e3d3f9"
+source = "git+https://github.com/fcn06/swarm_commons.git?rev=329c8ff3397fa843c83180ff12de2d6a9f9bd5f8#329c8ff3397fa843c83180ff12de2d6a9f9bd5f8"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "configuration"
+version = "0.1.0"
+source = "git+https://github.com/fcn06/swarm_commons.git?rev=ac6bcf1154675cda3999344a9907e7c303e3d3f9#ac6bcf1154675cda3999344a9907e7c303e3d3f9"
 dependencies = [
  "anyhow",
  "serde",
@@ -1745,10 +1758,11 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "hex",
+ "jwt-simple",
  "serde",
  "serde_json",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "trust_core",
@@ -2009,7 +2023,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 [[package]]
 name = "llm_api"
 version = "0.1.0"
-source = "git+https://github.com/fcn06/swarm_commons.git#ac6bcf1154675cda3999344a9907e7c303e3d3f9"
+source = "git+https://github.com/fcn06/swarm_commons.git?rev=ac6bcf1154675cda3999344a9907e7c303e3d3f9#ac6bcf1154675cda3999344a9907e7c303e3d3f9"
 dependencies = [
  "anyhow",
  "regex",
@@ -2969,7 +2983,7 @@ dependencies = [
  "rand 0.10.1",
  "reqwest 0.13.2",
  "rmcp-macros",
- "schemars",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "sse-stream",
@@ -3208,6 +3222,20 @@ dependencies = [
 
 [[package]]
 name = "schemars"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+dependencies = [
+ "chrono",
+ "dyn-clone",
+ "schemars_derive 0.8.22",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "schemars"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
@@ -3215,9 +3243,21 @@ dependencies = [
  "chrono",
  "dyn-clone",
  "ref-cast",
- "schemars_derive",
+ "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn",
 ]
 
 [[package]]
@@ -3577,7 +3617,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "configuration",
+ "configuration 0.1.0 (git+https://github.com/fcn06/swarm_commons.git?rev=ac6bcf1154675cda3999344a9907e7c303e3d3f9)",
  "dotenvy",
  "futures",
  "llm_api",
@@ -3585,7 +3625,7 @@ dependencies = [
  "reqwest 0.13.2",
  "rmcp",
  "rustls",
- "schemars",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "tokio",
@@ -4123,6 +4163,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -4139,10 +4180,12 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "clap",
- "configuration",
+ "configuration 0.1.0 (git+https://github.com/fcn06/swarm_commons.git?rev=329c8ff3397fa843c83180ff12de2d6a9f9bd5f8)",
  "dotenvy",
+ "ed25519-dalek",
  "futures",
  "hex",
  "identity_context",
@@ -4152,6 +4195,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "ssi_crypto",
  "ssi_mcp_runtime",
  "tokio",
  "tokio-stream",
@@ -4308,7 +4352,7 @@ dependencies = [
  "hex",
  "reqwest 0.13.2",
  "rmcp",
- "schemars",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "sha2",

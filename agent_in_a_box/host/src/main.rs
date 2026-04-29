@@ -79,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
     let keys = init::load_server_keys()?;
     let jwt_key = jwt_simple::prelude::HS256Key::from_bytes(&keys.jwt_key_bytes);
 
+
     // 4. Setup WebAuthn
     let webauthn = init::setup_webauthn(&config)?;
 
@@ -323,19 +324,37 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("🚀 Host listening on {}", addr);
     
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    
+    let shutdown_nats = shared.nats.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("🛑 Received shutdown signal, draining connections...");
+            let ctrl_c = tokio::signal::ctrl_c();
+            #[cfg(unix)]
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate(),
+            ).expect("Failed to install SIGTERM handler");
+
+            #[cfg(unix)]
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = sigterm.recv() => {},
+            }
+            #[cfg(not(unix))]
+            ctrl_c.await.ok();
+
+            tracing::info!("🛑 Shutdown signal received — stopping HTTP and signalling tasks...");
             cancel_for_signal.cancel();
+
+            // Allow loops some time to process any remaining events
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            if let Some(nc) = shutdown_nats {
+                tracing::info!("🔄 Flushing NATS connection before exit...");
+                let _ = nc.flush().await;
+            }
         })
         .await?;
 
-    // Flush NATS before exit to guarantee audit event delivery
-    if let Some(nc) = &shared.nats {
-        tracing::info!("🔄 Flushing NATS connection...");
-        let _ = nc.flush().await;
-    }
     tracing::info!("✅ Host shutdown complete");
 
     Ok(())

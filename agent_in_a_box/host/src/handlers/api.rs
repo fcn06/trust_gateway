@@ -23,6 +23,8 @@ pub use crate::dto::*;
 use crate::auth::{extract_claims, resolve_active_did_for_user};
 use crate::logic::{compute_local_subject, generate_blind_pointer, publish_to_dht, resolve_did_document_from_dht};
 use crate::sovereign::gateway::common_types::MlsMessage;
+use sha2::{Sha256, Digest};
+use hmac::{Hmac, Mac};
 // use async_nats::jetstream::kv::Entry;
 
 
@@ -589,10 +591,18 @@ pub async fn process_get_messages_logic(
     user_id: String,
     filter_did: Option<String>,
 ) -> Result<Vec<PlainDidcommDto>, String> {
+    tracing::info!("📥 Starting process_get_messages_logic for user: {}", user_id);
+    
+    // Ensure vault is unlocked and get active DID
+    let active_did = crate::auth::logic::resolve_active_did_for_user(shared.clone(), &user_id).await
+        .map_err(|_| "Failed to resolve active DID (vault might be locked)".to_string())?;
+
     // 1. Get all user DIDs and their aliases for enrichment
     let (tx, rx) = oneshot::channel();
     let _ = shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id.clone(), tx)).await;
+    tracing::info!("📥 Waiting for identities from vault for user: {}", user_id);
     let my_dids = rx.await.unwrap_or_default();
+    tracing::info!("📥 Received {} identities from vault", my_dids.len());
     
     let kv_meta = shared.kv_stores.as_ref().and_then(|m| m.get("user_identity_metadata"));
     let mut my_aliases = HashMap::new();
@@ -611,55 +621,72 @@ pub async fn process_get_messages_logic(
     }
 
     // 2. Get the target DID (default to active DID)
-    let target_did = match filter_did {
-        Some(did) => {
-            if !my_dids.contains(&did) {
-                return Err("Unauthorized: You do not own this DID".to_string());
-            }
-            did
-        },
-        None => {
-            resolve_active_did_for_user(shared.clone(), &user_id).await.map_err(|_| "Active DID not found".to_string())?
+    if let Some(did) = &filter_did {
+        if !my_dids.contains(did) {
+            return Err("Unauthorized: You do not own this DID".to_string());
         }
-    };
+    }
+    let target_did = filter_did.unwrap_or(active_did);
+    tracing::info!("📥 Fetching messages for target_did: {}", target_did);
+    if target_did.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let mut messages = Vec::new();
     
     if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("sovereign_kv")) {
-        if let Ok(mut keys) = kv.keys().await {
-            while let Some(key_res) = keys.next().await {
-                if let Ok(key) = key_res {
-                    if let Ok(Some(entry)) = kv.get(key).await {
-                        if let Ok(mut payload) = serde_json::from_slice::<PlainDidcommDto>(&entry) {
-                            // Filter: Target DID must be sender OR one of the recipients
-                            let is_recipient = payload.to.as_ref().map(|to| {
-                                to.contains(&target_did)
-                            }).unwrap_or(false);
-                            
-                            let is_sender = payload.from.as_ref() == Some(&target_did);
+        if let Ok(mut keys_stream) = kv.keys().await {
+            use futures::StreamExt;
+            
+            // Collect keys into a vector first
+            let mut all_keys = Vec::new();
+            while let Some(Ok(key)) = keys_stream.next().await {
+                if !key.starts_with("thid_") {
+                    all_keys.push(key);
+                }
+            }
 
-                            if is_recipient || is_sender {
-                                // Enrichment: If it's a message to self or from me, attach alias
-                                if let Some(from) = &payload.from {
-                                    if let Some(alias) = my_aliases.get(from) {
-                                        payload.alias = Some(alias.clone());
-                                    }
+            // Fetch in parallel batches
+            let mut results = futures::stream::iter(all_keys)
+                .map(|key| {
+                    let kv = kv.clone();
+                    async move {
+                        kv.get(key).await.ok().flatten()
+                    }
+                })
+                .buffer_unordered(50); // Fetch 50 at a time
+
+            while let Some(entry_opt) = results.next().await {
+                if let Some(entry) = entry_opt {
+                    if let Ok(mut payload) = serde_json::from_slice::<PlainDidcommDto>(&entry) {
+                        // Filter: Target DID must be sender OR one of the recipients
+                        let is_recipient = payload.to.as_ref().map(|to| {
+                            to.contains(&target_did)
+                        }).unwrap_or(false);
+                        
+                        let is_sender = payload.from.as_ref() == Some(&target_did);
+
+                        if is_recipient || is_sender {
+                            // Enrichment: If it's a message to self or from me, attach alias
+                            if let Some(from) = &payload.from {
+                                if let Some(alias) = my_aliases.get(from) {
+                                    payload.alias = Some(alias.clone());
                                 }
-                                
-                                // Specific for self-service: if it's sent to me and I own the 'to' did
-                                if payload.alias.is_none() {
-                                    if let Some(to_vec) = &payload.to {
-                                        for t in to_vec {
-                                            if let Some(alias) = my_aliases.get(t) {
-                                                payload.alias = Some(alias.clone());
-                                                break;
-                                            }
+                            }
+                            
+                            // Specific for self-service: if it's sent to me and I own the 'to' did
+                            if payload.alias.is_none() {
+                                if let Some(to_vec) = &payload.to {
+                                    for t in to_vec {
+                                        if let Some(alias) = my_aliases.get(t) {
+                                            payload.alias = Some(alias.clone());
+                                            break;
                                         }
                                     }
                                 }
-
-                                messages.push(payload);
                             }
+
+                            messages.push(payload);
                         }
                     }
                 }
@@ -669,6 +696,7 @@ pub async fn process_get_messages_logic(
     
     // Sort by created_time if available
     messages.sort_by_key(|m| m.created_time.unwrap_or(0));
+    tracing::info!("📥 Found {} messages for {}", messages.len(), target_did);
     
     Ok(messages)
 }
@@ -832,7 +860,7 @@ pub async fn export_audit_events_handler(
         };
         let stream_name = format!("{}agent_audit_stream", tenant_prefix);
         
-        let stream = match js.get_stream(&stream_name).await {
+        let mut stream = match js.get_stream(&stream_name).await {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("Audit stream not found: {}", e);
@@ -842,9 +870,26 @@ pub async fn export_audit_events_handler(
         
         let limit = params.limit.unwrap_or(300);
         
+        // FIX: Read the NEWEST events by starting from (total - limit*3).
+        // We over-fetch by 3x to account for events filtered out by ownership
+        // checks, ensuring we still fill the requested limit with relevant events.
+        let stream_info = stream.info().await.ok();
+        let last_seq = stream_info
+            .map(|info| info.state.last_sequence)
+            .unwrap_or(0);
+        
+        let fetch_count = (limit * 3) as u64; // Over-fetch to handle filtered events
+        let start_seq = if last_seq > fetch_count {
+            last_seq - fetch_count + 1
+        } else {
+            1
+        };
+        
         let consumer_name = format!("audit_export_{}", uuid::Uuid::new_v4());
         let consumer = match stream.create_consumer(async_nats::jetstream::consumer::pull::Config {
-            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::ByStartSequence {
+                start_sequence: start_seq,
+            },
             inactive_threshold: std::time::Duration::from_secs(10),
             name: Some(consumer_name.clone()),
             ..Default::default()
@@ -853,8 +898,8 @@ pub async fn export_audit_events_handler(
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
         };
         
-        // Fetch messages from the stream
-        let mut messages = match consumer.fetch().max_messages(limit).expires(std::time::Duration::from_millis(300)).messages().await {
+        // Fetch messages from the stream (tail end)
+        let mut messages = match consumer.fetch().max_messages(fetch_count as usize).expires(std::time::Duration::from_millis(500)).messages().await {
             Ok(m) => m,
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
         };
@@ -864,28 +909,39 @@ pub async fn export_audit_events_handler(
             match tokio::time::timeout(std::time::Duration::from_millis(50), messages.next()).await {
                 Ok(Some(Ok(m))) => {
                     if let Ok(event) = serde_json::from_slice::<serde_json::Value>(&m.payload) {
-                        // FILTER: Only show events belonging to the user's DIDs or user_id
+                        // FILTER: Only show events belonging to the user's DIDs, user_id, or tenant
                         let mut belongs_to_user = false;
                         
+                        // 1. Match by user_did (DID ownership)
                         if let Some(did) = event.get("user_did").and_then(|v| v.as_str()) {
                             if my_dids.contains(&did.to_string()) {
                                 belongs_to_user = true;
                             }
                         }
                         
+                        // 2. Match by user_id (explicit user identity, if present in event)
                         if !belongs_to_user {
                             if let Some(uid) = event.get("user_id").and_then(|v| v.as_str()) {
-                                if uid == &claims.user_id {
+                                if !uid.is_empty() && uid == &claims.user_id {
                                     belongs_to_user = true;
                                 }
                             }
                         }
                         
-                        // We NO LONGER filter by tenant_id alone, as it's too permissive in community edition.
-                        // Only session JTI match is allowed as a secondary fallback.
+                        // 3. Match by JTI (session correlation — field is "jti" in events)
                         if !belongs_to_user {
-                            if let Some(jti) = event.get("session_jti").and_then(|v| v.as_str()) {
-                                if Some(jti) == claims.jti.as_deref() {
+                            if let Some(jti) = event.get("jti").and_then(|v| v.as_str()) {
+                                if claims.jti.as_deref() == Some(jti) {
+                                    belongs_to_user = true;
+                                }
+                            }
+                        }
+                        
+                        // 4. Match by tenant_id (community/single-tenant fallback)
+                        // In single-tenant deployments, all events belong to the user.
+                        if !belongs_to_user {
+                            if let Some(tid) = event.get("tenant_id").and_then(|v| v.as_str()) {
+                                if !tid.is_empty() && !my_tenant_id.is_empty() && tid == my_tenant_id {
                                     belongs_to_user = true;
                                 }
                             }
@@ -915,11 +971,16 @@ pub async fn export_audit_events_handler(
         
         let _ = stream.delete_consumer(&consumer_name).await;
         
+        // Reverse to newest-first and truncate to requested limit
+        events.reverse();
+        let has_more = events.len() > limit;
+        events.truncate(limit);
+        
         Ok(Json(serde_json::json!({
             "tenant_id": shared.config.tenant_id.clone(),
             "events": events,
             "total": events.len(),
-            "has_more": false
+            "has_more": has_more
         })))
     } else {
         Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1240,6 +1301,38 @@ pub async fn enrich_identity_handler(
     
     if let Some(kv_stores) = &shared.kv_stores {
         if let Some(store) = kv_stores.get("user_identity_metadata") {
+            // Enforcement: Only allow setting is_institutional if the tenant is in the allowed list
+            if req.is_institutional.unwrap_or(false) {
+                // Determine tenant_id from claims or session
+                let tenant_id = match claims.tenant_id {
+                    Some(tid) => tid,
+                    None => {
+                        // Fallback to resolving AID if tenant_id is missing from claims
+                        let (tx, rx) = oneshot::channel();
+                        let _ = shared.vault_cmd_tx.send(VaultCommand::GetHmacSecret { user_id: user_id.clone(), resp: tx }).await;
+                        if let Ok(Ok(secret)) = rx.await {
+                            let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).unwrap();
+                            mac.update(b"login");
+                            hex::encode(mac.finalize().into_bytes())
+                        } else {
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    }
+                };
+
+                let allowed = &shared.config.allowed_agent_tenants;
+                let is_allowed = if allowed.is_empty() {
+                    false
+                } else {
+                    allowed.split(',').any(|s| s.trim() == tenant_id)
+                };
+
+                if !is_allowed {
+                    tracing::warn!("🚫 Tenant {} attempted to enable institutional agent but is NOT in the allowed list", tenant_id);
+                    return Err(StatusCode::FORBIDDEN);
+                }
+            }
+
             let safe_did = req.did.trim().replace(":", "_");
             let key = format!("{}.{}", user_id, safe_did);
             let meta = crate::dto::UserIdentityMetadata { 

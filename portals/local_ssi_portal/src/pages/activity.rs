@@ -67,7 +67,10 @@ fn map_host_event(raw: &HostEventRaw) -> ActivityItem {
         }
         "llm_call" => ("🧠", "AI reasoning".to_string(), ActivityCategory::AgentActivity),
         "tool_executed" => {
-            let tool = detail.get("tool_name").and_then(|t| t.as_str()).unwrap_or("unknown");
+            let tool = detail.get("tool_name")
+                .or_else(|| detail.get("tool"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
             ("⚡", format!("Tool called: {}", tool), ActivityCategory::AgentActivity)
         }
         "mls_message_sent" => ("📤", "Secure message sent".to_string(), ActivityCategory::Messaging),
@@ -192,7 +195,7 @@ pub fn Activity(
         } else if base_url.contains(":8080") {
             base_url.replace(":8080", ":3060")
         } else {
-            "http://localhost:3060".to_string()
+            option_env!("TRUST_GATEWAY_URL").unwrap_or("http://localhost:3060").to_string()
         };
         if gw.ends_with("/api") {
             gw.truncate(gw.len() - 4);

@@ -1,19 +1,173 @@
 // ─────────────────────────────────────────────────────────────
-// JWT introspection — minimal payload decoding
+// JWT verification and introspection
 //
 // Spec reference: §17.2 steps 3-4
 //
-// Extracts identity claims from session JWTs WITHOUT validation.
-// Validation is the responsibility of the issuer (Host's ssi_vault).
-// This module replaces the ad-hoc helpers previously in
-// trust_gateway/src/session.rs.
+// Provides:
+// - `AuthVerifier` trait — the ONLY approved entry point for
+//   JWT verification per RULE[010_JWT_CONTRACTS.md].
+// - `VerifiedJwt` — opaque container proving signature check.
+// - `HmacAuthVerifier` — HMAC-HS256 implementation.
+// - `decode_jwt_claims` — DEPRECATED introspection-only helper
+//   retained for audit logging of rejected tokens.
+//
+// Callers MUST NOT call `decode_jwt_claims` for domain logic.
+// Use `AuthVerifier::verify()` → `VerifiedJwt` instead.
 // ─────────────────────────────────────────────────────────────
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::ops::Deref;
+
+// ─── Verification types (RULE[010_JWT_CONTRACTS.md]) ────────
+
+/// Error returned by `AuthVerifier::verify`.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthVerifyError {
+    #[error("missing or empty token")]
+    MissingToken,
+
+    #[error("invalid token: {0}")]
+    InvalidToken(String),
+
+    #[error("token expired")]
+    Expired,
+
+    #[error("signature verification failed: {0}")]
+    SignatureInvalid(String),
+
+    #[error("unsupported algorithm: {0}")]
+    UnsupportedAlgorithm(String),
+}
+
+/// A JWT whose signature has been cryptographically verified.
+///
+/// This type can ONLY be constructed by calling `AuthVerifier::verify()`
+/// or the internal `VerifiedJwt::new_verified` (crate-private).
+/// It serves as a *proof token* in the type system: any function
+/// that receives a `VerifiedJwt` knows the claims were validated.
+///
+/// Implements `Deref<Target = JwtClaims>` for ergonomic field access.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifiedJwt {
+    claims: JwtClaims,
+}
+
+impl VerifiedJwt {
+    /// Construct a `VerifiedJwt` from pre-verified claims.
+    ///
+    /// **Crate-private:** only verification implementations within
+    /// this crate (e.g. `HmacAuthVerifier`) may call this.
+    pub(crate) fn new_verified(claims: JwtClaims) -> Self {
+        Self { claims }
+    }
+
+    /// Construct a `VerifiedJwt` from claims that were verified
+    /// by an external cryptographic pipeline (e.g. SSI VP verification).
+    ///
+    /// **Caller contract:** The caller MUST have performed cryptographic
+    /// signature verification (e.g. Ed25519 over a DID/JWK VP) before
+    /// calling this method. This is the escape hatch for non-HMAC
+    /// verification pipelines (Verifiable Presentations, external IdPs).
+    ///
+    /// Misuse of this constructor (wrapping unverified claims) violates
+    /// RULE[010_JWT_CONTRACTS.md].
+    pub fn from_verified_source(claims: JwtClaims) -> Self {
+        Self { claims }
+    }
+
+    /// Consume and return the inner `JwtClaims`.
+    pub fn into_claims(self) -> JwtClaims {
+        self.claims
+    }
+
+    /// Borrow the inner `JwtClaims`.
+    pub fn claims(&self) -> &JwtClaims {
+        &self.claims
+    }
+}
+
+impl Deref for VerifiedJwt {
+    type Target = JwtClaims;
+    fn deref(&self) -> &Self::Target {
+        &self.claims
+    }
+}
+
+/// Contract for JWT verification.
+///
+/// Per RULE[010_JWT_CONTRACTS.md]:
+/// - `AuthVerifier::verify()` → `Result<VerifiedJwt, AuthVerifyError>`
+/// - Passing `VerifiedJwt` into domain/application services.
+///
+/// Forbidden:
+/// - Passing raw JWT claims into domain logic.
+/// - Calling JWT decode APIs directly outside `auth` crate.
+/// - Accepting `alg=none`.
+/// - Skipping `exp`, `nbf`, `aud`, `iss`, or signature validation.
+pub trait AuthVerifier: Send + Sync {
+    /// Verify a JWT token string and return its validated claims.
+    ///
+    /// Implementations MUST:
+    /// 1. Validate the cryptographic signature.
+    /// 2. Reject `alg=none`.
+    /// 3. Check `exp` (expiry) if present.
+    /// 4. Return `Err` for any validation failure.
+    fn verify(&self, token: &str) -> Result<VerifiedJwt, AuthVerifyError>;
+}
+
+/// HMAC-SHA256 JWT verifier (community edition default).
+///
+/// Wraps `jwt_simple::HS256Key` to provide the `AuthVerifier` contract.
+/// This is the canonical verifier for session JWTs issued by the Host.
+pub struct HmacAuthVerifier {
+    key: jwt_simple::prelude::HS256Key,
+}
+
+impl HmacAuthVerifier {
+    /// Create a new HMAC-SHA256 verifier from a shared secret.
+    pub fn new(secret: &str) -> Self {
+        Self {
+            key: jwt_simple::prelude::HS256Key::from_bytes(secret.as_bytes()),
+        }
+    }
+
+    /// Create from raw bytes.
+    pub fn from_bytes(secret: &[u8]) -> Self {
+        Self {
+            key: jwt_simple::prelude::HS256Key::from_bytes(secret),
+        }
+    }
+}
+
+impl AuthVerifier for HmacAuthVerifier {
+    fn verify(&self, token: &str) -> Result<VerifiedJwt, AuthVerifyError> {
+        if token.is_empty() {
+            return Err(AuthVerifyError::MissingToken);
+        }
+
+        use jwt_simple::prelude::MACLike;
+        let verified = self.key
+            .verify_token::<JwtClaims>(token, None)
+            .map_err(|e| AuthVerifyError::SignatureInvalid(format!("{}", e)))?;
+
+        let mut claims = verified.custom;
+
+        // Normalize: if sub is empty, default to iss.
+        if claims.sub.is_empty() {
+            claims.sub = claims.iss.clone();
+        }
+        // If iss is empty, default to sub.
+        if claims.iss.is_empty() {
+            claims.iss = claims.sub.clone();
+        }
+
+        Ok(VerifiedJwt::new_verified(claims))
+    }
+}
 
 /// Decoded JWT payload claims relevant to identity derivation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JwtClaims {
     /// Issuer — the owner DID.
     #[serde(default)]

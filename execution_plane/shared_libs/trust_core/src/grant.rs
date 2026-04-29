@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// Connectors MUST validate this grant instead of accepting broad
 /// session JWTs. This is the key architectural change that makes
 /// scoped delegation real.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExecutionGrant {
     /// Unique grant identifier.
     pub grant_id: String,
@@ -41,7 +41,7 @@ pub struct ExecutionGrant {
 
 /// How an execution grant was obtained — tracks the provenance of the
 /// authorization decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantClearance {
     /// Tier 0: policy auto-allowed the action.
@@ -69,7 +69,7 @@ impl std::fmt::Display for GrantClearance {
 ///
 /// The `token` field contains the JWT-encoded grant that is passed to
 /// connectors for validation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SignedGrant {
     /// The JWT-encoded grant string.
     pub token: String,

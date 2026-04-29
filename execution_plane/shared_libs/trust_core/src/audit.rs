@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 ///   - `audit.action.{action_id}`
 ///   - `audit.session.{jti}`
 ///   - `audit.tenant.{tenant_id}`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AuditEvent {
     /// Unique event identifier.
     pub event_id: String,
@@ -43,7 +43,7 @@ pub struct AuditEvent {
 ///
 /// Events are ordered by their typical occurrence in the action lifecycle:
 /// proposed → evaluated → (approval/proof cycle) → granted → invoked → result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditEventType {
     // ── Action lifecycle ──

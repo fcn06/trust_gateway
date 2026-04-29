@@ -80,7 +80,7 @@ impl CreateIdentityCommand {
         if !dids.contains(&did.to_string()) {
             dids.push(did.to_string());
             blind_set(&format!("user_dids:{}", self.user_id), &serde_json::to_vec(&dids).unwrap(), &self.user_id)?;
-            persistence::set(&blind_key(&format!("did_user:{}", did)), self.user_id.as_bytes());
+            let _ = persistence::set(&blind_key(&format!("did_user:{}", did)), self.user_id.as_bytes());
         }
         
         Ok(())

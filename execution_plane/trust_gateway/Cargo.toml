@@ -8,13 +8,17 @@ description = "Sovereign Trust Gateway — policy-driven action governance with 
 name = "trust_gateway"
 path = "src/main.rs"
 
+[lib]
+name = "trust_gateway"
+path = "src/lib.rs"
+
 [dependencies]
 # Domain types and policy engine from agent_in_a_box workspace
 trust_core = { path = "../shared_libs/trust_core" }
 trust_policy = { path = "../shared_libs/trust_policy" }
 identity_context = { path = "../shared_libs/identity_context" }
 ssi_mcp_runtime = { path = "../shared_libs/ssi_mcp_runtime" }
-configuration={git = "https://github.com/fcn06/swarm_commons.git"}
+configuration={git = "https://github.com/fcn06/swarm_commons.git", rev = "329c8ff3397fa843c83180ff12de2d6a9f9bd5f8"}
 rmcp = { version = "1.3", features = ["client", "client-side-sse", "auth", "transport-streamable-http-client-reqwest"] }
 
 
@@ -41,6 +45,11 @@ serde_json = "1.0"
 
 # JWT (for session validation and ExecutionGrant issuance)
 jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
+
+# SSI and Cryptography support (Phase 1: DID/JWK VP verification)
+ssi_crypto = { path = "../../agent_in_a_box/ssi_crypto" }
+ed25519-dalek = "2.1"
+bs58 = "0.5"
 
 # Utilities
 uuid = { version = "1.0", features = ["v4"] }

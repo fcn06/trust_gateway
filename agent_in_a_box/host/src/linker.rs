@@ -23,12 +23,16 @@ async fn bind_persistence(
             if let Some(store) = store_opt {
                 let encoded_key = hex::encode(key);
                 match store.get(encoded_key).await {
-                    Ok(Some(entry)) => Ok((Some(entry.to_vec()),)),
-                    Ok(None) => Ok((None,)),
-                    Err(e) => Err(anyhow::anyhow!("KV Get Error: {}", e)),
+                    Ok(Some(entry)) => Ok((Ok(Some(entry.to_vec())),)),
+                    Ok(None) => Ok((Ok(None),)),
+                    Err(e) => {
+                        tracing::error!("❌ [Linker] KV Get Error: {}", e);
+                        Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::StorageError),))
+                    }
                 }
             } else {
-                 Err(anyhow::anyhow!("KV Store not available"))
+                 tracing::warn!("⚠️ [Linker] KV Store not available for Get");
+                 Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::NotAvailable),))
             }
         }))
     })?;
@@ -38,10 +42,16 @@ async fn bind_persistence(
          Box::new(Box::pin(async move {
             if let Some(store) = store_opt {
                 let encoded_key = hex::encode(key);
-                let _ = store.put(encoded_key, value.into()).await.map_err(|e| anyhow::anyhow!("KV Put Error: {}", e))?;
-                Ok(())
+                match store.put(encoded_key, value.into()).await {
+                    Ok(_) => Ok((Ok(()),)),
+                    Err(e) => {
+                        tracing::error!("❌ [Linker] KV Put Error: {}", e);
+                        Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::StorageError),))
+                    }
+                }
             } else {
-                Err(anyhow::anyhow!("KV Store not available"))
+                tracing::warn!("⚠️ [Linker] KV Store not available for Set");
+                Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::NotAvailable),))
             }
         }))
     })?;
@@ -51,20 +61,27 @@ async fn bind_persistence(
          Box::new(Box::pin(async move {
             if let Some(store) = store_opt {
                 let mut keys = Vec::new();
-                if let Ok(mut stream) = store.keys().await {
-                     while let Some(k_res) = stream.next().await {
-                         if let Ok(k) = k_res { 
-                             if let Ok(decoded_bytes) = hex::decode(&k) {
-                                 if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
-                                     keys.push(decoded_str);
+                match store.keys().await {
+                    Ok(mut stream) => {
+                         while let Some(k_res) = stream.next().await {
+                             if let Ok(k) = k_res { 
+                                 if let Ok(decoded_bytes) = hex::decode(&k) {
+                                     if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+                                         keys.push(decoded_str);
+                                     }
                                  }
-                             }
-                         } 
-                     }
+                             } 
+                         }
+                         Ok((Ok(keys),))
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ [Linker] KV ListKeys Error: {}", e);
+                        Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::StorageError),))
+                    }
                 }
-                Ok((keys,))
             } else {
-                Err(anyhow::anyhow!("KV Store not available"))
+                tracing::warn!("⚠️ [Linker] KV Store not available for ListKeys");
+                Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::NotAvailable),))
             }
         }))
     })?;
@@ -91,8 +108,11 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::CreateIdentity(id, tx)).await;
-            let did = rx.await.unwrap_or_default();
-            Ok((did,))
+            match rx.await {
+                Ok(did) if !did.is_empty() => Ok((Ok(did),)),
+                Ok(_) => Ok((Err("Vault failed to create identity (empty DID returned)".to_string()),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
         }))
     })?;
 
@@ -100,8 +120,11 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::ResolveDid { did, resp: tx }).await;
-            let user_id = rx.await.unwrap_or_default().unwrap_or_default();
-            Ok((user_id,))
+            match rx.await {
+                Ok(Some(uid)) => Ok((Ok(uid),)),
+                Ok(None) => Ok((Err("DID not found".to_string()),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
         }))
     })?;
 
@@ -110,9 +133,9 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::SignMessage { did, msg, resp: tx }).await;
             match rx.await {
-                Ok(Ok(sig)) => Ok((sig,)),
-                Ok(Err(e)) => Err(anyhow::anyhow!(e)),
-                Err(_) => Err(anyhow::anyhow!("Channel closed")),
+                Ok(Ok(sig)) => Ok((Ok(sig),)),
+                Ok(Err(e)) => Ok((Err(format!("Vault signing error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
             }
         }))
     })?;
@@ -121,8 +144,10 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id, tx)).await;
-            let dids = rx.await.unwrap_or_default();
-            Ok((dids,))
+            match rx.await {
+                Ok(dids) => Ok((Ok(dids),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
         }))
     })?;
 
@@ -130,8 +155,11 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::GetActiveDid(user_id, tx)).await;
-            let did = rx.await.unwrap_or_default();
-            Ok((did,))
+            match rx.await {
+                Ok(did) if !did.is_empty() => Ok((Ok(did),)),
+                Ok(_) => Ok((Err("No active DID found for user".to_string()),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
         }))
     })?;
 
@@ -151,7 +179,11 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::GenerateMasterSeed { user_id: uid, derivation_path: path, resp: tx }).await;
-            match rx.await { Ok(Ok(s)) => Ok((s,)), _ => Err(anyhow::anyhow!("Error")), }
+            match rx.await { 
+                Ok(Ok(s)) => Ok((Ok(s),)), 
+                Ok(Err(e)) => Ok((Err(format!("Vault error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)), 
+            }
         }))
     })?;
 
@@ -159,7 +191,11 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
              let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::DeriveLinkNkey { user_id: uid, resp: tx }).await;
-            match rx.await { Ok(Ok(s)) => Ok((s,)), _ => Err(anyhow::anyhow!("Error")), }
+            match rx.await { 
+                Ok(Ok(s)) => Ok((Ok(s),)), 
+                Ok(Err(e)) => Ok((Err(format!("Vault error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)), 
+            }
         }))
     })?;
 
@@ -174,12 +210,24 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
                 if let Ok(Some(resolved)) = rx.await {
                     tracing::debug!("🔗 Resolved DID {} to User ID {} for HMAC retrieval", uid, resolved);
                     target_uid = resolved;
+                } else {
+                    tracing::warn!("⚠️ Failed to resolve DID {} for HMAC retrieval", uid);
                 }
             }
 
             let (tx, rx) = oneshot::channel();
              let _ = shared.vault_cmd_tx.send(VaultCommand::GetHmacSecret { user_id: target_uid, resp: tx }).await;
-            match rx.await { Ok(Ok(s)) => Ok((s,)), _ => Err(anyhow::anyhow!("Error")), }
+            match rx.await { 
+                Ok(Ok(s)) => Ok((s,)), 
+                Ok(Err(e)) => {
+                    tracing::error!("❌ Vault GetHmacSecret error: {}", e);
+                    Ok((Vec::new(),))
+                }
+                Err(_) => {
+                    tracing::error!("❌ Vault task communication failed for GetHmacSecret");
+                    Ok((Vec::new(),))
+                }
+            }
         }))
     })?;
 
@@ -187,7 +235,11 @@ pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
         Box::new(Box::pin(async move {
             let (tx, rx) = oneshot::channel();
             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::UnlockVault { user_id: uid, derivation_path: path, resp: tx }).await;
-            match rx.await { Ok(res) => Ok((res,)), _ => Err(anyhow::anyhow!("Error")), }
+            match rx.await { 
+                Ok(Ok(res)) => Ok((Ok(res),)), 
+                Ok(Err(e)) => Ok((Err(format!("Vault error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
         }))
     })?;
 

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Who is performing the action and under what authority.
 ///
 /// Derived from the session JWT issued by `ssi_vault`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ActorContext {
     /// DID of the entity that owns the tenant / agent box (from JWT `iss`).
     pub owner_did: String,
@@ -28,7 +28,7 @@ pub struct ActorContext {
 /// Authentication strength of the current session.
 ///
 /// Used by the policy engine to decide whether step-up is needed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthLevel {
     /// Basic session token — the default after Host login.
@@ -50,7 +50,7 @@ impl std::fmt::Display for AuthLevel {
 }
 
 /// Where the action request originated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SourceContext {
     /// Source type identifier: "ssi_agent", "whatsapp", "webhook",
     /// "portal", "picoclaw", etc.

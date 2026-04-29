@@ -37,14 +37,14 @@ impl JetStreamAgentRegistry {
     /// Write the source_type → agent_id mapping to the secondary index.
     async fn index_source(&self, agent_id: &str, agent_type: AgentType, policy_profile: &str) {
         // Build a lookup key from the agent_type to enable resolve_by_source.
-        let source_key = format!("type:{}", agent_type);
+        let source_key = format!("type_{}", agent_type);
         let agent_id_owned = agent_id.to_string();
         let agent_id_vec = agent_id_owned.as_bytes().to_vec();
 
         if let Ok(index) = self.get_index_store().await {
             // Index by policy_profile (commonly maps to source-level identity)
             let _ = index.put(
-                &format!("profile:{}", policy_profile),
+                &format!("profile_{}", policy_profile),
                 agent_id_vec.clone().into(),
             ).await;
 
@@ -56,7 +56,7 @@ impl JetStreamAgentRegistry {
 
             // Also index by agent_id itself for direct lookup
             let _ = index.put(
-                &format!("id:{}", agent_id),
+                &format!("id_{}", agent_id),
                 agent_id_vec.into(),
             ).await;
         }
@@ -260,7 +260,7 @@ impl trust_core::traits::AgentRegistry for JetStreamAgentRegistry {
 
         // 2. Try the secondary index: profile:<source_type>
         if let Ok(index) = self.get_index_store().await {
-            let lookup_key = format!("profile:{}", source_type);
+            let lookup_key = format!("profile_{}", source_type);
             if let Ok(Some(entry)) = index.get(&lookup_key).await {
                 let agent_id = String::from_utf8_lossy(&entry).to_string();
                 return self.get(&agent_id).await;
@@ -370,11 +370,11 @@ pub async fn bootstrap_from_toml_direct(
                 if let Some(ref idx) = index_store {
                     let aid_vec = record.agent_id.as_bytes().to_vec();
                     let _ = idx.put(
-                        &format!("profile:{}", record.policy_profile),
+                        &format!("profile_{}", record.policy_profile),
                         aid_vec.clone().into(),
                     ).await;
                     let _ = idx.put(
-                        &format!("id:{}", record.agent_id),
+                        &format!("id_{}", record.agent_id),
                         aid_vec.into(),
                     ).await;
                 }

@@ -11,8 +11,10 @@ use trust_core::audit::{AuditEvent, AuditEventType};
 use trust_core::decision::ActionDecision;
 use trust_core::grant::GrantClearance;
 use trust_core::traits::{PolicyEngine, GrantIssuer, AuditSink};
+use identity_context::AuthVerifier; // RULE[010_JWT_CONTRACTS.md]
 
 use crate::router;
+use base64::Engine;
 
 /// Shared state for the Trust Gateway.
 ///
@@ -45,10 +47,19 @@ pub struct GatewayState {
     pub tool_registry: Option<router::ToolRegistry>,
     /// WS1.2: Per-connector circuit breakers for resilience.
     pub circuit_breakers: std::collections::HashMap<String, router::CircuitBreaker>,
+    /// P2/M1: Pooled VP MCP client session (avoids per-request handshake overhead).
+    pub vp_mcp_pool: Option<router::VpMcpPool>,
     /// Allowed CORS origins (configurable via ALLOWED_ORIGINS env var).
     pub allowed_origins: Vec<String>,
     /// JWT secret for session verification.
     pub jwt_secret: String,
+    /// Pluggable token validator (dependency injection).
+    ///
+    /// Community edition: `StandardJwtValidator` (HMAC-HS256 session JWTs).
+    /// Professional edition: injects an `EnterpriseValidator` that handles
+    /// SSI Verifiable Presentations and falls back to `StandardJwtValidator`
+    /// for regular web sessions.
+    pub token_validator: Arc<dyn crate::auth::TokenValidator>,
 }
 
 /// The payload received from the ssi_agent via NATS (backward compat).
@@ -562,7 +573,16 @@ pub fn build_action_request(proposed: identity_context::models::ProposedAction) 
 }
 
 /// Convert a NATS DispatchPayload (old format) into an ActionRequest (new format).
-pub fn convert_nats_dispatch(payload: &NatsDispatchPayload) -> ActionRequest {
+///
+/// RULE[010_JWT_CONTRACTS.md]: The JWT embedded in the NATS payload is now
+/// verified via the provided `AuthVerifier` before claims are used for
+/// identity extraction. If verification fails, the `verified_did` field
+/// (already cryptographically validated by the Host) is used as a fallback
+/// to ensure the policy engine can still evaluate the request.
+pub async fn convert_nats_dispatch(
+    payload: &NatsDispatchPayload,
+    state: Arc<GatewayState>,
+) -> ActionRequest {
     let clean_args = payload.arguments.clone();
     
     // Extract legacy session info to feed the normalizer
@@ -576,11 +596,95 @@ pub fn convert_nats_dispatch(payload: &NatsDispatchPayload) -> ActionRequest {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // Use the new transport normalizer
+    // RULE[010_JWT_CONTRACTS.md]: Verify the JWT before using claims.
+    let verified_claims = if !session_jwt.is_empty() {
+        if crate::vp_verifier::is_verifiable_presentation(session_jwt) {
+            // SSI path: token is a Verifiable Presentation
+            match crate::vp_verifier::verify_presentation(session_jwt, &state.http_client).await {
+                Ok(verified_vp) => {
+                    let claims = identity_context::jwt::JwtClaims {
+                        iss: verified_vp.issuer_did,
+                        sub: verified_vp.agent_did,
+                        tenant_id: verified_vp.tenant_id,
+                        jti: uuid::Uuid::new_v4().to_string(),
+                        scope: vec!["agent:propose".to_string()],
+                        user_did: None,
+                        exp: None,
+                        iat: None,
+                    };
+                    Some(claims)
+                }
+                Err(e) => {
+                    tracing::warn!("NATS dispatch VP verification failed (using verified_did fallback): {}", e);
+                    None
+                }
+            }
+        } else {
+            // Peek at algorithm header to distinguish between legacy HMAC and SSI EdDSA session tokens
+            let parts: Vec<&str> = session_jwt.split('.').collect();
+            let mut is_eddsa = false;
+            if parts.len() >= 2 {
+                let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+                let b64_pad = base64::engine::general_purpose::URL_SAFE;
+                if let Ok(h) = b64.decode(parts[0]).or_else(|_| b64_pad.decode(parts[0])) {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&h) {
+                        if json.get("alg").and_then(|v| v.as_str()) == Some("EdDSA") {
+                            is_eddsa = true;
+                        }
+                    }
+                }
+            }
+
+            if is_eddsa {
+                // SSI Session path: token is an EdDSA session JWT signed by the user's DID
+                match crate::vp_verifier::verify_eddsa_session_jwt(session_jwt) {
+                    Ok(claims) => Some(claims),
+                    Err(e) => {
+                        tracing::warn!("NATS dispatch SSI Session verification failed (using verified_did fallback): {}", e);
+                        None
+                    }
+                }
+            } else {
+                // Legacy path: token is a Host-issued HMAC-SHA256 session JWT
+                let verifier = identity_context::jwt::HmacAuthVerifier::new(&state.jwt_secret);
+                match verifier.verify(session_jwt) {
+                    Ok(verified) => Some(verified.into_claims()),
+                    Err(e) => {
+                        tracing::warn!(
+                            "NATS dispatch JWT verification failed (using verified_did fallback): {}",
+                            e
+                        );
+                        None
+                    }
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    // Build claims from verified source, or synthesize from verified_did
+    let claims_for_normalizer = verified_claims.unwrap_or_else(|| {
+        // Fallback: the verified_did was already cryptographically validated
+        // by the Host before dispatch, so it's safe to use as identity.
+        identity_context::jwt::JwtClaims {
+            iss: payload.verified_did.clone(),
+            sub: payload.verified_did.clone(),
+            tenant_id: tenant_id.to_string(),
+            jti: String::new(),
+            scope: vec![],
+            user_did: None,
+            exp: None,
+            iat: None,
+        }
+    });
+
+    // Use the new transport normalizer with verified claims
     let proposed = crate::transport_normalizer::normalize_nats_dispatch(
         &payload.tool_name,
         clean_args.clone(),
         session_jwt,
+        &claims_for_normalizer,
         tenant_id,
     ).unwrap_or_else(|e| {
         tracing::debug!("NATS dispatch normalization failed (fallback mode): {}", e);
@@ -650,7 +754,7 @@ pub async fn run_nats_listener(
                 }
             };
 
-            let action_req = convert_nats_dispatch(&payload);
+            let action_req = convert_nats_dispatch(&payload, state.clone()).await;
             let result = process_action(state.clone(), action_req).await;
 
             if let Some(reply_to) = reply_subject {

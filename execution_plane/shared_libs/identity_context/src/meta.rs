@@ -151,8 +151,16 @@ pub fn strip_meta(args: &mut serde_json::Value) {
 
 /// Build an IdentityContext from a validated MetaPayload.
 ///
+/// **DEPRECATED:** Use `build_identity_context_verified` instead, which
+/// accepts pre-verified `&JwtClaims` from `AuthVerifier::verify()`.
+/// This function re-decodes the JWT without signature verification.
+///
 /// Combines _meta fields with decoded JWT claims to produce the
 /// unified identity view for policy evaluation.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use build_identity_context_verified() with pre-verified claims instead"
+)]
 pub fn build_identity_context(
     meta: &MetaPayload,
     source: crate::models::SourceContext,
@@ -178,6 +186,43 @@ pub fn build_identity_context(
     Ok(crate::models::IdentityContext {
         tenant_id,
         owner_did: claims.iss,
+        requester_did,
+        session_jwt: meta.session_jwt.clone(),
+        source,
+    })
+}
+
+/// Build an IdentityContext from a validated MetaPayload using
+/// pre-verified claims.
+///
+/// Per RULE[010_JWT_CONTRACTS.md]: accepts `&JwtClaims` that have
+/// already been verified via `AuthVerifier::verify()`, eliminating
+/// the need to re-decode the JWT payload without signature validation.
+///
+/// This is the **preferred** path for all production call sites.
+pub fn build_identity_context_verified(
+    meta: &MetaPayload,
+    verified_claims: &JwtClaims,
+    source: crate::models::SourceContext,
+) -> Result<crate::models::IdentityContext, MetaError> {
+    // Validate tenant consistency using the verified claims
+    validate_tenant_consistency(meta, verified_claims)?;
+
+    // Derive tenant_id: explicit _meta > JWT > empty (will fail downstream)
+    let tenant_id = meta
+        .tenant_id
+        .clone()
+        .unwrap_or_else(|| verified_claims.tenant_id.clone());
+
+    // Derive requester_did: explicit _meta > JWT sub
+    let requester_did = meta
+        .requester_did
+        .clone()
+        .unwrap_or_else(|| verified_claims.sub.clone());
+
+    Ok(crate::models::IdentityContext {
+        tenant_id,
+        owner_did: verified_claims.iss.clone(),
         requester_did,
         session_jwt: meta.session_jwt.clone(),
         source,

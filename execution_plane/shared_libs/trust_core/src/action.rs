@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Created when any proposer (ssi_agent, webhook, WhatsApp bridge, PicoClaw)
 /// submits an action for governance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ActionRequest {
     /// Unique identifier for this action attempt.
     pub action_id: String,
@@ -29,7 +29,7 @@ pub struct ActionRequest {
 /// This replaces the old raw tool-name dispatch. Every action is now
 /// classified by name, category, operation kind, optional monetary amount,
 /// and risk-tagging hints.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ActionDescriptor {
     /// Fully qualified action name, e.g. "google.calendar.event.create".
     pub name: String,
@@ -49,7 +49,7 @@ pub struct ActionDescriptor {
 }
 
 /// The kind of operation an action performs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     Read,
@@ -72,7 +72,7 @@ impl std::fmt::Display for OperationKind {
 }
 
 /// The terminal status of an executed action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionStatus {
     Succeeded,
@@ -80,7 +80,7 @@ pub enum ActionStatus {
 }
 
 /// Result returned after a connector executes an action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ActionResult {
     /// Correlates back to the original `ActionRequest.action_id`.
     pub action_id: String,

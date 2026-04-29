@@ -391,6 +391,8 @@ pub struct RegistrationCookie {
     /// this MUST be used instead of `aid` for all tenant-scoped operations.
     #[serde(default)]
     pub tenant_id: Option<String>,
+    #[serde(default)]
+    pub is_agent_allowed: bool,
 }
 
 // === Multi-Tenant Structures ===

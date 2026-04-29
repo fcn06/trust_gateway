@@ -21,7 +21,7 @@ impl IssueSessionJwtCommand {
         let expiration = issued_at + self.ttl_seconds as u64;
 
         let b_key = blind_key(&format!("did_user:{}", self.user_did));
-        let user_id_bytes = persistence::get(&b_key).ok_or("DID owner not found")?;
+        let user_id_bytes = persistence::get(&b_key).map_err(|e| format!("Persistence error: {:?}", e))?.ok_or("DID owner not found")?;
         let user_id = String::from_utf8(user_id_bytes).map_err(|_| "Invalid user_id")?;
 
         let seed_bytes = blind_get(&format!("seed:{}", self.user_did), &user_id)?

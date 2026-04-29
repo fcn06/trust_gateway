@@ -34,7 +34,12 @@ pub fn Settings(
 
     let main_did = move || identities.get().first().cloned();
 
-    let toggle_institutional = {
+    /// Gate: Only allow specific tenants to enable the AI Receptionist/Agent features.
+    let is_agent_allowed = move || {
+        registration_cookie.get().map(|c| c.is_agent_allowed).unwrap_or(false)
+    };
+
+    let toggle_institutional = Callback::new({
         let base_url = base_url.clone();
         let token = token.clone();
         move |_| {
@@ -57,7 +62,7 @@ pub fn Settings(
                 });
             }
         }
-    };
+    });
 
     let generate_invite = {
         let base_url = base_url.clone();
@@ -139,32 +144,34 @@ pub fn Settings(
                 </div>
             </section>
 
-            // Institutional Settings
-            <section class="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                <h2 class="text-lg font-semibold text-white mb-4">"🤖 Public AI Receptionist"</h2>
-                <div class="flex items-center justify-between p-4 bg-slate-900 rounded-lg border border-slate-600">
-                    <div>
-                        <p class="text-sm font-medium text-white">"Enable Auto-Reply"</p>
-                        <p class="text-xs text-gray-400">"Automatically respond to messages via AI and bypass ACLs."</p>
+            // Institutional Settings (Agent Toggle) - Restricted to specific tenants
+            <Show when=is_agent_allowed>
+                <section class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                    <h2 class="text-lg font-semibold text-white mb-4">"🤖 Public AI Receptionist"</h2>
+                    <div class="flex items-center justify-between p-4 bg-slate-900 rounded-lg border border-slate-600">
+                        <div>
+                            <p class="text-sm font-medium text-white">"Enable Auto-Reply"</p>
+                            <p class="text-xs text-gray-400">"Automatically respond to messages via AI and bypass ACLs."</p>
+                        </div>
+                        {move || {
+                            if loading.get() || updating.get() {
+                                view! { <span class="text-gray-500 italic text-sm">"Loading..."</span> }.into_any()
+                            } else if let Some(id) = main_did() {
+                                view! {
+                                    <button 
+                                        on:click=move |e| toggle_institutional.run(e)
+                                        class=format!("relative inline-flex h-6 w-11 items-center rounded-full transition-colors {}", if id.is_institutional { "bg-blue-600" } else { "bg-slate-600" })
+                                    >
+                                        <span class=format!("inline-block h-4 w-4 transform rounded-full bg-white transition-transform {}", if id.is_institutional { "translate-x-6" } else { "translate-x-1" })/>
+                                    </button>
+                                }.into_any()
+                            } else {
+                                view! { <span class="text-red-400 text-sm">"No primary identity found"</span> }.into_any()
+                            }
+                        }}
                     </div>
-                    {move || {
-                        if loading.get() || updating.get() {
-                            view! { <span class="text-gray-500 italic text-sm">"Loading..."</span> }.into_any()
-                        } else if let Some(id) = main_did() {
-                            view! {
-                                <button 
-                                    on:click=toggle_institutional.clone()
-                                    class=format!("relative inline-flex h-6 w-11 items-center rounded-full transition-colors {}", if id.is_institutional { "bg-blue-600" } else { "bg-slate-600" })
-                                >
-                                    <span class=format!("inline-block h-4 w-4 transform rounded-full bg-white transition-transform {}", if id.is_institutional { "translate-x-6" } else { "translate-x-1" })/>
-                                </button>
-                            }.into_any()
-                        } else {
-                            view! { <span class="text-red-400 text-sm">"No primary identity found"</span> }.into_any()
-                        }
-                    }}
-                </div>
-            </section>
+                </section>
+            </Show>
 
             // LLM Configuration
             <section class="bg-slate-800 rounded-xl p-6 border border-slate-700">

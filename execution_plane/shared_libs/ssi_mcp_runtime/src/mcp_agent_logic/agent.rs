@@ -424,10 +424,13 @@ impl McpAgent {
                     }
                 }
             }
-            // Route through evaluation when enabled (gated by config flag)
+            // Evaluate tool execution results if evaluation is enabled in configuration.
+            // When disabled (default behavior for stability), we skip the Evaluating
+            // and Correcting states entirely, proceeding directly back to Thinking.
             if self.agent_mcp_config.agent_mcp_enable_evaluation.unwrap_or(false) {
                 Ok(AgentState::Evaluating(choice.clone(), tool_results))
             } else {
+                // TODO: Stabilize evaluation logic and enable by default in production.
                 self.messages.extend(tool_results);
                 Ok(AgentState::Thinking)
             }

@@ -66,7 +66,7 @@ struct Args {
     mcp_config_path: String,
 
     /// Path to escalation policy JSON file
-    #[arg(long, env = "POLICY_PATH", default_value = "configuration/policy.json")]
+    #[arg(long, env = "BRIDGE_POLICY_PATH", default_value = "configuration/policy.json")]
     policy_path: String,
 
     /// NATS subject to subscribe to
@@ -121,7 +121,8 @@ async fn main() -> Result<()> {
     // Setup HTTP client for calling the connector_mcp_server and for the MCP client transport
     let http_client = reqwest::Client::builder()
         .pool_max_idle_per_host(10)
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        // WS-FIX: Removed .timeout(30s) as it kills long-lived SSE streams
         .build()
         .unwrap_or_default();
     

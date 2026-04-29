@@ -27,8 +27,8 @@ pub fn load_config() -> Result<HostConfig> {
         .build()?;
 
     let config: HostConfig = loader.try_deserialize()?;
-    tracing::info!("✅ Configuration loaded. API Listen: {}, Gateway Base: {}, Gateway DID: {}", 
-        config.api_listen_url, config.service_gateway_base_url, config.gateway_did);
+    tracing::info!("✅ Configuration loaded. API Listen: {}, Gateway Base: {}, Gateway DID: {}, Allowed Tenants: {}", 
+        config.api_listen_url, config.service_gateway_base_url, config.gateway_did, config.allowed_agent_tenants);
     Ok(config)
 }
 

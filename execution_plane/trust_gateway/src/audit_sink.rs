@@ -8,12 +8,22 @@
 //
 // This makes the audit trail tamper-evident: any modification
 // to a past event breaks the hash chain from that point forward.
+//
+// P3/H2 fix: Hash chain is now per-action-id (not global) and
+// persisted to NATS KV so restarts don't break the chain.
+//
+// P3/M3 fix: Uses tokio::sync::Mutex instead of std::sync::Mutex
+// so we don't block the Tokio thread under high audit throughput.
 // ─────────────────────────────────────────────────────────────
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
 use sha2::{Sha256, Digest};
 use trust_core::audit::{AuditEvent, AuditEventType};
 use trust_core::errors::AuditError;
+
+/// NATS KV bucket name for persisting hash chain heads.
+const CHAIN_HEAD_BUCKET: &str = "audit_chain_heads";
 
 /// Default AuditSink implementation backed by NATS JetStream.
 ///
@@ -21,12 +31,21 @@ use trust_core::errors::AuditError;
 /// plain NATS fallback if JetStream publish or ack fails.
 ///
 /// WS2: Maintains a hash chain across all published events.
+///
+/// P3/H2 fix: The hash chain is now per-action-id. Each action
+/// has its own independent chain, and the chain head is persisted
+/// to the `audit_chain_heads` NATS KV bucket on every publish.
+/// On startup, the chain is lazily loaded from KV on first access
+/// for each action_id.
+///
+/// P3/M3 fix: Uses `tokio::sync::Mutex` instead of `std::sync::Mutex`
+/// for async-safe locking that doesn't block the Tokio runtime.
 pub struct JetStreamAuditSink {
     js: async_nats::jetstream::Context,
     nc: async_nats::Client,
-    /// The hash of the most recently published event.
-    /// Protected by a Mutex for thread-safe sequential access.
-    last_hash: Mutex<Option<String>>,
+    /// Per-action-id hash chain heads.
+    /// Lazily populated from KV on first access per action_id.
+    chain_heads: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl JetStreamAuditSink {
@@ -34,7 +53,45 @@ impl JetStreamAuditSink {
         Self {
             js,
             nc,
-            last_hash: Mutex::new(None),
+            chain_heads: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Load the persisted chain head for an action_id from NATS KV.
+    /// Returns None if no prior chain exists (genesis event).
+    async fn load_chain_head(&self, action_id: &str) -> Option<String> {
+        match self.js.get_key_value(CHAIN_HEAD_BUCKET).await {
+            Ok(store) => {
+                match store.get(action_id).await {
+                    Ok(Some(entry)) => {
+                        String::from_utf8(entry.to_vec()).ok()
+                    }
+                    _ => None,
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Persist the chain head for an action_id to NATS KV.
+    /// Best-effort — if KV write fails, we log and continue.
+    async fn persist_chain_head(&self, action_id: &str, hash: &str) {
+        let hash_owned = hash.as_bytes().to_vec();
+        match self.js.get_key_value(CHAIN_HEAD_BUCKET).await {
+            Ok(store) => {
+                if let Err(e) = store.put(action_id, hash_owned.into()).await {
+                    tracing::warn!(
+                        "⚠️ Failed to persist audit chain head for action {}: {} (chain may break on restart)",
+                        action_id, e
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "Cannot access {} KV bucket: {} (chain heads not persisted)",
+                    CHAIN_HEAD_BUCKET, e
+                );
+            }
         }
     }
 
@@ -62,17 +119,31 @@ impl JetStreamAuditSink {
 #[async_trait::async_trait]
 impl trust_core::traits::AuditSink for JetStreamAuditSink {
     async fn publish(&self, mut event: AuditEvent) -> Result<(), AuditError> {
-        // ── WS2: Hash-chain computation ─────────────────────
-        // Set prev_hash from the last published event, compute
-        // this event's hash, then update the chain head.
+        let action_id = event.action_id.clone().unwrap_or_default();
+
+        // ── P3/H2 + M3: Per-action-id hash chain with async mutex ──
+        // Lazily load chain head from KV on first access for this action_id,
+        // then compute hash and update in-memory + persisted state.
         {
-            let mut last = self.last_hash.lock().unwrap();
-            event.prev_hash = last.clone();
+            let mut heads = self.chain_heads.lock().await;
+
+            // Lazy load from KV if we haven't seen this action_id yet
+            if !heads.contains_key(&action_id) {
+                let persisted = self.load_chain_head(&action_id).await;
+                heads.insert(action_id.clone(), persisted);
+            }
+
+            let prev_hash = heads.get(&action_id).and_then(|h| h.clone());
+            event.prev_hash = prev_hash;
             event.event_hash = Some(Self::compute_event_hash(&event));
-            *last = event.event_hash.clone();
+            heads.insert(action_id.clone(), event.event_hash.clone());
         }
 
-        let action_id = event.action_id.clone().unwrap_or_default();
+        // Persist the updated chain head (fire-and-forget, best-effort)
+        if let Some(ref hash) = event.event_hash {
+            self.persist_chain_head(&action_id, hash).await;
+        }
+
         let subject = format!("audit.action.{}", action_id);
         let json = serde_json::to_string(&event)
             .map_err(|e| AuditError::Serialization(e.to_string()))?;

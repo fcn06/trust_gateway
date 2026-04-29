@@ -60,7 +60,7 @@ impl Guest for SsiVault {
         let key = format!("master_seed:{}", user_id);
         
         // 1. Check if seed already exists
-        if persistence::get(&blind_key(&key)).is_some() {
+        if matches!(persistence::get(&blind_key(&key)), Ok(Some(_))) {
             tracing::warn!("⚠️ Master Seed already exists for user: {}", user_id);
             return Ok(false);
         }
@@ -93,7 +93,7 @@ impl Guest for SsiVault {
         
         // 6. Persist
         let b_key = blind_key(&key);
-        persistence::set(&b_key, &storage_blob);
+        persistence::set(&b_key, &storage_blob).map_err(|e| format!("Persistence error: {:?}", e))?;
 
         // 7. Derive and persist Routing Secret (HMAC) - Plaintext content (Host-accessible for routing)
         let hk = Hkdf::<Sha256>::new(None, &seed_bytes);
@@ -101,7 +101,7 @@ impl Guest for SsiVault {
         hk.expand(INFO_HMAC_SECRET, &mut routing_secret).map_err(|_| "HKDF failed")?;
         
         let hmac_key = format!("hmac_secret:{}", user_id);
-        persistence::set(&blind_key(&hmac_key), &routing_secret.to_vec());
+        persistence::set(&blind_key(&hmac_key), &routing_secret.to_vec()).map_err(|e| format!("Persistence error: {:?}", e))?;
         
         // 8. Place in memory for current session (Unlock)
         {
@@ -206,29 +206,27 @@ impl Guest for SsiVault {
 
     // === DID Management ===
 
-    fn create_identity(user_id: String) -> String {
-        CreateIdentityCommand { user_id, is_peer: false }.execute().unwrap_or_default()
+    fn create_identity(user_id: String) -> Result<String, String> {
+        CreateIdentityCommand { user_id, is_peer: false }.execute()
     }
 
-    fn create_peer_identity(user_id: String) -> String {
-        CreateIdentityCommand { user_id, is_peer: true }.execute().unwrap_or_default()
+    fn create_peer_identity(user_id: String) -> Result<String, String> {
+        CreateIdentityCommand { user_id, is_peer: true }.execute()
     }
 
-    fn sign_message(did: String, message: Vec<u8>) -> Vec<u8> {
+    fn sign_message(did: String, message: Vec<u8>) -> Result<Vec<u8>, String> {
         // Find owner of this DID to get their seed
         let blind_did_user = blind_key(&format!("did_user:{}", did));
         let user_id_bytes = match persistence::get(&blind_did_user) {
-            Some(b) => b,
-            None => {
-                tracing::error!("❌ [VAULT] DID owner not found for {}", did);
-                return Vec::new();
+            Ok(Some(b)) => b,
+            _ => {
+                return Err(format!("DID owner not found for {}", did));
             }
         };
         let user_id = match String::from_utf8(user_id_bytes) {
             Ok(uid) => uid,
             Err(_) => {
-                tracing::error!("❌ [VAULT] Invalid user_id mapping for {}", did);
-                return Vec::new();
+                return Err(format!("Invalid user_id mapping for {}", did));
             }
         };
 
@@ -240,24 +238,25 @@ impl Guest for SsiVault {
                 if let Some(b) = map.get(&did) {
                     b.clone()
                 } else {
-                    return Vec::new();
+                    return Err(format!("Seed not found for {}", did));
                 }
             },
         };
         let seed: [u8; 32] = match seed_bytes.try_into() {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(_) => return Err("Invalid seed length".to_string()),
         };
         
         let signing_key = SigningKey::from_bytes(&seed);
         let signature = signing_key.sign(&message);
-        signature.to_bytes().to_vec()
+        Ok(signature.to_bytes().to_vec())
     }
 
-    fn get_active_did(user_id: String) -> String {
+    fn get_active_did(user_id: String) -> Result<String, String> {
         match blind_get(&format!("active_did:{}", user_id), &user_id) {
-            Ok(Some(did_bytes)) => String::from_utf8(did_bytes).unwrap_or_default(),
-            _ => String::new(),
+            Ok(Some(did_bytes)) => Ok(String::from_utf8(did_bytes).unwrap_or_default()),
+            Ok(None) => Ok(String::new()),
+            Err(e) => Err(e),
         }
     }
 
@@ -276,19 +275,20 @@ impl Guest for SsiVault {
         Ok(true)
     }
 
-    fn list_identities(user_id: String) -> Vec<String> {
-        if let Some(val) = blind_get(&format!("user_dids:{}", user_id), &user_id).unwrap_or_default() {
-            serde_json::from_slice(&val).unwrap_or_default()
-        } else {
-            Vec::new()
+    fn list_identities(user_id: String) -> Result<Vec<String>, String> {
+        match blind_get(&format!("user_dids:{}", user_id), &user_id) {
+            Ok(Some(val)) => Ok(serde_json::from_slice(&val).unwrap_or_default()),
+            Ok(None) => Ok(Vec::new()),
+            Err(e) => Err(e),
         }
     }
 
-    fn resolve_did_to_user_id(did: String) -> String {
+    fn resolve_did_to_user_id(did: String) -> Result<String, String> {
         let b_key = blind_key(&format!("did_user:{}", did));
         match persistence::get(&b_key) {
-            Some(bytes) => String::from_utf8(bytes).unwrap_or_default(),
-            None => String::new(),
+            Ok(Some(bytes)) => Ok(String::from_utf8(bytes).unwrap_or_default()),
+            Ok(None) => Ok(String::new()),
+            Err(e) => Err(format!("Persistence error: {:?}", e)),
         }
     }
 
@@ -309,11 +309,11 @@ impl Guest for SsiVault {
 
         // Store the service DID seed in the system-accessible area (not user-locked)
         let seed_key = format!("service_did_seed:{}", identity.did);
-        persistence::set(&blind_key(&seed_key), &identity.signing_seed.to_vec());
+        persistence::set(&blind_key(&seed_key), &identity.signing_seed.to_vec()).map_err(|e| format!("Persistence error: {:?}", e))?;
 
         // Map DID -> tenant_id
         let did_tenant_key = format!("did_tenant:{}", identity.did);
-        persistence::set(&blind_key(&did_tenant_key), tenant_id.as_bytes());
+        persistence::set(&blind_key(&did_tenant_key), tenant_id.as_bytes()).map_err(|e| format!("Persistence error: {:?}", e))?;
 
         tracing::info!("✅ Created Service DID for tenant {}: {}", tenant_id, identity.did);
         Ok(identity.did)
@@ -323,7 +323,7 @@ impl Guest for SsiVault {
 
     fn create_did_document(user_id: String, gateway_url: String, target_id: String) -> Result<String, String> {
         // 1. Get user's active DID
-        let did = Self::get_active_did(user_id.clone());
+        let did = Self::get_active_did(user_id.clone())?;
         if did.is_empty() {
             return Err("No active DID for user".to_string());
         }
@@ -454,7 +454,7 @@ fn blind_set(key: &str, value: &[u8], user_id: &str) -> Result<(), String> {
     blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&ciphertext);
 
-    persistence::set(&blind_key(key), &blob);
+    persistence::set(&blind_key(key), &blob).map_err(|e| format!("Persistence error: {:?}", e))?;
     
     Ok(())
 }
@@ -463,8 +463,9 @@ fn blind_get(key: &str, user_id: &str) -> Result<Option<Vec<u8>>, String> {
     let b_key = blind_key(key);
     
     let blob = match persistence::get(&b_key) {
-        Some(b) => b,
-        None => return Ok(None),
+        Ok(Some(b)) => b,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(format!("Persistence error: {:?}", e)),
     };
 
     if blob.len() < 24 {

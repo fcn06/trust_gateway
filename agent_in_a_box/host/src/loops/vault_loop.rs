@@ -29,9 +29,17 @@ pub fn spawn_vault_loop(
                         let mut resp_sent = false;
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
-                            if let Ok(identities) = vault_iface.call_list_identities(&mut store, &username).await {
-                                if let Some(r) = resp_opt.take() { let _ = r.send(identities); }
-                                resp_sent = true;
+                            match vault_iface.call_list_identities(&mut store, &username).await {
+                                Ok(Ok(identities)) => {
+                                    if let Some(r) = resp_opt.take() { let _ = r.send(identities); }
+                                    resp_sent = true;
+                                },
+                                Ok(Err(e)) => {
+                                    tracing::error!("❌ Vault ListIdentities FAILED: {}", e);
+                                },
+                                Err(e) => {
+                                    tracing::error!("❌ Vault ListIdentities TRAPPED: {:?}", e);
+                                }
                             }
                         }
                         if !resp_sent {
@@ -66,8 +74,16 @@ pub fn spawn_vault_loop(
                         if let Some(inst) = inst_opt {
                             if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                                 let vault_iface = vault_client.sovereign_gateway_vault();
-                                if let Ok(did) = vault_iface.call_get_active_did(&mut store, &username).await {
-                                    if let Some(r) = resp_opt.take() { let _ = r.send(did); }
+                                match vault_iface.call_get_active_did(&mut store, &username).await {
+                                    Ok(Ok(did)) => {
+                                        if let Some(r) = resp_opt.take() { let _ = r.send(did); }
+                                    },
+                                    Ok(Err(e)) => {
+                                        tracing::warn!("⚠️ Vault GetActiveDid returned error: {}", e);
+                                    },
+                                    Err(e) => {
+                                        tracing::error!("❌ Vault GetActiveDid TRAPPED: {:?}", e);
+                                    }
                                 }
                             }
                             if let Some(r) = resp_opt.take() { let _ = r.send(String::new()); }
@@ -95,15 +111,18 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_create_identity(&mut store, &user_id).await {
-                                Ok(did) => {
+                                Ok(Ok(did)) => {
                                     tracing::info!("✅ Vault CreateIdentity SUCCESS: {}", did);
                                     let target_id = crate::logic::compute_local_subject(&did, &store.data().shared.house_salt);
                                     let mut map = store.data().shared.target_id_map.write().await;
                                     map.insert(target_id, did.clone());
                                     if let Some(r) = resp_opt.take() { let _ = r.send(did); }
                                 },
+                                Ok(Err(e)) => {
+                                    tracing::error!("❌ Vault CreateIdentity FAILED for user {}: {}", user_id, e);
+                                },
                                 Err(e) => {
-                                    tracing::error!("❌ Vault CreateIdentity FAILED for user {}: {:?}", user_id, e);
+                                    tracing::error!("❌ Vault CreateIdentity TRAPPED for user {}: {:?}", user_id, e);
                                 }
                             }
                         }
@@ -117,15 +136,18 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_create_peer_identity(&mut store, &user_id).await {
-                                Ok(did) => {
+                                Ok(Ok(did)) => {
                                     tracing::info!("✅ Vault CreatePeerIdentity SUCCESS: {}", did);
                                     let target_id = crate::logic::compute_local_subject(&did, &store.data().shared.house_salt);
                                     let mut map = store.data().shared.target_id_map.write().await;
                                     map.insert(target_id, did.clone());
                                     if let Some(r) = resp_opt.take() { let _ = r.send(did); }
                                 },
+                                Ok(Err(e)) => {
+                                    tracing::error!("❌ Vault CreatePeerIdentity FAILED for user {}: {}", user_id, e);
+                                },
                                 Err(e) => {
-                                    tracing::error!("❌ Vault CreatePeerIdentity FAILED for user {}: {:?}", user_id, e);
+                                    tracing::error!("❌ Vault CreatePeerIdentity TRAPPED for user {}: {:?}", user_id, e);
                                 }
                             }
                         }
@@ -137,9 +159,17 @@ pub fn spawn_vault_loop(
                     if let Some(inst) = inst_opt {
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
-                            if let Ok(user_id) = vault_iface.call_resolve_did_to_user_id(&mut store, &did).await {
-                                if !user_id.is_empty() {
-                                    if let Some(r) = resp_opt.take() { let _ = r.send(Some(user_id)); }
+                            match vault_iface.call_resolve_did_to_user_id(&mut store, &did).await {
+                                Ok(Ok(user_id)) => {
+                                    if !user_id.is_empty() {
+                                        if let Some(r) = resp_opt.take() { let _ = r.send(Some(user_id)); }
+                                    }
+                                },
+                                Ok(Err(e)) => {
+                                    tracing::warn!("⚠️ Vault ResolveDid FAILED: {}", e);
+                                },
+                                Err(e) => {
+                                    tracing::error!("❌ Vault ResolveDid TRAPPED: {:?}", e);
                                 }
                             }
                         }
@@ -152,7 +182,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_sign_message(&mut store, &did, &msg).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -165,7 +196,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_generate_master_seed(&mut store, &user_id, &derivation_path).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -178,7 +210,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_derive_link_nkey(&mut store, &user_id).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -191,7 +224,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_unlock_vault(&mut store, &user_id, &derivation_path).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -228,7 +262,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_encrypt_routing_token(&mut store, &routing_key, &target_id).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -242,7 +277,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_create_did_document(&mut store, &user_id, &gateway_url, &target_id).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -256,7 +292,8 @@ pub fn spawn_vault_loop(
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             // Wasm component expects &[String] for scope
                             match vault_iface.call_issue_session_jwt(&mut store, &subject, &scope, &user_did, ttl_seconds, &tenant_id).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }
@@ -269,7 +306,8 @@ pub fn spawn_vault_loop(
                         if let Ok(vault_client) = vault_bindgen::SsiVault::new(&mut store, &inst) {
                             let vault_iface = vault_client.sovereign_gateway_vault();
                             match vault_iface.call_create_service_did(&mut store, &tenant_id).await {
-                                Ok(res) => { if let Some(r) = resp_opt.take() { let _ = r.send(res); } },
+                                Ok(Ok(res)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Ok(res)); } },
+                                Ok(Err(e)) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(e)); } },
                                 Err(e) => { if let Some(r) = resp_opt.take() { let _ = r.send(Err(format!("{:?}", e))); } },
                             }
                         }

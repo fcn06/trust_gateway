@@ -189,6 +189,19 @@ pub async fn derive_registration_cookie(shared: Arc<WebauthnSharedState>, user_i
         }
     };
 
+    let is_agent_allowed = if let Some(ref tid) = tenant_id {
+        let allowed = &shared.config.allowed_agent_tenants;
+        if allowed.is_empty() {
+            false
+        } else {
+            allowed.split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\''))
+                .any(|s| s == tid)
+        }
+    } else {
+        false
+    };
+
     Ok(RegistrationCookie {
         aid: account_id,
         lpk: link_public_key,
@@ -196,6 +209,7 @@ pub async fn derive_registration_cookie(shared: Arc<WebauthnSharedState>, user_i
         nid: crate::logic::compute_node_id(&shared.house_salt),
         uid: Some(hex::encode(sha2::Sha256::digest(username.as_bytes()))[..16].to_string()),
         tenant_id,
+        is_agent_allowed,
     })
 }
 
@@ -492,7 +506,7 @@ pub async fn extract_claims(shared: &WebauthnSharedState, headers: &HeaderMap) -
     
     let mut custom = claims.custom;
     custom.jti = claims.jwt_id;
-        
+    
     Ok(custom)
 }
 

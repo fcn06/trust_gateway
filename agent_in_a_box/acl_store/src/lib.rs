@@ -49,15 +49,14 @@ impl Guest for AclStore {
         let index_key_raw = format!("{}:index", owner);
         let b_index_key = blind_key(&index_key_raw);
         
-        let mut index: Vec<String> = if let Some(idx_bytes) = persistence::get(&b_index_key) {
-            serde_json::from_slice(&idx_bytes).unwrap_or_default()
-        } else {
-            Vec::new()
+        let mut index: Vec<String> = match persistence::get(&b_index_key) {
+            Ok(Some(idx_bytes)) => serde_json::from_slice(&idx_bytes).unwrap_or_default(),
+            _ => Vec::new(),
         };
         
         if !index.contains(&b_key) {
             index.push(b_key);
-            persistence::set(&b_index_key, &serde_json::to_vec(&index).unwrap());
+            let _ = persistence::set(&b_index_key, &serde_json::to_vec(&index).unwrap());
         }
 
         Ok(true)
@@ -68,7 +67,7 @@ impl Guest for AclStore {
         let index_key_raw = format!("{}:index", owner);
         let b_index_key = blind_key(&index_key_raw);
         
-        if let Some(idx_bytes) = persistence::get(&b_index_key) {
+        if let Ok(Some(idx_bytes)) = persistence::get(&b_index_key) {
             if let Ok(index) = serde_json::from_slice::<Vec<String>>(&idx_bytes) {
                 for b_key in index {
                     if let Ok(Some(value)) = blind_get_by_blind_key(&b_key, &owner) {
@@ -172,7 +171,7 @@ fn blind_set(key: &str, value: &[u8], user_id: &str) -> Result<(), String> {
     blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&ciphertext);
 
-    persistence::set(&blind_key(key), &blob);
+    persistence::set(&blind_key(key), &blob).map_err(|e| format!("Persistence error: {:?}", e))?;
     Ok(())
 }
 
@@ -182,8 +181,9 @@ fn blind_get(key: &str, user_id: &str) -> Result<Option<Vec<u8>>, String> {
 
 fn blind_get_by_blind_key(b_key: &str, user_id: &str) -> Result<Option<Vec<u8>>, String> {
     let blob = match persistence::get(b_key) {
-        Some(b) => b,
-        None => return Ok(None),
+        Ok(Some(b)) => b,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(format!("Persistence error: {:?}", e)),
     };
 
     if blob.len() < 24 {

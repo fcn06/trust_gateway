@@ -1,0 +1,372 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApprovalRequest",
+  "description": "A request for human approval, created when the policy engine returns `RequireApproval` or `RequireProof`.",
+  "type": "object",
+  "required": [
+    "action_id",
+    "action_request",
+    "action_summary",
+    "approval_id",
+    "policy_id",
+    "proof_required",
+    "reason",
+    "requested_at",
+    "tenant_id",
+    "tier"
+  ],
+  "properties": {
+    "action_id": {
+      "description": "The action that triggered this approval.",
+      "type": "string"
+    },
+    "action_request": {
+      "description": "The full action request, preserved for asynchronous dispatch after approval.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ActionRequest"
+        }
+      ]
+    },
+    "action_summary": {
+      "description": "Summary of the proposed action for display in the portal.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ActionSummary"
+        }
+      ]
+    },
+    "approval_id": {
+      "description": "Unique identifier for this approval request.",
+      "type": "string"
+    },
+    "policy_id": {
+      "description": "ID of the policy rule that triggered this requirement.",
+      "type": "string"
+    },
+    "proof_required": {
+      "description": "Whether OID4VP proof is required (Tier 3).",
+      "type": "boolean"
+    },
+    "reason": {
+      "description": "Human-readable reason for requiring approval.",
+      "type": "string"
+    },
+    "requested_at": {
+      "description": "Timestamp when the approval request was created.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "tenant_id": {
+      "description": "Tenant scope.",
+      "type": "string"
+    },
+    "tier": {
+      "description": "The tier of approval required.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ApprovalTier"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "ActionDescriptor": {
+      "description": "Describes a concrete action that an agent or automation wants to execute.\n\nThis replaces the old raw tool-name dispatch. Every action is now classified by name, category, operation kind, optional monetary amount, and risk-tagging hints.",
+      "type": "object",
+      "required": [
+        "arguments",
+        "category",
+        "name",
+        "operation",
+        "tags"
+      ],
+      "properties": {
+        "amount": {
+          "description": "Monetary value involved, if any (used for threshold-based policy).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "arguments": {
+          "description": "Raw arguments to pass to the executor."
+        },
+        "category": {
+          "description": "Business category, e.g. \"scheduling\", \"refund\", \"payment\".",
+          "type": "string"
+        },
+        "name": {
+          "description": "Fully qualified action name, e.g. \"google.calendar.event.create\".",
+          "type": "string"
+        },
+        "operation": {
+          "description": "Kind of operation being performed.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/OperationKind"
+            }
+          ]
+        },
+        "resource": {
+          "description": "Optional resource identifier (e.g. order ID, calendar ID).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "Free-form risk/classification tags, e.g. [\"mutation\", \"external_api\", \"payout_change\"]. Policy rules can match on these.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ActionRequest": {
+      "description": "The canonical action request that flows through the entire gateway.\n\nCreated when any proposer (ssi_agent, webhook, WhatsApp bridge, PicoClaw) submits an action for governance.",
+      "type": "object",
+      "required": [
+        "action",
+        "action_id",
+        "actor",
+        "source",
+        "tenant_id"
+      ],
+      "properties": {
+        "action": {
+          "description": "What is being requested — the action descriptor.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ActionDescriptor"
+            }
+          ]
+        },
+        "action_id": {
+          "description": "Unique identifier for this action attempt.",
+          "type": "string"
+        },
+        "actor": {
+          "description": "Identity context: who is asking and under what authority.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ActorContext"
+            }
+          ]
+        },
+        "source": {
+          "description": "Where the action originated (ssi_agent, whatsapp, webhook, etc.).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SourceContext"
+            }
+          ]
+        },
+        "tenant_id": {
+          "description": "Tenant that owns the resources being acted upon.",
+          "type": "string"
+        }
+      }
+    },
+    "ActionSummary": {
+      "description": "Human-readable summary of an action, used in approval cards.",
+      "type": "object",
+      "required": [
+        "action_name",
+        "category",
+        "operation",
+        "requester",
+        "source"
+      ],
+      "properties": {
+        "action_name": {
+          "description": "Action name, e.g. \"google.calendar.event.create\".",
+          "type": "string"
+        },
+        "amount": {
+          "description": "Monetary amount if relevant.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "description": "Business category, e.g. \"scheduling\".",
+          "type": "string"
+        },
+        "operation": {
+          "description": "What kind of operation (read, create, update, delete, transfer).",
+          "type": "string"
+        },
+        "requester": {
+          "description": "Who requested the action.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source of the request (e.g. \"ssi_agent\", \"whatsapp\").",
+          "type": "string"
+        }
+      }
+    },
+    "ActorContext": {
+      "description": "Who is performing the action and under what authority.\n\nDerived from the session JWT issued by `ssi_vault`.",
+      "type": "object",
+      "required": [
+        "auth_level",
+        "owner_did",
+        "requester_did",
+        "session_jti"
+      ],
+      "properties": {
+        "auth_level": {
+          "description": "Current authentication level of the actor.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AuthLevel"
+            }
+          ]
+        },
+        "owner_did": {
+          "description": "DID of the entity that owns the tenant / agent box (from JWT `iss`).",
+          "type": "string"
+        },
+        "requester_did": {
+          "description": "DID of the entity that initiated the action (from JWT `sub`). May be the same as `owner_did` for first-party requests.",
+          "type": "string"
+        },
+        "session_jti": {
+          "description": "Session correlation token (from JWT `jti`).",
+          "type": "string"
+        },
+        "user_did": {
+          "description": "Optional end-user DID when the action is on behalf of a customer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ApprovalTier": {
+      "description": "The tier of approval required for a governed action.\n\nHigher tiers provide stronger assurance but more friction. The policy engine maps actions to tiers based on risk attributes.",
+      "oneOf": [
+        {
+          "description": "Tier 0: auto-allow. No human intervention needed.",
+          "type": "string",
+          "enum": [
+            "tier0_auto_allow"
+          ]
+        },
+        {
+          "description": "Tier 1: simple portal click. Owner sees the action and approves.",
+          "type": "string",
+          "enum": [
+            "tier1_portal_click"
+          ]
+        },
+        {
+          "description": "Tier 2: re-authentication required (e.g. WebAuthn challenge).",
+          "type": "string",
+          "enum": [
+            "tier2_re_authenticate"
+          ]
+        },
+        {
+          "description": "Tier 3: the USER must present a verifiable credential via their wallet (OpenID4VP). This is the strongest assurance level.\n\n**Corrected flow**: the user/holder presents proof. The portal renders the QR code; the gateway/Host verifies.",
+          "type": "string",
+          "enum": [
+            "tier3_verified_presentation"
+          ]
+        }
+      ]
+    },
+    "AuthLevel": {
+      "description": "Authentication strength of the current session.\n\nUsed by the policy engine to decide whether step-up is needed.",
+      "oneOf": [
+        {
+          "description": "Basic session token — the default after Host login.",
+          "type": "string",
+          "enum": [
+            "session"
+          ]
+        },
+        {
+          "description": "Re-authenticated (e.g. WebAuthn challenge completed).",
+          "type": "string",
+          "enum": [
+            "elevated"
+          ]
+        },
+        {
+          "description": "Verified presentation was provided (OID4VP).",
+          "type": "string",
+          "enum": [
+            "verified"
+          ]
+        }
+      ]
+    },
+    "Money": {
+      "description": "Monetary value with currency code (ISO 4217).",
+      "type": "object",
+      "required": [
+        "amount_minor",
+        "currency"
+      ],
+      "properties": {
+        "amount_minor": {
+          "description": "Amount in the smallest currency unit (e.g., cents for EUR).",
+          "type": "integer",
+          "format": "int64"
+        },
+        "currency": {
+          "description": "ISO 4217 currency code, e.g. \"EUR\", \"USD\".",
+          "type": "string"
+        }
+      }
+    },
+    "OperationKind": {
+      "description": "The kind of operation an action performs.",
+      "type": "string",
+      "enum": [
+        "read",
+        "create",
+        "update",
+        "delete",
+        "transfer"
+      ]
+    },
+    "SourceContext": {
+      "description": "Where the action request originated.",
+      "type": "object",
+      "required": [
+        "source_type"
+      ],
+      "properties": {
+        "instance_id": {
+          "description": "Optional instance/channel identifier.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Optional human-readable name for the source instance.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_type": {
+          "description": "Source type identifier: \"ssi_agent\", \"whatsapp\", \"webhook\", \"portal\", \"picoclaw\", etc.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExecutionGrant",
+  "description": "An execution grant authorizating exactly one action on one connector.\n\nThis is a short-lived, action-specific token (typically 30s TTL). Connectors MUST validate this grant instead of accepting broad session JWTs. This is the key architectural change that makes scoped delegation real.",
+  "type": "object",
+  "required": [
+    "action_id",
+    "allowed_action",
+    "clearance",
+    "expires_at",
+    "grant_id",
+    "owner_did",
+    "requester_did",
+    "tenant_id"
+  ],
+  "properties": {
+    "action_id": {
+      "description": "The action this grant authorizes (must match `ActionRequest.action_id`).",
+      "type": "string"
+    },
+    "allowed_action": {
+      "description": "Exact action name this grant allows (e.g. \"google.calendar.event.create\"). The connector MUST verify this matches the requested action.",
+      "type": "string"
+    },
+    "clearance": {
+      "description": "How this grant was obtained (auto-approved, human-approved, proof-verified).",
+      "allOf": [
+        {
+          "$ref": "#/definitions/GrantClearance"
+        }
+      ]
+    },
+    "expires_at": {
+      "description": "Expiry timestamp (Unix epoch seconds). Typically now + 30s.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "grant_id": {
+      "description": "Unique grant identifier.",
+      "type": "string"
+    },
+    "kid": {
+      "description": "Key ID of the signing key. Used for key rotation — verifiers resolve the correct public key by this ID.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner_did": {
+      "description": "DID of the resource owner.",
+      "type": "string"
+    },
+    "requester_did": {
+      "description": "DID of the entity that requested the action.",
+      "type": "string"
+    },
+    "tenant_id": {
+      "description": "Tenant scope.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "GrantClearance": {
+      "description": "How an execution grant was obtained — tracks the provenance of the authorization decision.",
+      "oneOf": [
+        {
+          "description": "Tier 0: policy auto-allowed the action.",
+          "type": "string",
+          "enum": [
+            "auto_approved"
+          ]
+        },
+        {
+          "description": "Tier 1: human clicked \"approve\" in the portal.",
+          "type": "string",
+          "enum": [
+            "human_approved"
+          ]
+        },
+        {
+          "description": "Tier 2: human re-authenticated before approving.",
+          "type": "string",
+          "enum": [
+            "elevated_approval"
+          ]
+        },
+        {
+          "description": "Tier 3: human presented a verifiable credential (OID4VP).",
+          "type": "string",
+          "enum": [
+            "proof_verified"
+          ]
+        }
+      ]
+    }
+  }
+}

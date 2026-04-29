@@ -45,6 +45,11 @@ fn App() -> impl IntoView {
 
     let messaging_enabled = EDITION.unwrap_or("professional") != "community";
 
+    /// Gate: Only allow specific tenants to access Agent-related features.
+    let is_agent_allowed = move || {
+        registration_cookie.get().map(|c| c.is_agent_allowed).unwrap_or(false)
+    };
+
     // Share Target handling
     Effect::new(move |_| {
         if let Some(win) = window() {
@@ -227,10 +232,12 @@ fn App() -> impl IntoView {
                                         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Policy Builder"</span>
                                     </button>
-                                    <button title="Agent Registry" on:click=move |_| set_active_section.set("agent_registry".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "agent_registry" { "bg-emerald-600/20 text-emerald-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
-                                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-                                        <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Agent Registry"</span>
-                                    </button>
+                                    <Show when=is_agent_allowed>
+                                        <button title="Agent Registry" on:click=move |_| set_active_section.set("agent_registry".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "agent_registry" { "bg-emerald-600/20 text-emerald-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
+                                            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                                            <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Agent Registry"</span>
+                                        </button>
+                                    </Show>
                                 </div>
                             </div>
                             // Settings
@@ -314,7 +321,9 @@ fn App() -> impl IntoView {
                                     <button on:click=move |_| { set_active_section.set("activity".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Activity"</button>
                                     <button on:click=move |_| { set_active_section.set("replay".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Replay"</button>
                                     <button on:click=move |_| { set_active_section.set("policy_builder".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Policy Builder"</button>
-                                    <button on:click=move |_| { set_active_section.set("agent_registry".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Agent Registry"</button>
+                                    <Show when=is_agent_allowed>
+                                        <button on:click=move |_| { set_active_section.set("agent_registry".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Agent Registry"</button>
+                                    </Show>
                                 </div>
                             </div>
                             <div class="mt-4">

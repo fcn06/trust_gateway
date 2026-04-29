@@ -16,6 +16,8 @@ mod normalizer;
 mod audit_projector;
 mod router;
 // mod session; — REMOVED: dead passthrough to identity_context::jwt (Phase 1.1)
+pub mod auth;
+pub mod vp_verifier;
 mod api;
 mod mcp_sse;
 mod amount_extractor;
@@ -189,7 +191,7 @@ async fn main() -> Result<()> {
 
         // Create KV buckets for action reviews and timelines
         use async_nats::jetstream::kv;
-        for bucket_name in &["action_reviews", "action_timelines", "approval_records", "agent_registry", "agent_source_index"] {
+        for bucket_name in &["action_reviews", "action_timelines", "approval_records", "agent_registry", "agent_source_index", "audit_chain_heads", "tenant_action_index"] {
             let kv_config = kv::Config {
                 bucket: bucket_name.to_string(),
                 history: 5,
@@ -289,20 +291,40 @@ async fn main() -> Result<()> {
         agent_registry,
         nats: nc.clone(),
         jetstream: js,
-        http_client: reqwest::Client::builder()
-            .pool_max_idle_per_host(10)
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_default(),
+        http_client: {
+            let client = reqwest::Client::builder()
+                .pool_max_idle_per_host(10)
+                .timeout(std::time::Duration::from_secs(30))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_default();
+            client
+        },
         tool_registry: Some(router::ToolRegistry::new(
             std::time::Duration::from_secs(300), // 5-minute TTL
         )),
         circuit_breakers,
+        vp_mcp_pool: Some(router::VpMcpPool::new(
+            std::time::Duration::from_secs(120), // 2-minute session TTL
+        )),
         allowed_origins: args.allowed_origins.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect(),
         jwt_secret: args.jwt_secret.clone(),
+        // Phase 1 SSI Identity: Use SsiTokenValidator to handle VP tokens,
+        // with automatic fallback to StandardJwtValidator for UI sessions.
+        // NOTE: Reuses the same hardened reqwest::Client as the rest of the
+        // gateway (TLS, timeouts, redirect policy) — do NOT use Client::new().
+        token_validator: Arc::new(auth::SsiTokenValidator {
+            fallback: auth::StandardJwtValidator,
+            http_client: reqwest::Client::builder()
+                .pool_max_idle_per_host(10)
+                .timeout(std::time::Duration::from_secs(10)) // Tighter for DID resolution
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_default(),
+        }),
     });
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
@@ -347,49 +369,65 @@ async fn main() -> Result<()> {
     if args.enable_hot_reload {
         let hotreload_state = state.clone();
         let hotreload_nc = nc.clone();
-        tokio::spawn(async move {
-            match hotreload_nc.subscribe("host.v1.tools.changed").await {
-                Ok(mut sub) => {
-                    tracing::info!("✅ Subscribed to host.v1.tools.changed for tool registry hot-reload");
-                    while let Some(_msg) = futures::StreamExt::next(&mut sub).await {
-                        tracing::info!("🔄 Tool registry hot-reload triggered");
-                        if let Some(ref registry) = hotreload_state.tool_registry {
-                            registry.force_refresh(
-                                &hotreload_state.http_client,
-                                &hotreload_state.connectors.host_url,
-                                &hotreload_state.connectors.vp_mcp_url,
-                            ).await;
+        let cancel_token_1 = cancel_token.clone();
+        background_tasks.spawn(async move {
+            tokio::select! {
+                _ = cancel_token_1.cancelled() => {
+                    tracing::info!("🛑 Tool registry hot-reload subscription cancelled");
+                }
+                res = async {
+                    match hotreload_nc.subscribe("host.v1.tools.changed").await {
+                        Ok(mut sub) => {
+                            tracing::info!("✅ Subscribed to host.v1.tools.changed for tool registry hot-reload");
+                            while let Some(_msg) = futures::StreamExt::next(&mut sub).await {
+                                tracing::info!("🔄 Tool registry hot-reload triggered");
+                                if let Some(ref registry) = hotreload_state.tool_registry {
+                                    registry.force_refresh(
+                                        &hotreload_state.http_client,
+                                        &hotreload_state.connectors.host_url,
+                                        &hotreload_state.connectors.vp_mcp_url,
+                                    ).await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("⚠️ Could not subscribe to tools.changed: {} (hot-reload disabled)", e);
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!("⚠️ Could not subscribe to tools.changed: {} (hot-reload disabled)", e);
-                }
+                } => res
             }
         });
 
         // Phase 4.2: Subscribe to Claw skill changes for registry invalidation
         let claw_state = state.clone();
         let claw_nc = nc.clone();
-        tokio::spawn(async move {
-            match claw_nc.subscribe("claw.v1.skills.changed").await {
-                Ok(mut sub) => {
-                    tracing::info!("✅ Subscribed to claw.v1.skills.changed for Claw skill hot-reload");
-                    while let Some(msg) = futures::StreamExt::next(&mut sub).await {
-                        let payload = String::from_utf8_lossy(&msg.payload);
-                        tracing::info!("🔄 Claw skill change detected — refreshing registry: {}", payload);
-                        if let Some(ref registry) = claw_state.tool_registry {
-                            registry.force_refresh(
-                                &claw_state.http_client,
-                                &claw_state.connectors.host_url,
-                                &claw_state.connectors.vp_mcp_url,
-                            ).await;
+        let cancel_token_2 = cancel_token.clone();
+        background_tasks.spawn(async move {
+            tokio::select! {
+                _ = cancel_token_2.cancelled() => {
+                    tracing::info!("🛑 Claw skill hot-reload subscription cancelled");
+                }
+                res = async {
+                    match claw_nc.subscribe("claw.v1.skills.changed").await {
+                        Ok(mut sub) => {
+                            tracing::info!("✅ Subscribed to claw.v1.skills.changed for Claw skill hot-reload");
+                            while let Some(msg) = futures::StreamExt::next(&mut sub).await {
+                                let payload = String::from_utf8_lossy(&msg.payload);
+                                tracing::info!("🔄 Claw skill change detected — refreshing registry: {}", payload);
+                                if let Some(ref registry) = claw_state.tool_registry {
+                                    registry.force_refresh(
+                                        &claw_state.http_client,
+                                        &claw_state.connectors.host_url,
+                                        &claw_state.connectors.vp_mcp_url,
+                                    ).await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("⚠️ Could not subscribe to claw.v1.skills.changed: {} (Claw hot-reload disabled)", e);
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!("⚠️ Could not subscribe to claw.v1.skills.changed: {} (Claw hot-reload disabled)", e);
-                }
+                } => res
             }
         });
     } else {

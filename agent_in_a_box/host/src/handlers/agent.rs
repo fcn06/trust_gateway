@@ -99,6 +99,7 @@ pub async fn dispatch_to_ssi_agent(
                 nats, &jti, &issuer_did, "jwt_issued", "host",
                 json!({ "sender_did": sender_did, "scope": ["mcp:execute"], "ttl": ttl_seconds }),
                 Some(&tenant_id),
+                Some(target_user_id),
             ).await;
         }
     }
@@ -172,6 +173,7 @@ pub async fn dispatch_to_ssi_agent(
                         nats, &jti, &issuer_did, "request_dispatched", "host",
                         json!({ "result": "success", "sender_did": sender_did }),
                         Some(&tenant_id),
+                        Some(target_user_id),
                     ).await;
                 }
             }

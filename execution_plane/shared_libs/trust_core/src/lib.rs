@@ -18,6 +18,7 @@ pub mod grant;
 pub mod normalizer;
 pub mod proof;
 pub mod skill;
+pub mod snapshots;
 pub mod traits;
 
 // Re-export the most commonly used types at crate root for ergonomics.
@@ -40,7 +41,7 @@ pub use traits::{
 };
 
 /// Monetary value with currency code (ISO 4217).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct Money {
     /// Amount in the smallest currency unit (e.g., cents for EUR).
     pub amount_minor: i64,

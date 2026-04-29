@@ -20,8 +20,10 @@ use tower_http::cors::CorsLayer;
 use trust_core::action::OperationKind;
 
 use crate::gateway::{GatewayState, GatewayResponse, ProposeActionRequest};
-use axum::http::StatusCode;
-use jwt_simple::prelude::*;
+use axum::http::{StatusCode, header};
+use axum::response::IntoResponse;
+use axum::body::Body;
+use axum::extract::Request;
 
 /// Build the Axum router with all gateway routes.
 pub fn build_router(state: Arc<GatewayState>) -> Router {
@@ -35,7 +37,9 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
         .allow_headers(vec![
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
-        ]);
+            axum::http::header::ACCEPT,
+        ])
+        .allow_credentials(true);
 
     Router::new()
         .route("/v1/actions/propose", post(propose_action_handler))
@@ -59,6 +63,8 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/v1/mcp/sse", get(crate::mcp_sse::sse_handler)
             .post(crate::mcp_sse::messages_handler))
         .route("/v1/mcp/messages", post(crate::mcp_sse::messages_handler))
+        // OAuth Proxy (Redirect to Connector MCP Server)
+        .route("/oauth/*path", get(connector_proxy_handler).post(connector_proxy_handler))
         // Timeline API (Trust Replay)
         .route("/api/actions", get(list_actions_handler))
         .route("/api/actions/:action_id", get(get_action_handler))
@@ -71,37 +77,156 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/api/policy/rules/:rule_id", delete(crate::policy_api::delete_rule_handler))
         .route("/api/policy/simulate", post(crate::policy_api::simulate_handler))
         .route("/health", get(health_handler))
+        .fallback(host_proxy_handler)
         .with_state(state)
         .layer(cors)
 }
 
-/// Extract Bearer token from the Authorization header.
-fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
-    let tok = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+/// Fallback handler that proxies unmatched requests to the Host service.
+/// This allows the portal to access WebAuthn, Identity, and other APIs
+/// through the Trust Gateway's single domain.
+async fn host_proxy_handler(
+    State(state): State<Arc<GatewayState>>,
+    req: Request,
+) -> impl IntoResponse {
+    let path_query = req.uri().path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
     
-    if tok.is_none() {
-        tracing::debug!("🚫 No Bearer token found in Authorization header");
+    let method = req.method().clone();
+    let headers = req.headers().clone();
+    
+    // Extract body
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response(),
+    };
+
+    let target_url = format!("{}{}", state.connectors.host_url.trim_end_matches('/'), path_query);
+    
+    tracing::debug!("🔀 Proxying {} {} to Host...", method, path_query);
+
+    let mut proxy_req = state.http_client.request(method, &target_url)
+        .body(body_bytes);
+    
+    for (key, value) in headers.iter() {
+        // Skip host header and security headers that we might want to override
+        if key != header::HOST && key != header::CONTENT_LENGTH {
+            proxy_req = proxy_req.header(key, value);
+        }
     }
-    tok.map(|s| s.to_string())
+
+    match proxy_req.send().await {
+        Ok(res) => {
+            let status = res.status();
+            let headers = res.headers().clone();
+            let body = match res.bytes().await {
+                Ok(b) => b,
+                Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to read response from Host: {}", e)).into_response(),
+            };
+            
+            let mut axum_res = axum::response::Response::builder()
+                .status(status)
+                .body(Body::from(body))
+                .unwrap()
+                .into_response();
+            
+            {
+                let axum_headers = axum_res.headers_mut();
+                for (key, value) in headers.iter() {
+                    let key_str = key.as_str().to_lowercase();
+                    if key != header::TRANSFER_ENCODING 
+                        && key != header::CONTENT_LENGTH 
+                        && !key_str.starts_with("access-control-") 
+                    {
+                        axum_headers.append(key, value.clone());
+                    }
+                }
+            }
+            
+            axum_res
+        }
+        Err(e) => {
+            tracing::error!("❌ Proxy error to Host: {}", e);
+            (StatusCode::BAD_GATEWAY, format!("Proxy error: {}", e)).into_response()
+        }
+    }
 }
 
-/// Verify the session JWT and return claims.
-fn verify_auth(headers: &axum::http::HeaderMap, secret: &str) -> Result<identity_context::jwt::JwtClaims, StatusCode> {
-    let token = extract_bearer_token(headers).ok_or(StatusCode::UNAUTHORIZED)?;
+/// Fallback handler that proxies OAuth requests to the Connector MCP service.
+async fn connector_proxy_handler(
+    State(state): State<Arc<GatewayState>>,
+    req: Request,
+) -> impl IntoResponse {
+    let path_query = req.uri().path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
     
-    // Phase 1.1: Use jwt-simple for verification (shared secret HMAC)
-    let key = HS256Key::from_bytes(secret.as_bytes());
-    let _ = key.verify_token::<serde_json::Value>(&token, None)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let method = req.method().clone();
+    let headers = req.headers().clone();
     
-    // Once verified, decode the claims using the normalized identity-context logic
-    let claims = identity_context::jwt::decode_jwt_claims(&token)
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    // Extract body
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("Failed to read request body: {}", e)).into_response(),
+    };
+
+    let target_url = format!("{}{}", state.connectors.connector_mcp_url.trim_end_matches('/'), path_query);
     
-    Ok(claims)
+    tracing::debug!("🔀 Proxying {} {} to Connector...", method, path_query);
+
+    let mut proxy_req = state.http_client.request(method, &target_url)
+        .body(body_bytes);
+    
+    for (key, value) in headers.iter() {
+        if key != header::HOST && key != header::CONTENT_LENGTH {
+            proxy_req = proxy_req.header(key, value);
+        }
+    }
+
+    match proxy_req.send().await {
+        Ok(res) => {
+            let status = res.status();
+            let headers = res.headers().clone();
+            let body = match res.bytes().await {
+                Ok(b) => b,
+                Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to read response from Connector: {}", e)).into_response(),
+            };
+            
+            let mut axum_res = axum::response::Response::builder()
+                .status(status)
+                .body(Body::from(body))
+                .unwrap()
+                .into_response();
+            
+            {
+                let axum_headers = axum_res.headers_mut();
+                for (key, value) in headers.iter() {
+                    let key_str = key.as_str().to_lowercase();
+                    if key != header::TRANSFER_ENCODING 
+                        && key != header::CONTENT_LENGTH 
+                        && !key_str.starts_with("access-control-") 
+                    {
+                        axum_headers.append(key, value.clone());
+                    }
+                }
+            }
+            
+            axum_res
+        }
+        Err(e) => {
+            tracing::error!("❌ Proxy error to Connector: {}", e);
+            (StatusCode::BAD_GATEWAY, format!("Proxy error: {}", e)).into_response()
+        }
+    }
+}
+
+/// Extract Bearer token from the Authorization header.
+///
+/// Delegates to [`crate::auth::extract_bearer_token`] — this wrapper
+/// exists for backward-compatibility within this module.
+pub(crate) fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    crate::auth::extract_bearer_token(headers)
 }
 
 /// POST /v1/actions/propose — the main gateway entry point.
@@ -122,12 +247,97 @@ async fn propose_action_handler(
     State(state): State<Arc<GatewayState>>,
     headers: axum::http::HeaderMap,
     Json(req): Json<ProposeActionRequest>,
-) -> Json<GatewayResponse> {
+) -> axum::response::Response {
     tracing::info!("📥 HTTP action proposal: {}", req.action_name);
 
     // Phase 3.1: Resolve JWT from priority chain (header > body > _meta)
     let session_jwt = extract_bearer_token(&headers)
-        .unwrap_or(req.session_jwt.clone());
+        .unwrap_or_else(|| req.session_jwt.clone());
+
+    // CRITICAL FIX: The gateway must validate the cryptographic signature of the token!
+    // If the token was provided in the body instead of the header, we construct a 
+    // synthetic HeaderMap to pass to the TokenValidator trait.
+    let mut validation_headers = headers.clone();
+    if !session_jwt.is_empty() && extract_bearer_token(&validation_headers).is_none() {
+        if let Ok(auth_val) = format!("Bearer {}", session_jwt).parse() {
+            validation_headers.insert(axum::http::header::AUTHORIZATION, auth_val);
+        }
+    }
+
+    let validation_res = state.token_validator.validate(&validation_headers, &state.jwt_secret).await;
+    
+    if let Err(e) = validation_res {
+        tracing::error!("Authentication failed: {}", e);
+
+        // TODO: In Phase 2, implement a strict DID-to-Tenant lookup instead of defaulting.
+        // Extract tenant_id from token for the audit log
+        let mut tenant_id = identity_context::jwt::extract_tenant_id_from_jwt(&session_jwt)
+            .unwrap_or_else(|| "default".to_string());
+        
+        let mut agent_did = "unknown".to_string();
+        let mut owner_did = "unknown".to_string();
+        
+        if tenant_id == "default" || tenant_id == "unknown" {
+            if let Some(payload_str) = session_jwt.split('.').nth(1) {
+                use base64::Engine;
+                if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_str) {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
+                        if json.get("vp").is_some() {
+                            if let Some(aud) = json.get("aud").and_then(|v| v.as_str()) {
+                                owner_did = aud.to_string();
+                                
+                                // Try to resolve the actual tenant_id for this DID from the agent registry
+                                if let Ok(Some(agent)) = state.agent_registry.resolve_by_source(aud).await {
+                                    tenant_id = agent.owner;
+                                }
+                            }
+                            if let Some(iss) = json.get("iss").and_then(|v| v.as_str()) {
+                                agent_did = iss.to_string();
+                            }
+                        }
+                    }
+                } else {
+                    tracing::error!("Failed to decode VP payload payload_str: {}", payload_str);
+                }
+            }
+        }
+        
+        tracing::info!("Extracted from failed auth -> tenant_id: {}, owner_did: {}, agent_did: {}", tenant_id, owner_did, agent_did);
+        
+        let action_id = uuid::Uuid::new_v4().to_string();
+
+        // Emit an audit event so the rejection appears in the user's activity log!
+        let state_emit = state.clone();
+        let action_id_emit = action_id.clone();
+        let err_msg = format!("Authentication failed: {}", e);
+        let action_name = req.action_name.clone();
+        tokio::spawn(async move {
+            crate::audit_sink::emit_audit(
+                &*state_emit.security.audit_sink,
+                &tenant_id,
+                trust_core::audit::AuditEventType::ActionFailed,
+                "trust_gateway.api",
+                &action_id_emit,
+                serde_json::json!({
+                    "reason": err_msg,
+                    "stage": "authentication",
+                    "action_name": action_name,
+                    "actor": agent_did,
+                    "owner_did": owner_did,
+                })
+            ).await;
+        });
+
+        return (axum::http::StatusCode::UNAUTHORIZED, Json(GatewayResponse {
+            action_id,
+            status: "denied".to_string(),
+            error: Some(format!("Authentication failed: {}", e)),
+            result: None,
+            approval_id: None,
+            escalation: None,
+        })).into_response();
+    }
+    let verified_jwt = validation_res.unwrap();
 
     // Phase 3.1: Auto-inject JWT into _meta if the caller used the header shortcut
     let mut arguments = req.arguments.clone();
@@ -147,48 +357,43 @@ async fn propose_action_handler(
     }
 
     // Phase 9: Unified identity extraction
+    // RULE[010_JWT_CONTRACTS.md]: Pass pre-verified claims from
+    // TokenValidator::validate() into the normalizer pipeline.
     let proposed = crate::transport_normalizer::normalize_http_propose(
         &req.action_name,
         arguments.clone(),
         &session_jwt,
+        verified_jwt.claims(),
         None, // remote_addr not easily available in this simple handler signature
     ).unwrap_or_else(|e| {
         tracing::error!("HTTP propose normalization failed: {}", e);
         
+        // RULE[010_JWT_CONTRACTS.md]: In the fallback path, use the
+        // pre-verified claims directly instead of re-decoding.
+        let vc = verified_jwt.claims();
         let tenant_id = req.tenant_id
-            .or_else(|| identity_context::jwt::extract_tenant_id_from_jwt(&session_jwt))
-            .unwrap_or_default();
-            
-        let jti = identity_context::jwt::extract_jti_from_jwt(&session_jwt)
-            .unwrap_or_default();
-            
-        let (owner_did, requester_did) = if !session_jwt.is_empty() {
-            identity_context::jwt::extract_dids_from_jwt(&session_jwt)
-                .unwrap_or(("unknown".to_string(), "unknown".to_string()))
-        } else {
-            ("unknown".to_string(), "unknown".to_string())
-        };
+            .unwrap_or_else(|| vc.tenant_id.clone());
 
         let source = match req.source_type.as_deref() {
             Some("picoclaw") => identity_context::models::SourceContext {
                 source_type: identity_context::models::SourceType::HttpApi,
                 source_id: "picoclaw".to_string(),
                 transport: identity_context::models::TransportKind::Http,
-                correlation_id: jti.clone(),
+                correlation_id: vc.jti.clone(),
                 remote_addr: None,
             },
             _ => identity_context::models::SourceContext::default(),
         };
             
-        // Fallback for errors
+        // Fallback for errors — uses verified claims, no raw decode
         identity_context::models::ProposedAction {
             action_id: uuid::Uuid::new_v4().to_string(),
             tool_name: req.action_name.clone(),
             arguments: arguments.clone(),
             identity: identity_context::models::IdentityContext {
                 tenant_id,
-                owner_did,
-                requester_did,
+                owner_did: vc.iss.clone(),
+                requester_did: vc.sub.clone(),
                 session_jwt: session_jwt.clone(),
                 source,
             },
@@ -199,8 +404,9 @@ async fn propose_action_handler(
     // Phase 2.1: Use single canonical conversion
     let action_req = crate::gateway::build_action_request(proposed);
 
+    use axum::response::IntoResponse;
     match crate::gateway::process_action(state.clone(), action_req).await {
-        Ok(response) => Json(response),
+        Ok(response) => Json(response).into_response(),
         Err(e) => Json(GatewayResponse {
             action_id: uuid::Uuid::new_v4().to_string(),
             status: "error".to_string(),
@@ -208,7 +414,7 @@ async fn propose_action_handler(
             error: Some(format!("{}", e)),
             approval_id: None,
             escalation: None,
-        }),
+        }).into_response(),
     }
 }
 
@@ -307,14 +513,22 @@ struct ListActionsQuery {
 fn default_limit() -> usize { 50 }
 
 /// GET /api/actions — List all tracked actions with summary.
+///
+/// P2/H1 fix: Uses the `tenant_action_index` KV bucket for efficient
+/// tenant-scoped lookups (O(1) instead of O(n) full table scan).
+/// Falls back gracefully to the legacy full-scan if the index is
+/// unavailable.
 async fn list_actions_handler(
     State(state): State<Arc<GatewayState>>,
     headers: axum::http::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<ListActionsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Phase 2: Mandatory authentication
-    let claims = verify_auth(&headers, &state.jwt_secret)?;
-    let my_did = if !claims.sub.is_empty() { claims.sub } else { claims.iss };
+    // Phase 2: Mandatory authentication (via pluggable TokenValidator trait)
+    // RULE[010_JWT_CONTRACTS.md]: validate() returns VerifiedJwt
+    let verified = state.token_validator.validate(&headers, &state.jwt_secret).await
+        .map_err(|e| e)?;
+    let claims = verified.claims();
+    let my_did = if !claims.sub.is_empty() { claims.sub.clone() } else { claims.iss.clone() };
 
     let kv_store = match state.jetstream.get_key_value("action_timelines").await {
         Ok(store) => store,
@@ -324,54 +538,49 @@ async fn list_actions_handler(
         }
     };
 
-    let mut actions = Vec::new();
-    // List all keys in the KV bucket
-    match kv_store.keys().await {
-        Ok(mut keys) => {
-            while let Some(Ok(key)) = tokio_stream::StreamExt::next(&mut keys).await {
-                if let Ok(Some(entry)) = kv_store.get(&key).await {
-                    if let Ok(timeline) = serde_json::from_slice::<crate::audit_projector::ActionTimeline>(&entry) {
-                        // FILTER: Only show actions owned by the authenticated user or matching tenant
-                        let is_owner = timeline.summary.owner_did.as_ref().map(|d| d == &my_did).unwrap_or(false);
-                        let is_requester = timeline.summary.requester_did.as_ref().map(|d| d == &my_did).unwrap_or(false);
-                        let tenant_match = !timeline.tenant_id.is_empty() && timeline.tenant_id == claims.tenant_id;
-                        
-                        let belongs_to_me = is_owner || is_requester || tenant_match;
-                        
-                        if !belongs_to_me {
-                            continue;
-                        }
+    // ── P2/H1: Try indexed lookup first, fall back to full scan ──────
+    let candidate_ids = collect_candidate_action_ids(
+        &state.jetstream,
+        &claims.tenant_id,
+        &my_did,
+        claims.user_did.as_deref(),
+    ).await;
 
-                        // Apply additional filters
-                        if let Some(ref status_filter) = query.status {
-                            if timeline.summary.status != *status_filter {
-                                continue;
-                            }
+    let mut actions = Vec::new();
+
+    match candidate_ids {
+        Some(ids) => {
+            // Fast path: fetch only the action IDs from the index
+            tracing::debug!("📋 Using tenant index: {} candidate action IDs", ids.len());
+            for action_id in ids {
+                if let Ok(Some(entry)) = kv_store.get(&action_id).await {
+                    if let Ok(timeline) = serde_json::from_slice::<crate::audit_projector::ActionTimeline>(&entry) {
+                        if let Some(action) = filter_and_format_action(&timeline, &my_did, &claims, &query) {
+                            actions.push(action);
                         }
-                        if let Some(ref tenant_filter) = query.tenant_id {
-                            if timeline.tenant_id != *tenant_filter {
-                                continue;
-                            }
-                        }
-                        actions.push(serde_json::json!({
-                            "action_id": timeline.action_id,
-                            "tenant_id": timeline.tenant_id,
-                            "approval_id": timeline.approval_id,
-                            "title": timeline.summary.title,
-                            "action_name": timeline.summary.action_name,
-                            "source_type": timeline.summary.source_type,
-                            "status": timeline.summary.status,
-                            "risk_level": timeline.summary.risk_level,
-                            "event_count": timeline.timeline.len(),
-                            "created_at": timeline.summary.created_at,
-                            "last_updated_at": timeline.last_updated_at,
-                        }));
                     }
                 }
             }
         }
-        Err(e) => {
-            tracing::warn!("Cannot list action_timelines keys: {}", e);
+        None => {
+            // Fallback: full scan (legacy behavior when index is unavailable)
+            tracing::debug!("📋 Tenant index unavailable — falling back to full KV scan");
+            match kv_store.keys().await {
+                Ok(mut keys) => {
+                    while let Some(Ok(key)) = tokio_stream::StreamExt::next(&mut keys).await {
+                        if let Ok(Some(entry)) = kv_store.get(&key).await {
+                            if let Ok(timeline) = serde_json::from_slice::<crate::audit_projector::ActionTimeline>(&entry) {
+                                if let Some(action) = filter_and_format_action(&timeline, &my_did, &claims, &query) {
+                                    actions.push(action);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Cannot list action_timelines keys: {}", e);
+                }
+            }
         }
     }
 
@@ -393,14 +602,128 @@ async fn list_actions_handler(
     })))
 }
 
+/// P2/H1: Collect candidate action IDs from the tenant index.
+///
+/// Queries multiple index keys (tenant, DID) and deduplicates.
+/// Returns None if the index KV bucket is unavailable (triggering full-scan fallback).
+async fn collect_candidate_action_ids(
+    js: &async_nats::jetstream::Context,
+    tenant_id: &str,
+    my_did: &str,
+    user_did: Option<&str>,
+) -> Option<Vec<String>> {
+    let index_store = js.get_key_value("tenant_action_index").await.ok()?;
+    let tenant_id = if tenant_id.is_empty() { "default" } else { tenant_id };
+
+    let mut all_ids = std::collections::HashSet::new();
+
+    // 1. Tenant index
+    if !tenant_id.is_empty() {
+        let safe_tenant = tenant_id.replace(':', "_");
+        let key = format!("tenant_{}", safe_tenant);
+        if let Ok(Some(entry)) = index_store.get(&key).await {
+            if let Ok(ids) = serde_json::from_slice::<Vec<String>>(&entry) {
+                all_ids.extend(ids);
+            }
+        }
+    }
+
+    // 2. DID-based index (owner/requester visibility)
+    for did in [Some(my_did), user_did].into_iter().flatten() {
+        if !did.is_empty() && did != "unknown" {
+            let safe_did = did.replace(':', "_");
+            let key = format!("did_{}", safe_did);
+            if let Ok(Some(entry)) = index_store.get(&key).await {
+                if let Ok(ids) = serde_json::from_slice::<Vec<String>>(&entry) {
+                    all_ids.extend(ids);
+                }
+            }
+        }
+    }
+
+    // 3. Also include "default" and "unknown" tenant actions for Community Edition
+    for fallback_tenant in &["default", "unknown"] {
+        let key = format!("tenant_{}", fallback_tenant);
+        if let Ok(Some(entry)) = index_store.get(&key).await {
+            if let Ok(ids) = serde_json::from_slice::<Vec<String>>(&entry) {
+                all_ids.extend(ids);
+            }
+        }
+    }
+
+    Some(all_ids.into_iter().collect())
+}
+
+/// Filter and format a single action timeline for the list response.
+///
+/// Returns None if the action doesn't belong to the requester or
+/// doesn't match the query filters.
+fn filter_and_format_action(
+    timeline: &crate::audit_projector::ActionTimeline,
+    my_did: &str,
+    claims: &identity_context::jwt::JwtClaims,
+    query: &ListActionsQuery,
+) -> Option<serde_json::Value> {
+    let is_owner = timeline.summary.owner_did.as_ref()
+        .map(|d| d == my_did || claims.user_did.as_ref().map(|ud| ud == d).unwrap_or(false))
+        .unwrap_or(false);
+    let is_requester = timeline.summary.requester_did.as_ref()
+        .map(|d| d == my_did || claims.user_did.as_ref().map(|ud| ud == d).unwrap_or(false))
+        .unwrap_or(false);
+
+    let tenant_match = timeline.tenant_id == claims.tenant_id
+        || timeline.tenant_id == "default"
+        || timeline.tenant_id == "unknown";
+
+    let belongs_to_me = is_owner || is_requester || tenant_match;
+
+    tracing::trace!(
+        "Timeline filter check -> action_id: {}, my_did: {}, user_did: {:?}, owner_did: {:?}, requester_did: {:?}, tenant_id: {}, claims.tenant_id: {}, belongs: {}",
+        timeline.action_id, my_did, claims.user_did, timeline.summary.owner_did, timeline.summary.requester_did, timeline.tenant_id, claims.tenant_id, belongs_to_me
+    );
+
+    if !belongs_to_me {
+        return None;
+    }
+
+    // Apply additional filters
+    if let Some(ref status_filter) = query.status {
+        if timeline.summary.status != *status_filter {
+            return None;
+        }
+    }
+    if let Some(ref tenant_filter) = query.tenant_id {
+        if !(is_owner || is_requester) && timeline.tenant_id != *tenant_filter {
+            return None;
+        }
+    }
+
+    Some(serde_json::json!({
+        "action_id": timeline.action_id,
+        "tenant_id": timeline.tenant_id,
+        "approval_id": timeline.approval_id,
+        "title": timeline.summary.title,
+        "action_name": timeline.summary.action_name,
+        "source_type": timeline.summary.source_type,
+        "status": timeline.summary.status,
+        "risk_level": timeline.summary.risk_level,
+        "event_count": timeline.timeline.len(),
+        "created_at": timeline.summary.created_at,
+        "last_updated_at": timeline.last_updated_at,
+    }))
+}
+
 /// GET /api/actions/:action_id — Full action detail with timeline.
 async fn get_action_handler(
     State(state): State<Arc<GatewayState>>,
     headers: axum::http::HeaderMap,
     axum::extract::Path(action_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let claims = verify_auth(&headers, &state.jwt_secret)?;
-    let my_did = if !claims.sub.is_empty() { claims.sub } else { claims.iss };
+    // RULE[010_JWT_CONTRACTS.md]: validate() returns VerifiedJwt
+    let verified = state.token_validator.validate(&headers, &state.jwt_secret).await
+        .map_err(|e| e)?;
+    let claims = verified.claims();
+    let my_did = if !claims.sub.is_empty() { claims.sub.clone() } else { claims.iss.clone() };
 
     let kv_store = match state.jetstream.get_key_value("action_timelines").await {
         Ok(store) => store,
@@ -439,8 +762,11 @@ async fn get_action_timeline_handler(
     headers: axum::http::HeaderMap,
     axum::extract::Path(action_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let claims = verify_auth(&headers, &state.jwt_secret)?;
-    let my_did = if !claims.sub.is_empty() { claims.sub } else { claims.iss };
+    // RULE[010_JWT_CONTRACTS.md]: validate() returns VerifiedJwt
+    let verified = state.token_validator.validate(&headers, &state.jwt_secret).await
+        .map_err(|e| e)?;
+    let claims = verified.claims();
+    let my_did = if !claims.sub.is_empty() { claims.sub.clone() } else { claims.iss.clone() };
 
     let kv_store = match state.jetstream.get_key_value("action_timelines").await {
         Ok(store) => store,

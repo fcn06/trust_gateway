@@ -25,7 +25,7 @@ pub fn TrustReplay(
         } else if base_url.contains(":8080") {
             base_url.replace(":8080", ":3060")
         } else {
-            "http://localhost:3060".to_string()
+            option_env!("TRUST_GATEWAY_URL").unwrap_or("http://localhost:3060").to_string()
         };
         if gw.ends_with("/api") {
             gw.truncate(gw.len() - 4);

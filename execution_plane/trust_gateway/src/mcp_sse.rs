@@ -20,6 +20,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt as _;
+use identity_context::AuthVerifier; // RULE[010_JWT_CONTRACTS.md]
 
 use crate::gateway::GatewayState;
 
@@ -103,7 +104,7 @@ pub async fn sse_handler(
 
     // Build the SSE stream:
     // 1. First event: "endpoint" with the messages URL
-    // 2. Then keepalive comments every 30 seconds
+    // 2. Keep the stream open indefinitely (Axum's keep_alive will handle heartbeats)
     let initial = futures::stream::once(async move {
         Ok::<_, Infallible>(
             Event::default()
@@ -112,19 +113,11 @@ pub async fn sse_handler(
         )
     });
 
-    let keepalive = tokio_stream::wrappers::IntervalStream::new(
-        tokio::time::interval(std::time::Duration::from_secs(30)),
-    )
-    .map(|_| {
-        Ok::<_, Infallible>(Event::default().comment("keepalive"))
-    });
-
-    let stream = initial.chain(keepalive);
+    let stream = initial.chain(futures::stream::pending());
 
     Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
-            .interval(std::time::Duration::from_secs(30))
-            .text("keepalive"),
+            .interval(std::time::Duration::from_secs(15))
     )
 }
 
@@ -278,10 +271,58 @@ async fn handle_tools_call(
     }
 
     // ─── Phase 9: Extract _meta identity (io.lianxi/ namespace) ───
+    // RULE[010_JWT_CONTRACTS.md]: Verify any JWT in _meta before using claims.
+    let meta_jwt = arguments.as_object()
+        .and_then(|obj| obj.get("_meta"))
+        .and_then(|m| {
+            m.get("io.lianxi")
+                .or_else(|| m.get("io").and_then(|io| io.get("lianxi")))
+                .or_else(|| m.get("lianxi"))
+                .or(Some(m))
+        })
+        .and_then(|ag| ag.get("session_jwt").or_else(|| ag.get("X-Session-JWT")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let verifier = identity_context::jwt::HmacAuthVerifier::new(&state.jwt_secret);
+    let verified_claims = if !meta_jwt.is_empty() {
+        match verifier.verify(&meta_jwt) {
+            Ok(v) => v.into_claims(),
+            Err(e) => {
+                tracing::warn!("MCP SSE JWT verification failed: {}", e);
+                // Fallback to anonymous — policy engine will deny if needed
+                identity_context::jwt::JwtClaims {
+                    iss: "mcp-client".to_string(),
+                    sub: format!("picoclaw:{}", session_id),
+                    tenant_id: String::new(),
+                    jti: String::new(),
+                    scope: vec![],
+                    user_did: None,
+                    exp: None,
+                    iat: None,
+                }
+            }
+        }
+    } else {
+        // No JWT at all — anonymous MCP client
+        identity_context::jwt::JwtClaims {
+            iss: "mcp-client".to_string(),
+            sub: format!("picoclaw:{}", session_id),
+            tenant_id: String::new(),
+            jti: String::new(),
+            scope: vec![],
+            user_did: None,
+            exp: None,
+            iat: None,
+        }
+    };
+
     let proposed = crate::transport_normalizer::normalize_mcp_call(
         &tool_name,
         arguments.clone(),
-        "", // MCP SSE relies purely on _meta since there is no session_jwt header passed in this signature (the handshake handles it originally, but we expect external swarm calls to be injected here)
+        &meta_jwt,
+        &verified_claims,
         None,
     ).unwrap_or_else(|e| {
         tracing::warn!("MCP tools/call normalization fallback: {}", e);

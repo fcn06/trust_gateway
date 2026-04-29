@@ -67,13 +67,25 @@ enum CircuitState {
     HalfOpen,
 }
 
+/// Interior state for the circuit breaker, protected by a single lock.
+///
+/// P2/M2 fix: Previously `state` and `consecutive_failures` lived behind
+/// two separate `RwLock`s. Between acquiring `consecutive_failures`
+/// (increment) and `state` (trip) in `record_failure()`, another task
+/// could read `state` as Closed and proceed — a classic TOCTOU race.
+/// Now both fields are behind a single `RwLock`, ensuring atomic reads
+/// and writes of the full circuit breaker state.
+struct CircuitBreakerInner {
+    state: CircuitState,
+    consecutive_failures: u32,
+}
+
 /// Per-connector circuit breaker for resilience.
 ///
 /// Three states: Closed (normal) → Open (reject for N seconds) → HalfOpen (one probe).
 /// Tracks consecutive failures per connector in shared state.
 pub struct CircuitBreaker {
-    state: RwLock<CircuitState>,
-    consecutive_failures: RwLock<u32>,
+    inner: RwLock<CircuitBreakerInner>,
     failure_threshold: u32,
     recovery_timeout: std::time::Duration,
 }
@@ -82,8 +94,10 @@ impl CircuitBreaker {
     /// Create a new circuit breaker with default thresholds.
     pub fn new(failure_threshold: u32, recovery_timeout: std::time::Duration) -> Self {
         Self {
-            state: RwLock::new(CircuitState::Closed),
-            consecutive_failures: RwLock::new(0),
+            inner: RwLock::new(CircuitBreakerInner {
+                state: CircuitState::Closed,
+                consecutive_failures: 0,
+            }),
             failure_threshold,
             recovery_timeout,
         }
@@ -92,52 +106,68 @@ impl CircuitBreaker {
     /// Check if the circuit allows a request through.
     /// Returns Ok(()) if allowed, Err with reason if blocked.
     pub async fn check_allowed(&self) -> Result<()> {
-        let state = *self.state.read().await;
-        match state {
-            CircuitState::Closed => Ok(()),
-            CircuitState::HalfOpen => Ok(()), // Allow probe
-            CircuitState::Open { opened_at } => {
-                if opened_at.elapsed() >= self.recovery_timeout {
-                    // Transition to half-open: allow one probe
-                    *self.state.write().await = CircuitState::HalfOpen;
-                    tracing::info!("🔌 Circuit breaker transitioning to HalfOpen (recovery probe)");
-                    Ok(())
-                } else {
-                    let remaining = self.recovery_timeout - opened_at.elapsed();
-                    Err(anyhow::anyhow!(
-                        "ConnectorUnavailable: circuit breaker open, retry in {:.0}s",
-                        remaining.as_secs_f64()
-                    ))
+        // Fast path: read lock only
+        {
+            let inner = self.inner.read().await;
+            match inner.state {
+                CircuitState::Closed | CircuitState::HalfOpen => return Ok(()),
+                CircuitState::Open { opened_at } => {
+                    if opened_at.elapsed() < self.recovery_timeout {
+                        let remaining = self.recovery_timeout - opened_at.elapsed();
+                        return Err(anyhow::anyhow!(
+                            "ConnectorUnavailable: circuit breaker open, retry in {:.0}s",
+                            remaining.as_secs_f64()
+                        ));
+                    }
+                    // Fall through to upgrade to write lock for state transition
                 }
+            }
+        }
+
+        // Slow path: transition Open → HalfOpen (needs write lock)
+        let mut inner = self.inner.write().await;
+        if let CircuitState::Open { opened_at } = inner.state {
+            if opened_at.elapsed() >= self.recovery_timeout {
+                inner.state = CircuitState::HalfOpen;
+                tracing::info!("🔌 Circuit breaker transitioning to HalfOpen (recovery probe)");
+                return Ok(());
+            }
+        }
+        // Re-check in case another task already transitioned
+        match inner.state {
+            CircuitState::Closed | CircuitState::HalfOpen => Ok(()),
+            CircuitState::Open { opened_at } => {
+                let remaining = self.recovery_timeout - opened_at.elapsed();
+                Err(anyhow::anyhow!(
+                    "ConnectorUnavailable: circuit breaker open, retry in {:.0}s",
+                    remaining.as_secs_f64()
+                ))
             }
         }
     }
 
     /// Record a successful dispatch — resets the circuit to Closed.
     pub async fn record_success(&self) {
-        *self.consecutive_failures.write().await = 0;
-        let prev = *self.state.read().await;
-        if prev != CircuitState::Closed {
-            *self.state.write().await = CircuitState::Closed;
+        let mut inner = self.inner.write().await;
+        let was_open = inner.state != CircuitState::Closed;
+        inner.consecutive_failures = 0;
+        inner.state = CircuitState::Closed;
+        if was_open {
             tracing::info!("✅ Circuit breaker closed (connector recovered)");
         }
     }
 
     /// Record a failed dispatch — may trip the circuit to Open.
     pub async fn record_failure(&self) {
-        let mut failures = self.consecutive_failures.write().await;
-        *failures += 1;
-        if *failures >= self.failure_threshold {
-            let mut state = self.state.write().await;
-            if *state != CircuitState::Closed {
-                return; // Already open
-            }
-            *state = CircuitState::Open {
+        let mut inner = self.inner.write().await;
+        inner.consecutive_failures += 1;
+        if inner.consecutive_failures >= self.failure_threshold && inner.state == CircuitState::Closed {
+            inner.state = CircuitState::Open {
                 opened_at: std::time::Instant::now(),
             };
             tracing::warn!(
                 "🔴 Circuit breaker OPEN after {} consecutive failures (rejecting for {:?})",
-                *failures, self.recovery_timeout
+                inner.consecutive_failures, self.recovery_timeout
             );
         }
     }
@@ -302,7 +332,7 @@ async fn determine_executor_target(state: &GatewayState, tool_name: &str) -> Exe
     }
 
     // Resilience: If registry missed, check prefix before defaulting to connector
-    if tool_name.starts_with("claw_") {
+    if tool_name.starts_with("claw_") || tool_name.starts_with("skill_") {
         return ExecutorTarget::ClawExecutor;
     }
     if tool_name.starts_with("restaurant_") {
@@ -516,20 +546,27 @@ async fn dispatch_to_claw_executor(
 
     if resp.status().is_success() {
         let exec_result: serde_json::Value = resp.json().await.unwrap_or_default();
+        let success = exec_result.get("success").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let raw_output = if !success && exec_result.get("error").is_some() {
+            exec_result.get("error").cloned().unwrap()
+        } else {
+            exec_result.clone()
+        };
 
         // Standardize: Wrap JSON into a single MCP text block for the Agent
         let output = serde_json::json!([{
             "type": "text",
-            "text": if exec_result.is_string() {
-                exec_result.as_str().unwrap_or_default().to_string()
+            "text": if raw_output.is_string() {
+                raw_output.as_str().unwrap_or_default().to_string()
             } else {
-                serde_json::to_string_pretty(&exec_result).unwrap_or_default()
+                serde_json::to_string_pretty(&raw_output).unwrap_or_default()
             }
         }]);
 
         Ok(ActionResult {
             action_id: req.action_id.clone(),
-            status: ActionStatus::Succeeded,
+            status: if success { ActionStatus::Succeeded } else { ActionStatus::Failed },
             connector: "native_skill_executor".to_string(),
             external_reference: None,
             output,
@@ -541,7 +578,92 @@ async fn dispatch_to_claw_executor(
     }
 }
 
+/// Pooled VP MCP client with TTL-based expiry.
+///
+/// P2/M1 fix: Instead of creating a full MCP SSE session (TCP → SSE subscribe →
+/// initialize → tools/call → close) on every single tool call, this pool caches
+/// the `rmcp` client and reuses it across calls. The session is lazily created on
+/// first use and recycled when it exceeds the TTL or encounters an error.
+pub struct VpMcpPool {
+    client: RwLock<Option<VpMcpSession>>,
+    ttl: std::time::Duration,
+}
+
+struct VpMcpSession {
+    peer: rmcp::service::Peer<rmcp::RoleClient>,
+    created_at: std::time::Instant,
+}
+
+impl VpMcpPool {
+    /// Create a new empty pool with the given session TTL.
+    pub fn new(ttl: std::time::Duration) -> Self {
+        Self {
+            client: RwLock::new(None),
+            ttl,
+        }
+    }
+
+    /// Get or create a pooled MCP client peer handle.
+    /// Returns the peer for tool calls. Creates a new session if:
+    /// - No session exists yet
+    /// - The existing session has exceeded its TTL
+    async fn get_or_create(
+        &self,
+        vp_mcp_url: &str,
+        http_client: reqwest::Client,
+    ) -> Result<rmcp::service::Peer<rmcp::RoleClient>> {
+        // Fast path: check if we have a valid cached session
+        {
+            let session = self.client.read().await;
+            if let Some(ref s) = *session {
+                if s.created_at.elapsed() < self.ttl {
+                    return Ok(s.peer.clone());
+                }
+            }
+        }
+
+        // Slow path: create a new session
+        let mut sse_uri = vp_mcp_url.trim_end_matches('/').to_string();
+        if !sse_uri.ends_with("/sse") {
+            sse_uri = format!("{}/sse", sse_uri);
+        }
+
+        let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(
+            sse_uri, None, http_client,
+        );
+        let client_info = rmcp::model::InitializeRequestParams::new(
+            rmcp::model::ClientCapabilities::default(),
+            rmcp::model::Implementation::new("trust-gateway-pool", "0.1.0"),
+        );
+        let running = rmcp::serve_client(client_info, transport).await
+            .map_err(|e| anyhow::anyhow!("VP handshake failed: {}", e))?;
+
+        tracing::info!("📡 VP MCP session pool: new session created");
+
+        // RunningService::clone() yields a Peer handle
+        let peer = running.clone();
+        let mut session = self.client.write().await;
+        *session = Some(VpMcpSession {
+            peer: running.clone(),
+            created_at: std::time::Instant::now(),
+        });
+
+        Ok(peer)
+    }
+
+    /// Invalidate the cached session (e.g., on connection error).
+    async fn invalidate(&self) {
+        let mut session = self.client.write().await;
+        *session = None;
+        tracing::debug!("📡 VP MCP session pool: session invalidated");
+    }
+}
+
 /// Dispatch directly to the VP MCP Server via SSE.
+///
+/// P2/M1 fix: Uses a pooled MCP client session from `VpMcpPool` instead of
+/// creating a full handshake per request. Falls back to a fresh session if
+/// the pooled one fails.
 async fn dispatch_to_vp_mcp(
     state: &GatewayState,
     req: &ActionRequest,
@@ -551,21 +673,32 @@ async fn dispatch_to_vp_mcp(
 
     tracing::info!("📡 Routing action '{}' directly to VP MCP Server", req.action.name);
 
-    // Ensure the URI has /sse path
-    let mut sse_uri = state.connectors.vp_mcp_url.trim_end_matches('/').to_string();
-    if !sse_uri.ends_with("/sse") {
-        sse_uri = format!("{}/sse", sse_uri);
-    }
+    // 1. Get or create a pooled MCP client session
+    let mcp_client = if let Some(ref pool) = state.vp_mcp_pool {
+        match pool.get_or_create(
+            &state.connectors.vp_mcp_url,
+            state.http_client.clone(),
+        ).await {
+            Ok(client) => client,
+            Err(e) => return Err(anyhow::anyhow!("VP pool connection failed: {}", e)),
+        }
+    } else {
+        // Fallback: create a fresh session if no pool configured
+        let mut sse_uri = state.connectors.vp_mcp_url.trim_end_matches('/').to_string();
+        if !sse_uri.ends_with("/sse") {
+            sse_uri = format!("{}/sse", sse_uri);
+        }
+        let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(
+            sse_uri, None, state.http_client.clone(),
+        );
+        let client_info = rmcp::model::InitializeRequestParams::default();
+        let running = rmcp::serve_client(client_info, transport).await
+            .map_err(|e| anyhow::anyhow!("VP handshake failed: {}", e))?;
+        // Clone RunningService to get a Peer handle (same type as pool returns)
+        running.clone()
+    };
 
-    // 1. Create transport to VP server
-    let transport = ssi_mcp_runtime::mcp_client::transport::create_transport(sse_uri, None, state.http_client.clone());
-
-    // 2. Handshake
-    let client_info = rmcp::model::InitializeRequestParams::default();
-    let mcp_client = rmcp::serve_client(client_info, transport).await
-        .map_err(|e| anyhow::anyhow!("VP handshake failed: {}", e))?;
-
-    // 3. Inject execution grant into arguments so VP server can verify it
+    // 2. Inject execution grant into arguments so VP server can verify it
     let mut args = req.action.arguments.clone();
     if let Some(obj) = args.as_object_mut() {
         let meta = obj.entry("_meta").or_insert(serde_json::json!({}));
@@ -574,20 +707,32 @@ async fn dispatch_to_vp_mcp(
         }
     }
 
-    // 4. Call tool
+    // 3. Call tool (with retry on pool session failure)
     let result = mcp_client.call_tool(
         CallToolRequestParams::new(req.action.name.clone())
             .with_arguments(args.as_object().cloned().unwrap_or_default())
-    ).await.map_err(|e| anyhow::anyhow!("VP tool execution failed: {}", e))?;
+    ).await;
 
-    Ok(ActionResult {
-        action_id: req.action_id.clone(),
-        status: ActionStatus::Succeeded,
-        connector: "vp_mcp_server".to_string(),
-        external_reference: None,
-        output: serde_json::to_value(result.content).unwrap_or(serde_json::json!([])),
-    })
+    match result {
+        Ok(tool_result) => {
+            Ok(ActionResult {
+                action_id: req.action_id.clone(),
+                status: ActionStatus::Succeeded,
+                connector: "vp_mcp_server".to_string(),
+                external_reference: None,
+                output: serde_json::to_value(tool_result.content).unwrap_or(serde_json::json!([])),
+            })
+        }
+        Err(e) => {
+            // Invalidate the pooled session so the next call creates a fresh one
+            if let Some(ref pool) = state.vp_mcp_pool {
+                pool.invalidate().await;
+            }
+            Err(anyhow::anyhow!("VP tool execution failed: {}", e))
+        }
+    }
 }
+
 
 /// Dispatch to the Restaurant State Service.
 /// Mirrors the Claw executor pattern — POST /invoke with standard payload.

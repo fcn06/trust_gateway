@@ -108,8 +108,6 @@ pub async fn execute_skill(
 
     // Pipe arguments as JSON on stdin
     cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
 
     tracing::info!(
         "🦞 Executing skill '{}': {} {} (timeout: {:?})",

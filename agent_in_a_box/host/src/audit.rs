@@ -12,12 +12,14 @@ pub async fn publish_audit(
     component: &str,
     detail: serde_json::Value,
     tenant_id: Option<&str>,
+    user_id: Option<&str>,
 ) {
     let tid = tenant_id.unwrap_or("default");
     let event = json!({
         "jti": jti,
         "tenant_id": tid,
         "user_did": user_did,
+        "user_id": user_id.unwrap_or(""),
         "ts": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

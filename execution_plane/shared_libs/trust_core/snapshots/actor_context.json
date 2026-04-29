@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ActorContext",
+  "description": "Who is performing the action and under what authority.\n\nDerived from the session JWT issued by `ssi_vault`.",
+  "type": "object",
+  "required": [
+    "auth_level",
+    "owner_did",
+    "requester_did",
+    "session_jti"
+  ],
+  "properties": {
+    "auth_level": {
+      "description": "Current authentication level of the actor.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/AuthLevel"
+        }
+      ]
+    },
+    "owner_did": {
+      "description": "DID of the entity that owns the tenant / agent box (from JWT `iss`).",
+      "type": "string"
+    },
+    "requester_did": {
+      "description": "DID of the entity that initiated the action (from JWT `sub`). May be the same as `owner_did` for first-party requests.",
+      "type": "string"
+    },
+    "session_jti": {
+      "description": "Session correlation token (from JWT `jti`).",
+      "type": "string"
+    },
+    "user_did": {
+      "description": "Optional end-user DID when the action is on behalf of a customer.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "definitions": {
+    "AuthLevel": {
+      "description": "Authentication strength of the current session.\n\nUsed by the policy engine to decide whether step-up is needed.",
+      "oneOf": [
+        {
+          "description": "Basic session token — the default after Host login.",
+          "type": "string",
+          "enum": [
+            "session"
+          ]
+        },
+        {
+          "description": "Re-authenticated (e.g. WebAuthn challenge completed).",
+          "type": "string",
+          "enum": [
+            "elevated"
+          ]
+        },
+        {
+          "description": "Verified presentation was provided (OID4VP).",
+          "type": "string",
+          "enum": [
+            "verified"
+          ]
+        }
+      ]
+    }
+  }
+}

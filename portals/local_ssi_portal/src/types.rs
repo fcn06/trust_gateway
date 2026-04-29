@@ -133,16 +133,19 @@ pub struct SetRecoveryRequest {
 
 // === Authentication ===
 
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RegistrationCookie {
     pub aid: String,            // NATS Account ID
     pub lpk: String,            // Link Public Key (Base64)
     pub rly: String,            // Relay Endpoint URL
+    pub nid: String,            // Node ID
     pub uid: Option<String>,    // Hashed User Nickname (for UI display)
     /// Real tenant UUID from the tenant_registry. When present,
     /// this MUST be used instead of `aid` for all tenant-scoped operations.
     #[serde(default)]
     pub tenant_id: Option<String>,
+    #[serde(default)]
+    pub is_agent_allowed: bool,
 }
 
 #[derive(Deserialize)]

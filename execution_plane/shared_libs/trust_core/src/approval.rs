@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Higher tiers provide stronger assurance but more friction.
 /// The policy engine maps actions to tiers based on risk attributes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalTier {
     /// Tier 0: auto-allow. No human intervention needed.
@@ -41,7 +41,7 @@ impl std::fmt::Display for ApprovalTier {
 
 /// A request for human approval, created when the policy engine
 /// returns `RequireApproval` or `RequireProof`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApprovalRequest {
     /// Unique identifier for this approval request.
     pub approval_id: String,
@@ -66,7 +66,7 @@ pub struct ApprovalRequest {
 }
 
 /// Human-readable summary of an action, used in approval cards.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ActionSummary {
     /// Action name, e.g. "google.calendar.event.create".
     pub action_name: String,
@@ -83,7 +83,7 @@ pub struct ActionSummary {
 }
 
 /// A persisted approval record — tracks the full lifecycle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApprovalRecord {
     /// Unique identifier matching the original `ApprovalRequest`.
     pub approval_id: String,
@@ -110,7 +110,7 @@ pub struct ApprovalRecord {
 }
 
 /// The current status of an approval request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
     /// Waiting for human action.
@@ -130,7 +130,7 @@ pub enum ApprovalStatus {
 }
 
 /// The result of an approval decision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApprovalResult {
     /// Who approved or denied.
     pub resolved_by: String,

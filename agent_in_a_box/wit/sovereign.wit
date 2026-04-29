@@ -160,13 +160,13 @@ interface vault {
     use common-types.{did-document};
 
     // === DID Management ===
-    create-identity: func(user-id: string) -> string;
-    create-peer-identity: func(user-id: string) -> string;
-    sign-message: func(did: string, message: list<u8>) -> list<u8>;
-    get-active-did: func(user-id: string) -> string;
+    create-identity: func(user-id: string) -> result<string, string>;
+    create-peer-identity: func(user-id: string) -> result<string, string>;
+    sign-message: func(did: string, message: list<u8>) -> result<list<u8>, string>;
+    get-active-did: func(user-id: string) -> result<string, string>;
     set-active-did: func(user-id: string, did: string) -> result<bool, string>;
-    list-identities: func(user-id: string) -> list<string>;
-    resolve-did-to-user-id: func(did: string) -> string;
+    list-identities: func(user-id: string) -> result<list<string>, string>;
+    resolve-did-to-user-id: func(did: string) -> result<string, string>;
 
     // === Master Seed Management ===
     generate-master-seed: func(user-id: string, derivation-path: string) -> result<bool, string>;
@@ -278,9 +278,15 @@ interface acl {
 // --- Persistence (Unchanged) ---
 
 interface persistence {
-    get: func(key: string) -> option<list<u8>>;
-    set: func(key: string, value: list<u8>);
-    list-keys: func() -> list<string>;
+    enum persistence-error {
+        storage-error,
+        not-available,
+        invalid-key,
+    }
+
+    get: func(key: string) -> result<option<list<u8>>, persistence-error>;
+    set: func(key: string, value: list<u8>) -> result<_, persistence-error>;
+    list-keys: func() -> result<list<string>, persistence-error>;
     get-house-salt: func() -> list<u8>;
 }
 

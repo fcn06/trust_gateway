@@ -1,0 +1,228 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ActionRequest",
+  "description": "The canonical action request that flows through the entire gateway.\n\nCreated when any proposer (ssi_agent, webhook, WhatsApp bridge, PicoClaw) submits an action for governance.",
+  "type": "object",
+  "required": [
+    "action",
+    "action_id",
+    "actor",
+    "source",
+    "tenant_id"
+  ],
+  "properties": {
+    "action": {
+      "description": "What is being requested — the action descriptor.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ActionDescriptor"
+        }
+      ]
+    },
+    "action_id": {
+      "description": "Unique identifier for this action attempt.",
+      "type": "string"
+    },
+    "actor": {
+      "description": "Identity context: who is asking and under what authority.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ActorContext"
+        }
+      ]
+    },
+    "source": {
+      "description": "Where the action originated (ssi_agent, whatsapp, webhook, etc.).",
+      "allOf": [
+        {
+          "$ref": "#/definitions/SourceContext"
+        }
+      ]
+    },
+    "tenant_id": {
+      "description": "Tenant that owns the resources being acted upon.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "ActionDescriptor": {
+      "description": "Describes a concrete action that an agent or automation wants to execute.\n\nThis replaces the old raw tool-name dispatch. Every action is now classified by name, category, operation kind, optional monetary amount, and risk-tagging hints.",
+      "type": "object",
+      "required": [
+        "arguments",
+        "category",
+        "name",
+        "operation",
+        "tags"
+      ],
+      "properties": {
+        "amount": {
+          "description": "Monetary value involved, if any (used for threshold-based policy).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "arguments": {
+          "description": "Raw arguments to pass to the executor."
+        },
+        "category": {
+          "description": "Business category, e.g. \"scheduling\", \"refund\", \"payment\".",
+          "type": "string"
+        },
+        "name": {
+          "description": "Fully qualified action name, e.g. \"google.calendar.event.create\".",
+          "type": "string"
+        },
+        "operation": {
+          "description": "Kind of operation being performed.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/OperationKind"
+            }
+          ]
+        },
+        "resource": {
+          "description": "Optional resource identifier (e.g. order ID, calendar ID).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "Free-form risk/classification tags, e.g. [\"mutation\", \"external_api\", \"payout_change\"]. Policy rules can match on these.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ActorContext": {
+      "description": "Who is performing the action and under what authority.\n\nDerived from the session JWT issued by `ssi_vault`.",
+      "type": "object",
+      "required": [
+        "auth_level",
+        "owner_did",
+        "requester_did",
+        "session_jti"
+      ],
+      "properties": {
+        "auth_level": {
+          "description": "Current authentication level of the actor.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AuthLevel"
+            }
+          ]
+        },
+        "owner_did": {
+          "description": "DID of the entity that owns the tenant / agent box (from JWT `iss`).",
+          "type": "string"
+        },
+        "requester_did": {
+          "description": "DID of the entity that initiated the action (from JWT `sub`). May be the same as `owner_did` for first-party requests.",
+          "type": "string"
+        },
+        "session_jti": {
+          "description": "Session correlation token (from JWT `jti`).",
+          "type": "string"
+        },
+        "user_did": {
+          "description": "Optional end-user DID when the action is on behalf of a customer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "AuthLevel": {
+      "description": "Authentication strength of the current session.\n\nUsed by the policy engine to decide whether step-up is needed.",
+      "oneOf": [
+        {
+          "description": "Basic session token — the default after Host login.",
+          "type": "string",
+          "enum": [
+            "session"
+          ]
+        },
+        {
+          "description": "Re-authenticated (e.g. WebAuthn challenge completed).",
+          "type": "string",
+          "enum": [
+            "elevated"
+          ]
+        },
+        {
+          "description": "Verified presentation was provided (OID4VP).",
+          "type": "string",
+          "enum": [
+            "verified"
+          ]
+        }
+      ]
+    },
+    "Money": {
+      "description": "Monetary value with currency code (ISO 4217).",
+      "type": "object",
+      "required": [
+        "amount_minor",
+        "currency"
+      ],
+      "properties": {
+        "amount_minor": {
+          "description": "Amount in the smallest currency unit (e.g., cents for EUR).",
+          "type": "integer",
+          "format": "int64"
+        },
+        "currency": {
+          "description": "ISO 4217 currency code, e.g. \"EUR\", \"USD\".",
+          "type": "string"
+        }
+      }
+    },
+    "OperationKind": {
+      "description": "The kind of operation an action performs.",
+      "type": "string",
+      "enum": [
+        "read",
+        "create",
+        "update",
+        "delete",
+        "transfer"
+      ]
+    },
+    "SourceContext": {
+      "description": "Where the action request originated.",
+      "type": "object",
+      "required": [
+        "source_type"
+      ],
+      "properties": {
+        "instance_id": {
+          "description": "Optional instance/channel identifier.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Optional human-readable name for the source instance.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_type": {
+          "description": "Source type identifier: \"ssi_agent\", \"whatsapp\", \"webhook\", \"portal\", \"picoclaw\", etc.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

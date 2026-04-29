@@ -436,7 +436,7 @@ The Trust Gateway was designed with production-grade security from day one:
 | Wasm sandboxed skill execution | ❌ | ✅ |
 | Multi-tenancy | ❌ | ✅ |
 | Attribute-based policy (ABAC) | ❌ | ✅ |
-| Enterprise support | ❌ | ✅ |
+| EntraId support | ❌ | ✅ |
 
 ---
 

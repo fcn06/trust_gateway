@@ -37,26 +37,22 @@ Think of it like a **Notary Public** for AI. An agent can draft a contract (a to
 
 ```mermaid
 sequenceDiagram
-    autonumber
     actor User
-    participant Agent as AI Agent (Intelligence)
-    participant TG as Trust Gateway (Active Control)
-    participant Tool as Business Tool (Capability)
+    participant Agent as AI Agent
+    participant GW as Trust Gateway
+    actor Admin as Shop Admin
+    participant BT as Business Tool
 
     User->>Agent: "Refund the last order"
-    Agent->>TG: PROPOSE: Refund(order_123)
-    
-    rect rgb(240, 240, 240)
-        Note over TG: ACTIVE GOVERNANCE
-        TG-->>User: 🔔 Approval Needed: "Refund $50.00?"
-        User->>TG: ✅ Approve
-        Note over TG: Issues Signed Execution Grant
-    end
-
-    TG->>Tool: EXECUTE: Refund(order_123)
-    Tool-->>TG: Success Result
-    TG-->>Agent: Action Outcome
-    Agent-->>User: "Refund processed successfully."
+    Agent->>GW: PROPOSE: Refund(order_123)
+    Note over GW: Active governance
+    GW-->>Admin: Approval needed? Refund $50.00
+    Admin-->>GW: Approved
+    Note over GW: Issues signed grant
+    GW->>BT: EXECUTE: Refund(order_123)
+    BT-->>GW: Success result
+    GW-->>Agent: Action outcome
+    Agent-->>User: "Refund processed."
 ```
 
 By decoupling **intelligence** (the AI) from **capability** (the tools), we ensure that even if an agent "hallucinates" a dangerous command, it lacks the cryptographic authority to actually make it happen.

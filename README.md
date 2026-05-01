@@ -490,6 +490,8 @@ The Trust Gateway was designed with production-grade security from day one:
 | MCP + HTTP + NATS transports | ✅ | ✅ |
 | Telegram Bot & Mobile Approval Flow | ✅ | ✅ |
 | Circuit breakers per connector | ✅ | ✅ |
+| Cron-based action scheduling | ✅ | ✅ |
+| Inbound Webhook Governance | ✅ | ✅ |
 | OS process isolation (The Claw) | ✅ | ✅ |
 | Wasm sandboxed skill execution | ❌ | ✅ |
 | Multi-tenancy | ❌ | ✅ |

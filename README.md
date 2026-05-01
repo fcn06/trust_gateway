@@ -69,6 +69,10 @@ When an agent proposes an action that violates a "High Risk" policy, execution p
 ### Visual Policy Builder
 Define your trust boundaries without writing code. Set thresholds for financial transactions, restrict sensitive tool access, and simulate policy changes before deploying them.
 
+### Mobile Approvals via Telegram
+Receive instant notifications when your agent needs approval. 
+Approve or deny with one tap — without opening the portal.
+
 ---
 
 ## The Problem
@@ -117,10 +121,6 @@ sequenceDiagram
 By decoupling **intelligence** (the AI) from **capability** (the tools), we ensure that even if an agent "hallucinates" a dangerous command, it lacks the cryptographic authority to actually make it happen.
 
 ---
-
-
----
-
 
 ## Full Configuration Reference
 
@@ -506,7 +506,7 @@ The Trust Gateway was designed with production-grade security from day one:
 
 ---
 
-## Roadmap
+## What's next beyond the current release
 
 Our goal is to build the most secure and transparent gateway for AI agents. Key milestones on our path include:
 
@@ -514,7 +514,7 @@ Our goal is to build the most secure and transparent gateway for AI agents. Key 
 - **Dynamic ABAC** — Richer policy evaluation using real-time context (IP, location, user risk scores).
 - **Identity Federation** — Native OIDC and SAML integration for enterprise SSO.
 - **Audit Visualization** — A visual dashboard for inspecting the NATS JetStream audit trail.
-- **Advanced Swarm Governance** — Implementing complex, multi-agent policy evaluation for high-stakes collaborative workflows.
+- **Cross-Agent Policy Chains** — Policy evaluation across multi-agent workflows where Agent B's permission depends on Agent A's verified output.
 - **Cross-Gateway Sync** — High-availability configurations for multi-region deployments.
 
 ---

@@ -37,7 +37,7 @@ struct ServerConfig {
 }
 
 fn default_policy_path() -> String {
-    "../ssi_agent/configuration/policy.json".to_string()
+    "../../agents/ssi_agent/configuration/policy.json".to_string()
 }
 
 /// Escalation policy loaded from policy.json.

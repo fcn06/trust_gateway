@@ -69,8 +69,8 @@ if ! command -v trunk &> /dev/null; then
     exit 1
 fi
 
-echo "Starting NATS JetStream server with local persistence..."
-nats-server -js -sd .nats_data &
+echo "Starting NATS JetStream server with local persistence and WebSocket..."
+nats-server -c nats-server.conf &
 NATS_PID=$!
 
 function cleanup {

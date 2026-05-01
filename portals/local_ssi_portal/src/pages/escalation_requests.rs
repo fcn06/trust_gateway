@@ -43,6 +43,31 @@ pub fn EscalationRequestsSection(
     let lr = load_requests.clone();
     Effect::new(move |_| lr());
 
+    // Connect to NATS WebSocket for real-time updates
+    let ws_client = std::sync::Arc::new(std::sync::Mutex::new(Option::<crate::nats_ws::NatsWsClient>::None));
+    let ws_client_effect = ws_client.clone();
+    let lr_ws = load_requests.clone();
+    Effect::new(move |_| {
+        let lr_ws_inner = lr_ws.clone();
+        if let Ok(client) = crate::nats_ws::NatsWsClient::connect(
+            "ws://127.0.0.1:9222", 
+            "mcp.v1.action.>", // Subscribe to action lifecycle events
+            move || lr_ws_inner()
+        ) {
+            if let Ok(mut guard) = ws_client_effect.lock() {
+                *guard = Some(client);
+            }
+        }
+    });
+
+    on_cleanup(move || {
+        if let Ok(mut guard) = ws_client.lock() {
+            if let Some(client) = guard.take() {
+                client.disconnect();
+            }
+        }
+    });
+
     view! {
         <div class="space-y-6 max-w-5xl mx-auto">
             <h1 class="text-3xl font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent mb-2">
@@ -83,7 +108,7 @@ pub fn EscalationRequestsSection(
                                 <svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                             </div>
                             <p class="text-slate-300 text-lg font-medium">"No pending escalations."</p>
-                            <p class="text-sm mt-2 max-w-sm mx-auto">"Agent tool calls that require your clearance will appear here when they are intercepted."</p>
+                            <p class="text-sm mt-2 max-w-sm mx-auto">"When your agent asks to do something sensitive, you will see it here before it acts."</p>
                         </div>
                     </Show>
 

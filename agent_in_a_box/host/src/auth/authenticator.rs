@@ -56,7 +56,19 @@ impl Authenticator for WebAuthnAuthenticator {
             user_id,
             tenant_id,
             display_name: Some(username),
-            email: None, // WebAuthn doesn't provide email
+            // DESIGN DECISION: email is intentionally None for WebAuthn sessions.
+            //
+            // WebAuthn (passkeys) is a pure authentication primitive — it proves
+            // possession of a private key, not identity attributes like email.
+            // In the Lianxi architecture, identity claims are carried by the DID
+            // and its associated Verifiable Credentials, not by the session layer.
+            //
+            // For Enterprise SSO (Entra ID, Okta), the Authenticator implementation
+            // WILL populate this field from the IdP's id_token claims.
+            //
+            // Audit implication: WebAuthn audit trails identify users by user_id
+            // and DID. Email-based correlation requires a separate VC lookup.
+            email: None,
             auth_method: "webauthn".to_string(),
             session_id,
         })
@@ -160,5 +172,64 @@ impl Authenticator for WebAuthnAuthenticator {
                 Err(AuthError::ReauthFailed(format!("{:?}", e)))
             }
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Unit Tests — JWT Session Validation
+// ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::mocks::mock_shared_state;
+    use crate::dto::MyClaims;
+    use jwt_simple::prelude::*;
+    use trust_core::traits::Authenticator;
+
+    #[tokio::test]
+    async fn test_validate_session_valid_token() {
+        let shared = mock_shared_state();
+        let authenticator = WebAuthnAuthenticator::new(shared.clone());
+
+        let user_id = "test-user-123".to_string();
+        let username = "testuser".to_string();
+        
+        let claims = MyClaims {
+            user_id: user_id.clone(),
+            username: username.clone(),
+            tenant_id: None,
+            jti: None,
+        };
+        
+        let jwt_claims = Claims::with_custom_claims(claims, Duration::from_secs(3600))
+            .with_jwt_id("test-jti");
+            
+        let token = shared.jwt_key.authenticate(jwt_claims).unwrap();
+
+        let identity = authenticator.validate_session(&token).await.unwrap();
+
+        assert_eq!(identity.user_id, user_id);
+        assert_eq!(identity.display_name, Some(username));
+        assert_eq!(identity.auth_method, "webauthn");
+        assert_eq!(identity.session_id, "test-jti");
+    }
+
+    #[tokio::test]
+    async fn test_validate_session_invalid_token() {
+        let shared = mock_shared_state();
+        let authenticator = WebAuthnAuthenticator::new(shared);
+
+        let result = authenticator.validate_session("invalid-token").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_session_empty_token() {
+        let shared = mock_shared_state();
+        let authenticator = WebAuthnAuthenticator::new(shared);
+
+        let result = authenticator.validate_session("").await;
+        assert!(result.is_err());
     }
 }

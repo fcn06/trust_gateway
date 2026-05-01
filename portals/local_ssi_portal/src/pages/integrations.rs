@@ -117,9 +117,10 @@ pub fn Integrations(
                                             view! {
                                                 <button
                                                     disabled=true
-                                                    class="w-full bg-green-500/20 text-green-300 font-medium py-2 px-4 rounded-lg border border-green-500/30 cursor-default"
+                                                    class="w-full bg-emerald-500/20 text-emerald-400 font-bold py-2 px-4 rounded-lg border border-emerald-500/50 cursor-default flex items-center justify-center gap-2"
                                                 >
-                                                    "✓ Connected"
+                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                                    "Connected"
                                                 </button>
                                             }.into_any()
                                         } else {
@@ -146,10 +147,14 @@ pub fn Integrations(
                             } else {
                                 view! {
                                     <button
-                                        disabled=true
-                                        class="w-full bg-white/5 text-gray-500 font-medium py-2 px-4 rounded-lg border border-white/10 cursor-not-allowed"
+                                        on:click=move |_| {
+                                            if let Some(win) = web_sys::window() {
+                                                let _ = win.alert_with_message("You have been added to the waitlist!");
+                                            }
+                                        }
+                                        class="w-full bg-white/10 hover:bg-white/20 text-white font-medium py-2 px-4 rounded-lg transition-all border border-white/20 hover:border-white/40"
                                     >
-                                        "Coming Soon"
+                                        "Notify Me"
                                     </button>
                                 }.into_any()
                             }}

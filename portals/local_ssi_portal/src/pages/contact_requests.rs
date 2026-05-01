@@ -202,137 +202,140 @@ pub fn ContactRequestsSection(
                         </div>
                     }
                 >
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-sm">
-                            <thead class="bg-slate-900 text-slate-400 uppercase text-xs">
-                                <tr>
-                                    <th class="p-4">"From"</th>
-                                    <th class="p-4">"To"</th>
-                                    <th class="p-4">"Status"</th>
-                                    <th class="p-4">"Date"</th>
-                                    <th class="p-4 text-right">"Actions"</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-700">
-                                <For
-                                    each=move || requests.get()
-                                    key=|r| format!("{}_{}", r.id, r.status)
-                                    children=move |req| {
-                                        let id = req.id.clone();
-                                        let id_accept = id.clone();
-                                        let id_refuse = id.clone();
-                                        
-                                        let is_incoming_role = req.role.as_deref() == Some("INCOMING");
-                                        
-                                        let from_did = if is_incoming_role {
-                                            req.sender_did.clone()
-                                        } else {
-                                            req.owner_did.clone()
-                                        };
-                                        
-                                        let to_did = if is_incoming_role {
-                                            req.owner_did.clone()
-                                        } else {
-                                            req.sender_did.clone()
-                                        };
-                                        
-                                        let date_str = {
-                                            let timestamp = js_sys::Date::parse(&req.created_at); // Fixed date parsing for RFC3339
-                                            let date = js_sys::Date::new(&timestamp.into());
-                                            format!("{}/{}/{}", 
-                                                date.get_month() as u32 + 1, 
-                                                date.get_date(), 
-                                                date.get_full_year())
-                                        };
-                                        
-                                        let status_class = match req.status.to_lowercase().as_str() {
-                                            "pending" => "bg-yellow-600/20 text-yellow-400 border-yellow-500/30",
-                                            "accepted" => "bg-green-600/20 text-green-400 border-green-500/30",
-                                            "refused" => "bg-red-600/20 text-red-400 border-red-500/30",
-                                            _ => "bg-slate-600/20 text-slate-400 border-slate-500/30",
-                                        };
+                    <div class="grid gap-4 p-4">
+                        <For
+                            each=move || requests.get()
+                            key=|r| format!("{}_{}", r.id, r.status)
+                            children=move |req| {
+                                let id = req.id.clone();
+                                let id_accept = id.clone();
+                                let id_refuse = id.clone();
+                                
+                                let is_incoming_role = req.role.as_deref() == Some("INCOMING");
+                                
+                                let from_did = if is_incoming_role {
+                                    req.sender_did.clone()
+                                } else {
+                                    req.owner_did.clone()
+                                };
+                                
+                                let to_did = if is_incoming_role {
+                                    req.owner_did.clone()
+                                } else {
+                                    req.sender_did.clone()
+                                };
+                                
+                                let date_str = {
+                                    let timestamp = js_sys::Date::parse(&req.created_at); // Fixed date parsing for RFC3339
+                                    let date = js_sys::Date::new(&timestamp.into());
+                                    format!("{}/{}/{}", 
+                                        date.get_month() as u32 + 1, 
+                                        date.get_date(), 
+                                        date.get_full_year())
+                                };
+                                
+                                let status_class = match req.status.to_lowercase().as_str() {
+                                    "pending" => "bg-yellow-600/20 text-yellow-400 border-yellow-500/30",
+                                    "accepted" => "bg-green-600/20 text-green-400 border-green-500/30",
+                                    "refused" => "bg-red-600/20 text-red-400 border-red-500/30",
+                                    _ => "bg-slate-600/20 text-slate-400 border-slate-500/30",
+                                };
 
-                                        view! {
-                                            <tr>
-                                                <td class="p-4">
-                                                    <div class="flex flex-col">
-                                                        <span class="font-bold text-blue-300">"Request"</span>
-                                                        <span class="text-[10px] text-slate-500 font-mono truncate max-w-32 group relative cursor-help">
-                                                            "View Details"
-                                                            <div class="invisible group-hover:visible absolute left-0 bottom-full mb-1 p-2 bg-slate-800 border border-slate-600 rounded shadow-xl text-xs z-50 whitespace-nowrap">
-                                                                {from_did}
-                                                            </div>
+                                view! {
+                                    <div class="bg-slate-900 border border-slate-700/50 rounded-xl p-4 flex flex-col sm:flex-row justify-between gap-4 shadow-sm hover:border-blue-500/30 transition-all group">
+                                        <div class="space-y-3 flex-1">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-lg bg-blue-900/30 border border-blue-500/20 flex items-center justify-center shrink-0 text-xl">
+                                                    {if is_incoming_role { "📥" } else { "📤" }}
+                                                </div>
+                                                <div>
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="font-bold text-white text-base">"Contact Request"</span>
+                                                        <span class=format!("px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border {}", status_class)>
+                                                            {req.status.to_uppercase()}
                                                         </span>
                                                     </div>
-                                                </td>
-                                                <td class="p-4">
-                                                    <span class="text-[10px] text-slate-400 font-mono truncate max-w-32 group relative cursor-help">
-                                                        "View Details"
-                                                        <div class="invisible group-hover:visible absolute left-0 bottom-full mb-1 p-2 bg-slate-800 border border-slate-600 rounded shadow-xl text-xs z-50 whitespace-nowrap">
+                                                    <div class="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                                                        <span class="text-slate-500">"Date:"</span> {date_str}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm bg-slate-800/50 p-3 rounded-lg border border-slate-700/30">
+                                                <div>
+                                                    <span class="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-1">"From"</span>
+                                                    <div class="group relative inline-block">
+                                                        <span class="font-mono text-[11px] text-blue-300 break-all cursor-help border-b border-dashed border-blue-500/50 hover:text-blue-200 transition-colors">
+                                                            {if from_did.len() > 20 { format!("{}...{}", &from_did[..10], &from_did[from_did.len()-4..]) } else { from_did.clone() }}
+                                                        </span>
+                                                        <div class="invisible group-hover:visible absolute left-0 bottom-full mb-1 p-2 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-[10px] text-white z-50 whitespace-nowrap">
+                                                            {from_did}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <span class="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-1">"To"</span>
+                                                    <div class="group relative inline-block">
+                                                        <span class="font-mono text-[11px] text-purple-300 break-all cursor-help border-b border-dashed border-purple-500/50 hover:text-purple-200 transition-colors">
+                                                            {if to_did.len() > 20 { format!("{}...{}", &to_did[..10], &to_did[to_did.len()-4..]) } else { to_did.clone() }}
+                                                        </span>
+                                                        <div class="invisible group-hover:visible absolute left-0 bottom-full mb-1 p-2 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-[10px] text-white z-50 whitespace-nowrap">
                                                             {to_did}
                                                         </div>
-                                                    </span>
-                                                </td>
-                                                <td class="p-4">
-                                                    <span class=format!("px-2 py-1 rounded-full border text-[10px] font-bold {}", status_class)>
-                                                        {req.status.to_uppercase()}
-                                                    </span>
-                                                </td>
-                                                <td class="p-4 text-slate-400 text-xs">{date_str}</td>
-                                                <td class="p-4">
-                                                    <Show when=move || is_incoming_role && req.status.to_lowercase() == "pending">
-                                                        <div class="flex gap-2 justify-end">
-                                                            <button 
-                                                                on:click={
-                                                                    let id = id_accept.clone();
-                                                                    move |_| {
-                                                                        let ab = base_url.get_value();
-                                                                        let tt = token.get_value();
-                                                                        let id = id.clone();
-                                                                        spawn_local(async move {
-                                                                            match api::accept_contact_request(&ab, id, tt).await {
-                                                                                Ok(_) => {
-                                                                                    set_success.set(Some("Contact request accepted!".to_string()));
-                                                                                    set_refresh_trigger.update(|n| *n += 1);
-                                                                                },
-                                                                                Err(e) => set_error.set(Some(format!("Failed: {}", e))),
-                                                                            }
-                                                                        });
-                                                                    }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="flex sm:flex-col justify-end gap-2 shrink-0">
+                                            <Show when=move || is_incoming_role && req.status.to_lowercase() == "pending">
+                                                <button 
+                                                    on:click={
+                                                        let id = id_accept.clone();
+                                                        move |_| {
+                                                            let ab = base_url.get_value();
+                                                            let tt = token.get_value();
+                                                            let id = id.clone();
+                                                            spawn_local(async move {
+                                                                match api::accept_contact_request(&ab, id, tt).await {
+                                                                    Ok(_) => {
+                                                                        set_success.set(Some("Contact request accepted!".to_string()));
+                                                                        set_refresh_trigger.update(|n| *n += 1);
+                                                                    },
+                                                                    Err(e) => set_error.set(Some(format!("Failed: {}", e))),
                                                                 }
-                                                                class="bg-green-600/20 text-green-400 px-3 py-1 rounded text-xs font-bold border border-green-500/30 hover:bg-green-600/40 transition-all">
-                                                                "Accept"
-                                                            </button>
-                                                            <button 
-                                                                on:click={
-                                                                    let id = id_refuse.clone();
-                                                                    move |_| {
-                                                                        let ab = base_url.get_value();
-                                                                        let tt = token.get_value();
-                                                                        let id = id.clone();
-                                                                        spawn_local(async move {
-                                                                            match api::refuse_contact_request(&ab, id, tt).await {
-                                                                                Ok(_) => {
-                                                                                    set_success.set(Some("Contact request refused.".to_string()));
-                                                                                    set_refresh_trigger.update(|n| *n += 1);
-                                                                                },
-                                                                                Err(e) => set_error.set(Some(format!("Failed: {}", e))),
-                                                                            }
-                                                                        });
-                                                                    }
+                                                            });
+                                                        }
+                                                    }
+                                                    class="flex-1 sm:flex-none bg-green-600/20 text-green-400 px-6 py-2 rounded-lg text-sm font-bold border border-green-500/30 hover:bg-green-500 hover:text-white transition-all text-center shadow-sm">
+                                                    "Accept"
+                                                </button>
+                                                <button 
+                                                    on:click={
+                                                        let id = id_refuse.clone();
+                                                        move |_| {
+                                                            let ab = base_url.get_value();
+                                                            let tt = token.get_value();
+                                                            let id = id.clone();
+                                                            spawn_local(async move {
+                                                                match api::refuse_contact_request(&ab, id, tt).await {
+                                                                    Ok(_) => {
+                                                                        set_success.set(Some("Contact request refused.".to_string()));
+                                                                        set_refresh_trigger.update(|n| *n += 1);
+                                                                    },
+                                                                    Err(e) => set_error.set(Some(format!("Failed: {}", e))),
                                                                 }
-                                                                class="bg-red-600/20 text-red-400 px-3 py-1 rounded text-xs font-bold border border-red-500/30 hover:bg-red-600/40 transition-all">
-                                                                "Refuse"
-                                                            </button>
-                                                        </div>
-                                                    </Show>
-                                                </td>
-                                            </tr>
-                                        }
-                                    }
-                                />
-                            </tbody>
-                        </table>
+                                                            });
+                                                        }
+                                                    }
+                                                    class="flex-1 sm:flex-none bg-red-600/20 text-red-400 px-6 py-2 rounded-lg text-sm font-bold border border-red-500/30 hover:bg-red-500 hover:text-white transition-all text-center shadow-sm">
+                                                    "Refuse"
+                                                </button>
+                                            </Show>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        />
                     </div>
                 </Show>
             </div>

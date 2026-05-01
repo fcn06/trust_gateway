@@ -222,7 +222,7 @@ pub fn Inbox(
                         }
                         class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2"
                     >
-                        <span class="text-lg">"+"</span> "New"
+                        <span class="text-lg">"+"</span> "New Message"
                     </button>
                 </div>
             </div>
@@ -284,11 +284,27 @@ pub fn Inbox(
 
                                     let preview = match &latest.body {
                                         serde_json::Value::String(s) => s.clone(),
-                                        val => val.to_string(),
+                                        serde_json::Value::Object(obj) => {
+                                            if let Some(content) = obj.get("content").and_then(|c| c.as_str()) {
+                                                content.to_string()
+                                            } else {
+                                                "Structured Message".to_string()
+                                            }
+                                        },
+                                        _ => "Message".to_string(),
                                     };
                                     
                                     let is_selected = selected_thread.get() == Some(tid.clone()) && !show_new_msg.get();
                                     let bg_class = if is_selected { "bg-slate-700/80 border-l-4 border-l-blue-400" } else { "hover:bg-slate-750 border-l-4 border-l-transparent" };
+
+                                    let is_agent = display_name.to_lowercase().contains("agent");
+                                    let avatar_icon = if is_self_message {
+                                        view! { <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-400 font-bold text-[10px] flex-shrink-0">"ME"</div> }.into_any()
+                                    } else if is_agent {
+                                        view! { <div class="w-8 h-8 rounded-full bg-emerald-600/20 text-emerald-400 flex items-center justify-center flex-shrink-0"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg></div> }.into_any()
+                                    } else {
+                                        view! { <div class="w-8 h-8 rounded-full bg-purple-600/20 text-purple-400 flex items-center justify-center flex-shrink-0"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg></div> }.into_any()
+                                    };
 
                                     view! {
                                         <div 
@@ -298,17 +314,22 @@ pub fn Inbox(
                                                 set_show_new_msg.set(false);
                                             }
                                         >
-                                            <div class="flex justify-between items-start mb-1">
-                                                <span class="font-bold text-slate-200 truncate pr-2">{display_name}</span>
-                                                <span class="text-[10px] text-slate-500 font-mono flex-shrink-0">
-                                                    {format_timestamp(latest.created_time.unwrap_or(0))}
-                                                </span>
-                                            </div>
-                                            <div class="text-[10px] text-slate-500 font-mono truncate mb-1" title="Thread ID">
-                                                {format!("thid: {}", tid_clone.clone())}
-                                            </div>
-                                            <div class="text-xs text-slate-400 truncate pr-2">
-                                                {preview}
+                                            <div class="flex items-start gap-3">
+                                                {avatar_icon}
+                                                <div class="flex-1 min-w-0">
+                                                    <div class="flex justify-between items-start mb-1">
+                                                        <span class="font-bold text-slate-200 truncate pr-2">{display_name}</span>
+                                                        <span class="text-[10px] text-slate-500 font-mono flex-shrink-0">
+                                                            {format_timestamp(latest.created_time.unwrap_or(0))}
+                                                        </span>
+                                                    </div>
+                                                    <div class="text-[10px] text-slate-500 font-mono truncate mb-1" title="Thread ID">
+                                                        {format!("thid: {}", tid_clone.clone())}
+                                                    </div>
+                                                    <div class="text-xs text-slate-400 truncate pr-2">
+                                                        {preview}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     }

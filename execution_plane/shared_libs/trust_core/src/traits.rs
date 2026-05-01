@@ -253,6 +253,11 @@ pub struct AuthenticatedIdentity {
     /// Display name for audit trails.
     pub display_name: Option<String>,
     /// Email address (if available from the IdP).
+    ///
+    /// This is `None` for authentication methods that don't provide email
+    /// (e.g., WebAuthn/passkeys). Identity claims are carried by DIDs and
+    /// Verifiable Credentials, not the session token. Enterprise SSO
+    /// implementations (Entra ID, Okta) populate this from id_token claims.
     pub email: Option<String>,
     /// The authentication method used (webauthn, oidc, saml).
     pub auth_method: String,

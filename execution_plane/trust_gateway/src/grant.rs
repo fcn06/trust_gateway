@@ -185,3 +185,219 @@ impl trust_core::traits::GrantIssuer for HmacGrantIssuer {
             .map_err(|e| trust_core::errors::GrantError::SigningFailed(e.to_string()))
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Unit Tests — Grant Issuance (Security-Critical)
+//
+// These tests validate the cryptographic integrity of the
+// ExecutionGrant JWT lifecycle. Grant forgery or validation
+// bypass would constitute a full system compromise.
+// ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trust_core::action::{ActionDescriptor, ActionRequest, OperationKind};
+    use trust_core::actor::{ActorContext, AuthLevel, SourceContext};
+    use trust_core::grant::GrantClearance;
+    use trust_core::traits::GrantIssuer;
+
+    /// Build a deterministic ActionRequest for tests.
+    fn test_action_request() -> ActionRequest {
+        ActionRequest {
+            action_id: "test-action-001".into(),
+            tenant_id: "tenant-abc".into(),
+            actor: ActorContext {
+                owner_did: "did:twin:owner123".into(),
+                requester_did: "did:twin:agent456".into(),
+                user_did: None,
+                session_jti: "session-jti-789".into(),
+                auth_level: AuthLevel::Session,
+            },
+            source: SourceContext::ssi_agent(),
+            action: ActionDescriptor {
+                name: "google.calendar.event.create".into(),
+                category: "scheduling".into(),
+                resource: None,
+                operation: OperationKind::Create,
+                amount: None,
+                arguments: serde_json::json!({"summary": "Test Event"}),
+                tags: vec!["mutation".into()],
+            },
+        }
+    }
+
+    // ── Ed25519 Tests ───────────────────────────────────────
+
+    #[test]
+    fn ed25519_grant_round_trip() {
+        let issuer = Ed25519GrantIssuer::generate("test-kid-1".into());
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let signed = issuer.issue(&req, GrantClearance::AutoApproved, ttl)
+            .expect("Ed25519 issue should succeed");
+
+        // Verify with the public key
+        let pub_key = issuer.key_pair.public_key();
+        let options = VerificationOptions {
+            allowed_issuers: Some(HashSet::from_strings(&["trust_gateway"])),
+            ..Default::default()
+        };
+        let verified = pub_key.verify_token::<ExecutionGrant>(&signed.token, Some(options))
+            .expect("Ed25519 verification should succeed");
+
+        assert_eq!(verified.custom.action_id, "test-action-001");
+        assert_eq!(verified.custom.tenant_id, "tenant-abc");
+        assert_eq!(verified.custom.allowed_action, "google.calendar.event.create");
+    }
+
+    #[test]
+    fn ed25519_grant_rejects_tampered_token() {
+        let issuer = Ed25519GrantIssuer::generate("test-kid-2".into());
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let signed = issuer.issue(&req, GrantClearance::HumanApproved, ttl)
+            .expect("Ed25519 issue should succeed");
+
+        // Tamper with the token (flip a character in the signature)
+        let mut tampered = signed.token.clone();
+        let bytes = unsafe { tampered.as_bytes_mut() };
+        if let Some(last) = bytes.last_mut() {
+            *last = if *last == b'A' { b'B' } else { b'A' };
+        }
+
+        let pub_key = issuer.key_pair.public_key();
+        let options = VerificationOptions {
+            allowed_issuers: Some(HashSet::from_strings(&["trust_gateway"])),
+            ..Default::default()
+        };
+        let result = pub_key.verify_token::<ExecutionGrant>(&tampered, Some(options));
+        assert!(result.is_err(), "Tampered Ed25519 token must be rejected");
+    }
+
+    #[test]
+    fn ed25519_grant_different_key_rejects() {
+        let issuer = Ed25519GrantIssuer::generate("kid-signer".into());
+        let other = Ed25519GrantIssuer::generate("kid-other".into());
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let signed = issuer.issue(&req, GrantClearance::AutoApproved, ttl)
+            .expect("Ed25519 issue should succeed");
+
+        // Verify with a DIFFERENT public key — must fail
+        let wrong_pub = other.key_pair.public_key();
+        let result = wrong_pub.verify_token::<ExecutionGrant>(&signed.token, None);
+        assert!(result.is_err(), "Ed25519 grant verified with wrong key must be rejected");
+    }
+
+    #[test]
+    fn ed25519_grant_contains_correct_claims() {
+        let issuer = Ed25519GrantIssuer::generate("kid-claims".into());
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(60);
+
+        let signed = issuer.issue(&req, GrantClearance::ProofVerified, ttl)
+            .expect("Ed25519 issue should succeed");
+
+        let grant = &signed.claims;
+        assert_eq!(grant.action_id, "test-action-001");
+        assert_eq!(grant.tenant_id, "tenant-abc");
+        assert_eq!(grant.owner_did, "did:twin:owner123");
+        assert_eq!(grant.requester_did, "did:twin:agent456");
+        assert_eq!(grant.allowed_action, "google.calendar.event.create");
+        assert_eq!(grant.clearance, GrantClearance::ProofVerified);
+        assert_eq!(grant.kid, Some("kid-claims".into()));
+        assert!(!grant.grant_id.is_empty(), "grant_id must be generated");
+        assert!(grant.expires_at > chrono::Utc::now().timestamp(), "expires_at must be in the future");
+    }
+
+    #[test]
+    fn ed25519_pem_round_trip() {
+        let issuer = Ed25519GrantIssuer::generate("kid-pem".into());
+        let pem = issuer.key_pair_pem();
+
+        // Re-create from PEM — must succeed
+        let restored = Ed25519GrantIssuer::from_pem(&pem, "kid-pem".into())
+            .expect("PEM round-trip should succeed");
+
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+        let signed = restored.issue(&req, GrantClearance::AutoApproved, ttl)
+            .expect("Issue from restored key should succeed");
+
+        // Verify with original public key
+        let pub_key = issuer.key_pair.public_key();
+        let result = pub_key.verify_token::<ExecutionGrant>(&signed.token, None);
+        assert!(result.is_ok(), "Token from restored PEM key must verify with original public key");
+    }
+
+    // ── HMAC Tests ──────────────────────────────────────────
+
+    #[test]
+    fn hmac_grant_round_trip() {
+        let issuer = HmacGrantIssuer::new("test-secret-32-bytes-minimum-ok!");
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let signed = issuer.issue(&req, GrantClearance::AutoApproved, ttl)
+            .expect("HMAC issue should succeed");
+
+        let validated = issuer.validate(&signed.token)
+            .expect("HMAC validation with same key should succeed");
+
+        assert_eq!(validated.action_id, "test-action-001");
+        assert_eq!(validated.tenant_id, "tenant-abc");
+    }
+
+    #[test]
+    fn hmac_grant_rejects_wrong_key() {
+        let issuer = HmacGrantIssuer::new("correct-secret-key");
+        let wrong = HmacGrantIssuer::new("wrong-secret-key!!");
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let signed = issuer.issue(&req, GrantClearance::HumanApproved, ttl)
+            .expect("HMAC issue should succeed");
+
+        let result = wrong.validate(&signed.token);
+        assert!(result.is_err(), "HMAC grant validated with wrong key must be rejected");
+    }
+
+    #[test]
+    fn hmac_grant_kid_is_none() {
+        let issuer = HmacGrantIssuer::new("test-secret-32-bytes-minimum-ok!");
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let signed = issuer.issue(&req, GrantClearance::AutoApproved, ttl)
+            .expect("HMAC issue should succeed");
+
+        // HMAC grants don't carry a kid (symmetric — no key rotation)
+        assert_eq!(signed.claims.kid, None);
+    }
+
+    // ── Trait Interface Tests ───────────────────────────────
+
+    #[test]
+    fn ed25519_trait_issue_succeeds() {
+        let issuer = Ed25519GrantIssuer::generate("kid-trait".into());
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let result = issuer.issue_execution_grant(&req, GrantClearance::AutoApproved, ttl);
+        assert!(result.is_ok(), "Ed25519 trait interface should succeed");
+    }
+
+    #[test]
+    fn hmac_trait_issue_succeeds() {
+        let issuer = HmacGrantIssuer::new("trait-test-secret");
+        let req = test_action_request();
+        let ttl = std::time::Duration::from_secs(30);
+
+        let result = issuer.issue_execution_grant(&req, GrantClearance::ElevatedApproval, ttl);
+        assert!(result.is_ok(), "HMAC trait interface should succeed");
+    }
+}

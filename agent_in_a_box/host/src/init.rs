@@ -46,7 +46,8 @@ pub async fn setup_nats(config: &HostConfig) -> Result<(async_nats::Client, Hash
         "did_ledger", "published_dids", "contact_requests", "user_identity_metadata",
         "userid_to_aid", "escalation_requests", "contact_store",
         "pending_oid4vp_requests", "tenant_connections",
-        "tenant_registry", "user_tenant_membership", "tenant_invites"
+        "tenant_registry", "user_tenant_membership", "tenant_invites",
+        "telegram_to_uid"
     ];
 
     // Multi-tenant: prefix bucket names when tenant_id is configured
@@ -156,4 +157,52 @@ pub fn load_server_keys() -> Result<ServerKeys> {
     }
 
     Ok(keys)
+}
+
+/// One-time migration: backfill `thid_{thid} -> msg_id` index entries in `sovereign_kv`.
+///
+/// Messages written before the thid index was introduced lack the secondary
+/// index key. This function scans all non-index entries and creates the
+/// missing index entries, enabling O(1) lookups in `check_handshake_status_handler`.
+///
+/// Safe to run on every startup — it skips entries that already have an index.
+pub async fn backfill_thid_index(kv: &async_nats::jetstream::kv::Store) {
+    use futures::StreamExt;
+
+    let mut keys_stream = match kv.keys().await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!("⚠️ [thid backfill] Could not list sovereign_kv keys: {}", e);
+            return;
+        }
+    };
+
+    let mut all_keys = Vec::new();
+    while let Some(Ok(key)) = keys_stream.next().await {
+        if !key.starts_with("thid_") {
+            all_keys.push(key);
+        }
+    }
+
+    let mut count = 0u32;
+    for key in &all_keys {
+        if let Ok(Some(entry)) = kv.get(key).await {
+            if let Ok(msg) = serde_json::from_slice::<serde_json::Value>(&entry) {
+                if let Some(thid) = msg["thid"].as_str() {
+                    let idx_key = format!("thid_{}", thid);
+                    // Only write if the index key doesn't already exist
+                    if let Ok(None) = kv.get(&idx_key).await {
+                        let _ = kv.put(idx_key, key.as_bytes().to_vec().into()).await;
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if count > 0 {
+        tracing::info!("📇 [thid backfill] Created {} missing thid index entries", count);
+    } else {
+        tracing::debug!("📇 [thid backfill] No missing index entries — all up to date");
+    }
 }

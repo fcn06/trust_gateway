@@ -54,6 +54,8 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
             .delete(crate::agent_api::revoke_agent_handler))
         .route("/v1/agents/:agent_id/kill", post(crate::agent_api::kill_agent_handler))
         .route("/v1/agents/:agent_id/revive", post(crate::agent_api::revive_agent_handler))
+        // Webhooks API
+        .route("/v1/webhooks/:provider", post(crate::webhook_handler::webhook_post_handler))
         // Phase 4: Standalone Approval API
         .route("/v1/approvals", get(crate::approval_http::list_approvals_handler))
         .route("/v1/approvals/:approval_id", get(crate::approval_http::get_approval_handler))

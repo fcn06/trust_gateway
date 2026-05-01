@@ -203,34 +203,59 @@ pub fn Activity(
         gw
     };
 
-    let gw_url = gateway_url.clone();
+    let (gw_sig, _) = signal(gateway_url);
+
+    // Helper for loading items
+    let load_items = {
+        let base_r = base_clone.clone();
+        let tok_r = token_clone.clone();
+        let gw_sig_r = gw_sig.clone();
+        move || {
+            let b = base_r.clone();
+            let t = tok_r.clone();
+            let g = gw_sig_r.get();
+            spawn_local(async move {
+                set_loading.set(true);
+                let mut all_items = Vec::new();
+                if let Ok(h) = fetch_host_events(&b, &t).await { all_items.extend(h); }
+                if let Ok(g) = fetch_gateway_actions(&g, &t).await { all_items.extend(g); }
+                all_items.sort_by_key(|i| std::cmp::Reverse(i.timestamp));
+                set_items.set(all_items);
+                set_loading.set(false);
+            });
+        }
+    };
 
     // WS6.1: Dual-source fetch on mount
+    let li = load_items.clone();
     Effect::new(move |_| {
-        let base = base_clone.clone();
-        let tok = token_clone.clone();
-        let gw = gw_url.clone();
-        set_loading.set(true);
-        spawn_local(async move {
-            let mut all_items = Vec::new();
-
-            // Source 1: Host audit events
-            if let Ok(host_events) = fetch_host_events(&base, &tok).await {
-                all_items.extend(host_events);
-            }
-
-            // Source 2: Gateway governance actions
-            if let Ok(gw_actions) = fetch_gateway_actions(&gw, &tok).await {
-                all_items.extend(gw_actions);
-            }
-
-            all_items.sort_by_key(|i| std::cmp::Reverse(i.timestamp));
-            set_items.set(all_items);
-            set_loading.set(false);
-        });
+        li();
     });
 
-    let (gw_sig, _) = signal(gateway_url);
+    // Connect to NATS WebSocket for real-time updates
+    let ws_client = std::sync::Arc::new(std::sync::Mutex::new(Option::<crate::nats_ws::NatsWsClient>::None));
+    let ws_client_effect = ws_client.clone();
+    let li_ws = load_items.clone();
+    Effect::new(move |_| {
+        let li_ws_inner = li_ws.clone();
+        if let Ok(client) = crate::nats_ws::NatsWsClient::connect(
+            "ws://127.0.0.1:9222", 
+            "mcp.v1.>", // Subscribe to all MCP events (activity feed sees everything)
+            move || li_ws_inner()
+        ) {
+            if let Ok(mut guard) = ws_client_effect.lock() {
+                *guard = Some(client);
+            }
+        }
+    });
+
+    on_cleanup(move || {
+        if let Ok(mut guard) = ws_client.lock() {
+            if let Some(client) = guard.take() {
+                client.disconnect();
+            }
+        }
+    });
 
     // WS6.4: Fixed stats — computed from unified model
     let stats = move || {
@@ -285,22 +310,8 @@ pub fn Activity(
                     <button
                         class="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold transition-all bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:border-slate-500"
                         on:click={
-                            let base_r = base_url.clone();
-                            let tok_r = token.clone();
-                            move |_| {
-                                let b = base_r.clone();
-                                let t = tok_r.clone();
-                                let g = gw_sig.get();
-                                spawn_local(async move {
-                                    set_loading.set(true);
-                                    let mut all_items = Vec::new();
-                                    if let Ok(h) = fetch_host_events(&b, &t).await { all_items.extend(h); }
-                                    if let Ok(g) = fetch_gateway_actions(&g, &t).await { all_items.extend(g); }
-                                    all_items.sort_by_key(|i| std::cmp::Reverse(i.timestamp));
-                                    set_items.set(all_items);
-                                    set_loading.set(false);
-                                });
-                            }
+                            let li_btn = load_items.clone();
+                            move |_| li_btn()
                         }
                     >
                         <span class="relative flex h-2.5 w-2.5 mr-1">

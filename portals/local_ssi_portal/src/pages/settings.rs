@@ -104,18 +104,22 @@ pub fn Settings(
                 <h2 class="text-lg font-semibold text-white mb-4">"🏢 Organization"</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="text-xs text-gray-400 block mb-1">"Tenant ID"</label>
-                        <div class="bg-slate-900 text-gray-300 font-mono text-sm p-3 rounded-lg border border-slate-600 break-all">
-                            {move || registration_cookie.get().map(|c| c.tenant_id.unwrap_or(c.aid)).unwrap_or_else(|| "Not available".to_string())}
-                        </div>
-                    </div>
-                    <div>
                         <label class="text-xs text-gray-400 block mb-1">"Current Tier"</label>
                         <div class="bg-slate-900 p-3 rounded-lg border border-slate-600">
                             <span class="text-sm font-medium text-amber-400">"Professional"</span>
                         </div>
                     </div>
                 </div>
+                
+                <details class="mt-4 pt-4 border-t border-slate-700/50">
+                    <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-300 transition-colors">"▸ Advanced Settings"</summary>
+                    <div class="mt-3">
+                        <label class="text-xs text-gray-400 block mb-1">"Tenant ID"</label>
+                        <div class="bg-slate-900 text-gray-500 font-mono text-xs p-2 rounded border border-slate-700 break-all w-full max-w-md">
+                            {move || registration_cookie.get().map(|c| c.tenant_id.unwrap_or(c.aid)).unwrap_or_else(|| "Not available".to_string())}
+                        </div>
+                    </div>
+                </details>
             </section>
 
             // Team Management

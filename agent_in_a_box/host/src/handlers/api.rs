@@ -5,27 +5,24 @@ use axum::{
     http::{StatusCode, HeaderMap},
     response::{IntoResponse, Response},
 };
-use serde::Deserialize;
-// use serde_json::Value;
 use tokio::sync::oneshot;
 use anyhow::Result;
 use futures::StreamExt;
+
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct AuditExportParams {
     pub limit: Option<usize>,
 }
-
-
 use crate::shared_state::WebauthnSharedState;
 use crate::commands::{VaultCommand, AclCommand, ContactStoreCommand};
 pub use crate::dto::*;
 use crate::auth::{extract_claims, resolve_active_did_for_user};
 use crate::logic::{compute_local_subject, generate_blind_pointer, publish_to_dht, resolve_did_document_from_dht};
 use crate::sovereign::gateway::common_types::MlsMessage;
-use sha2::{Sha256, Digest};
+use sha2::Sha256;
 use hmac::{Hmac, Mac};
-// use async_nats::jetstream::kv::Entry;
 
 
 
@@ -232,7 +229,7 @@ pub async fn process_send_message_logic(
         recipient.trim().to_string()
     };
     
-    // 1. Resolve all user DIDs to verify ownership
+    // 1. Resolve sender DID and verify ownership
     let (tx_l, rx_l) = oneshot::channel();
     let _ = shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id.clone(), tx_l)).await;
     let my_dids = rx_l.await.unwrap_or_default();
@@ -255,7 +252,6 @@ pub async fn process_send_message_logic(
         resolve_active_did_for_user(shared.clone(), &user_id).await.map_err(|_| "DID not found".to_string())?
     };
     
-    // Debug: Log sender and recipient DIDs for comparison
     tracing::info!("📧 Send message: sender_did='{}' recipient='{}'", &sender_did, &recipient);
     
     if typ == "https://didcomm.org/message/2.0/self_service" && sender_did != recipient {
@@ -267,13 +263,10 @@ pub async fn process_send_message_logic(
         .unwrap_or_default()
         .as_secs() as i64;
 
-    // In the hybrid architecture, messages are constructed as MlsMessage and sent
-    // via the gateway. MLS encryption is handled by the mls_session component.
     let msg_id = uuid::Uuid::new_v4().to_string();
     let final_thid = thid.clone().unwrap_or_else(|| msg_id.clone());
 
-    // --- V5 Agent Delegation Intercept ---
-    // Check if recipient is one of the user's own DIDs (covers multi-DID self-chat)
+    // 2. Agent delegation intercept (@agent mentions in self-messages)
     let is_self_message_for_agent = sender_did == recipient || my_dids.contains(&recipient);
     if (typ == "https://didcomm.org/message/2.0/self_service" || 
         typ == "https://didcomm.org/self-note/1.0/note" || 
@@ -310,9 +303,8 @@ pub async fn process_send_message_logic(
             }));
         }
     }
-    // -------------------------------------
 
-    // Convert to DTO for local storage
+    // 3. Build DTO and envelope
     let dto = PlainDidcommDto {
         id: msg_id.clone(),
         r#type: typ.clone(),
@@ -327,257 +319,58 @@ pub async fn process_send_message_logic(
         alias: None,
     };
 
-    let msg = crate::dto::map_dto_to_wit(dto.clone());
-    
+    let _msg = crate::dto::map_dto_to_wit(dto.clone());
     let envelope = serde_json::to_string(&dto).map_err(|e| format!("JSON error: {}", e))?;
-    
-    let mut distributed_success = false;
-    
+
+    // 4. Route the message
     let is_self_message = sender_did == recipient;
+    let mut distributed_success = is_self_message;
+    
     if is_self_message {
         tracing::info!("📝 Self-message detected, storing locally without DHT resolution");
-        distributed_success = true;
     }
     
     tracing::info!("📤 Attempting to distribute message to recipient: {}", recipient);
     
     if !is_self_message {
-        // --- LOCAL NATS SHORTCUT ---
-        // If the recipient is on the same host, publish directly to NATS.
-        let target_id = crate::logic::compute_local_subject(&recipient, &shared.house_salt);
-        let is_local = {
-            let map = shared.target_id_map.read().await;
-            map.contains_key(&target_id)
+        use super::routing::{RoutingContext, try_local_nats, try_contact_store, try_dht_discovery, try_did_ledger};
+        
+        let ctx = RoutingContext {
+            shared: shared.clone(),
+            recipient: recipient.clone(),
+            envelope: envelope.clone(),
         };
 
-        if is_local {
-            if let Some(nc) = &shared.nats {
-                let node_id = crate::logic::compute_node_id(&shared.house_salt);
-                let subject = if shared.config.tenant_id.is_empty() {
-                    format!("v1.{}.didcomm.{}", node_id, target_id)
-                } else {
-                    format!("v1.{}.{}.didcomm.{}", shared.config.tenant_id, node_id, target_id)
-                };
-                let _ = nc.publish(subject.clone(), envelope.clone().into()).await;
-                distributed_success = true;
-                tracing::info!("📢 Published to local NATS subject: {}", subject);
-            }
+        // Local NATS is non-exclusive — it delivers locally but we still
+        // attempt contact_store for cross-node reachability
+        if try_local_nats(&ctx).await {
+            distributed_success = true;
         }
 
-        // === Contact Store Resolution (Hybrid Architecture: Ledgerless) ===
-        // Try the local contact_store first — DID Documents are exchanged directly during handshake.
-        let (cs_tx, cs_rx) = oneshot::channel();
-        let _ = shared.contact_cmd_tx.send(ContactStoreCommand::GetContact {
-            did: recipient.clone(),
-            resp: cs_tx,
-        }).await;
-        
-        if let Ok(Some(did_doc)) = cs_rx.await {
-            tracing::info!("📇 Resolved recipient from contact_store: {}", recipient);
-            
-            // Find the messaging service endpoint
-            if let Some(svc) = did_doc.service_endpoints.iter().find(|s| s.type_ == "MessagingGateway" || s.type_ == "MessagingService" || s.type_ == "DIDCommMessaging") {
-                let endpoint = &svc.endpoint;
-                tracing::info!("📤 Sending via contact_store endpoint: {}", endpoint);
-                
-                let client = shared.http_client.clone();
-                match client.post(endpoint).body(envelope.clone()).send().await {
-                    Ok(res) if res.status().is_success() => {
-                        distributed_success = true;
-                        tracing::info!("✅ Sent via contact_store-resolved endpoint");
-                    },
-                    Ok(res) => tracing::error!("❌ Contact store endpoint returned: {}", res.status()),
-                    Err(e) => tracing::error!("❌ Contact store endpoint error: {}", e),
-                }
-            } else {
-                tracing::warn!("⚠️ Contact found but no MessagingGateway service endpoint");
-            }
-        } else {
-            tracing::info!("📇 Recipient not in contact_store, falling back to DHT");
+        // Contact store: ledgerless resolution via exchanged DID documents
+        if try_contact_store(&ctx).await {
+            distributed_success = true;
         }
 
-        // === DHT Fallback (Legacy) ===
+        // DHT and did_ledger are true fallbacks — only tried if nothing succeeded
         if !distributed_success {
-        if let Some(kv_stores) = &shared.kv_stores {
-            if let Some(dht_store) = kv_stores.get("dht_discovery") {
-                if let Some(doc) = resolve_did_document_from_dht(dht_store, &recipient).await {
-                    tracing::info!("📄 Resolved DID Doc for routing");
-                    if let Some(service) = doc["service"].as_array()
-                        .and_then(|services| services.iter().find(|s| s["type"] == "MessagingService" || s["type"] == "DIDCommMessaging")) {
-                        
-                        let service_endpoint = &service["serviceEndpoint"];
-                        
-                        if let Some(endpoint_str) = service_endpoint.as_str() {
-                            // --- Legacy / Direct Addressing ---
-                            tracing::info!("Use legacy endpoint: {}", endpoint_str);
-                            
-                            // NEW: Check if this is a Wallet WebSocket endpoint
-                            if endpoint_str.contains("/ws/wallet") {
-                                if let Some(nc) = &shared.nats {
-                                    // Wrap the envelope in the Gateway push format
-                                    let push_payload = serde_json::json!({
-                                        "recipient_did": recipient,
-                                        "type": "chat_message",
-                                        "envelope": envelope
-                                    });
-                                    if nc.publish("gateway.push.wallet".to_string(), serde_json::to_vec(&push_payload).unwrap().into()).await.is_ok() {
-                                        distributed_success = true;
-                                        tracing::info!("📤 Pushed DIDComm reply to online Wallet via Gateway WS");
-                                    }
-                                }
-                            } else if endpoint_str.starts_with("nats://") {
-                                let subject = endpoint_str.split('/').last().unwrap_or(endpoint_str);
-                                if let Some(nc) = &shared.nats {
-                                    match nc.publish(subject.to_string(), envelope.clone().into()).await {
-                                        Ok(_) => {
-                                            distributed_success = true;
-                                            tracing::info!("📤 Sent via DHT-resolved NATS endpoint: {}", subject);
-                                        },
-                                        Err(e) => tracing::error!("❌ NATS Publish failed: {}", e),
-                                    }
-                                }
-                            } else {
-                                // HTTP endpoint
-                                let client = shared.http_client.clone();
-                                match client.post(endpoint_str).body(envelope.clone()).send().await {
-                                    Ok(res) if res.status().is_success() => {
-                                        distributed_success = true;
-                                        tracing::info!("📤 Sent via DHT-resolved HTTP endpoint");
-                                    },
-                                    Ok(res) => tracing::error!("❌ HTTP Post failed with status: {}", res.status()),
-                                    Err(e) => tracing::error!("❌ HTTP Post failed: {}", e),
-                                }
-                            }
-                        } else if let Some(endpoint_obj) = service_endpoint.as_object() {
-                            // --- JIT Routing (Resilient Coordination) ---
-                            let uri = endpoint_obj.get("uri").and_then(|v| v.as_str()).unwrap_or_default();
-                            let routing_did = endpoint_obj.get("routing_did").and_then(|v| v.as_str()).unwrap_or_default();
-                            let target_id_blob = endpoint_obj.get("target_id").and_then(|v| v.as_str()).unwrap_or_default();
-
-                            if !uri.is_empty() && !routing_did.is_empty() && !target_id_blob.is_empty() {
-                                tracing::info!("🔏 Resolving Gateway DID: {}", routing_did);
-                                // 1. Resolve Gateway Public Key from DHT
-                                if let Some(gw_doc) = resolve_did_document_from_dht(dht_store, routing_did).await {
-                                    let gw_pub_key = gw_doc["verificationMethod"].as_array()
-                                        .and_then(|vms| vms.iter().find(|v| v["id"].as_str().unwrap_or_default().contains("routing-key")))
-                                        .and_then(|vm| vm["publicKeyBase64"].as_str());
-
-                                    if let Some(pub_key) = gw_pub_key {
-                                        // 2. Generate Transient JIT Token via Vault
-                                        let (tx_j, rx_j) = oneshot::channel();
-                                        let _ = shared.vault_cmd_tx.send(VaultCommand::EncryptRoutingToken { 
-                                            routing_key: pub_key.to_string(), 
-                                            target_id: target_id_blob.to_string(), 
-                                            resp: tx_j 
-                                        }).await;
-
-                                        match rx_j.await {
-                                            Ok(Ok(token)) => {
-                                                tracing::info!("🔒 JIT Encryption SUCCESS. Dispatching to: {}", uri);
-                                                let client = shared.http_client.clone();
-                                                
-                                                // --- Control & Trace ---
-                                                tracing::info!("📦 Payload Trace (Outbound to Gateway): {}", envelope);
-                                                if let Ok(json_env) = serde_json::from_str::<serde_json::Value>(&envelope) {
-                                                    if json_env.is_object() {
-                                                        tracing::info!("✅ Payload is valid JSON object (DIDComm v2 structure check passed)");
-                                                    } else {
-                                                        tracing::warn!("⚠️ Payload is NOT a JSON object - valid DIDComm v2 messages should be JWE/JWS JSON objects.");
-                                                    }
-                                                } else {
-                                                    tracing::warn!("⚠️ Payload is NOT valid JSON - valid DIDComm v2 messages should be JWE/JWS JSON.");
-                                                }
-                                                // -----------------------
-                                                
-                                                match client.post(uri).header("X-Routing-Token", token.clone()).body(envelope.clone()).send().await {
-                                                    Ok(res) if res.status().is_success() => {
-                                                        distributed_success = true;
-                                                        tracing::info!("📤 Sent via JIT Gateway Routing");
-                                                    },
-                                                    Ok(res) => tracing::error!("❌ JIT Gateway Post failed: {}", res.status()),
-                                                    Err(e) => tracing::error!("❌ JIT Gateway Post error: {}", e),
-                                                }
-                                            },
-                                            _ => tracing::error!("❌ Failed to encrypt JIT token locally"),
-                                        }
-                                    } else {
-                                        tracing::error!("❌ Gateway DID Doc found but missing routingKey");
-                                    }
-                                } else {
-                                    tracing::error!("❌ Could not resolve Gateway DID: {}", routing_did);
-                                }
-                            } else {
-                                tracing::error!("❌ Incomplete JIT serviceEndpoint object");
-                            }
-                        }
-                    } else {
-                        tracing::warn!("⚠️ No MessagingService found in DID Doc or serviceEndpoint is missing/invalid");
-                    }
-                }
+            if try_dht_discovery(&ctx).await {
+                distributed_success = true;
             }
-            
-            // Fallback
-            if !distributed_success {
-                if let Some(store) = kv_stores.get("did_ledger") {
-                    let encoded_key = hex::encode(&recipient);
-                    if let Ok(Some(entry)) = store.get(encoded_key).await {
-                        if let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&entry) {
-                            if let Some(endpoint) = doc["service"].as_array()
-                                .and_then(|services| services.iter().find(|s| s["type"] == "MessagingService"))
-                                .and_then(|service| service["serviceEndpoint"].as_str()) {
-                                
-                                if endpoint.starts_with("nats://") {
-                                    let subject = endpoint.split('/').last().unwrap_or(endpoint);
-                                    if let Some(nc) = &shared.nats {
-                                        if nc.publish(subject.to_string(), envelope.clone().into()).await.is_ok() {
-                                            distributed_success = true;
-                                            tracing::info!("📤 Sent via did_ledger endpoint: {}", subject);
-                                        }
-                                    }
-                                } else {
-                                    let client = shared.http_client.clone();
-                                    if let Ok(res) = client.post(endpoint).body(envelope.clone()).send().await {
-                                        if res.status().is_success() { distributed_success = true; }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        }
+
+        if !distributed_success {
+            if try_did_ledger(&ctx).await {
+                distributed_success = true;
             }
         }
     }
 
+    // 5. Persist on success
     if distributed_success {
-        if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("sovereign_kv")) {
-            if let Ok(val) = serde_json::to_vec(&dto) {
-                let _ = kv.put(msg_id.clone(), val.into()).await;
-                // Index by thid for O(1) lookup by check_handshake_status_handler
-                if let Some(ref thid) = dto.thid {
-                    let _ = kv.put(format!("thid_{}", thid), msg_id.clone().into()).await;
-                }
-            }
-        }
-        
-        // Bug Fix: Store the OUTGOING contact request in the KV store so we can track its acceptance
-        if typ == "https://lianxi.io/protocols/contact/1.0/request" {
-            if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("contact_requests")) {
-                let req_id = uuid::Uuid::new_v4().to_string();
-                let now_str = chrono::Utc::now().to_rfc3339();
-                let pending_req = crate::dto::ContactRequest {
-                    id: req_id.clone(),
-                    owner_did: sender_did.clone(), 
-                    sender_did: recipient.clone(),
-                    role: Some("OUTGOING".to_string()),
-                    request_msg: serde_json::json!({ "message": message }),
-                    status: "PENDING".to_string(),
-                    created_at: now_str,
-                };
-                let _ = kv.put(req_id, serde_json::to_vec(&pending_req).unwrap().into()).await;
-                tracing::info!("📝 Recorded OUTGOING contact request from {} to {}", sender_did, recipient);
-            }
-        }
+        super::routing::persist_distributed_message(
+            &shared, &dto, &msg_id, &typ, &sender_did, &recipient, &message,
+        ).await;
 
         Ok(serde_json::json!(msg_id))
     } else {
@@ -640,6 +433,7 @@ pub async fn process_get_messages_logic(
             
             // Collect keys into a vector first
             let mut all_keys = Vec::new();
+
             while let Some(Ok(key)) = keys_stream.next().await {
                 if !key.starts_with("thid_") {
                     all_keys.push(key);
@@ -904,6 +698,7 @@ pub async fn export_audit_events_handler(
             Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
         };
         
+
         let mut events = Vec::new();
         loop {
             match tokio::time::timeout(std::time::Duration::from_millis(50), messages.next()).await {
@@ -1051,7 +846,9 @@ pub async fn publish_identity_handler(
              }
              if !current_dids.contains(&active_did) {
                  current_dids.push(active_did.clone());
-                 let _ = pub_store.put(user_id.clone(), serde_json::to_vec(&current_dids).unwrap().into()).await;
+                 if let Ok(bytes) = serde_json::to_vec(&current_dids) {
+                     let _ = pub_store.put(user_id.clone(), bytes.into()).await;
+                 }
              }
         }
     }
@@ -1311,7 +1108,7 @@ pub async fn enrich_identity_handler(
                         let (tx, rx) = oneshot::channel();
                         let _ = shared.vault_cmd_tx.send(VaultCommand::GetHmacSecret { user_id: user_id.clone(), resp: tx }).await;
                         if let Ok(Ok(secret)) = rx.await {
-                            let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).unwrap();
+                            let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).expect("BUG: HMAC-SHA256 accepts any key length");
                             mac.update(b"login");
                             hex::encode(mac.finalize().into_bytes())
                         } else {
@@ -1567,7 +1364,9 @@ pub async fn accept_contact_request_handler(
     
     // 4. Update Request Status
     request.status = "ACCEPTED".to_string();
-    let _ = store.put(req_id, serde_json::to_vec(&request).unwrap().into()).await;
+    if let Ok(bytes) = serde_json::to_vec(&request) {
+        let _ = store.put(req_id, bytes.into()).await;
+    }
     
     Ok(Json(serde_json::json!({"status": "accepted"})))
 }
@@ -1606,7 +1405,9 @@ pub async fn refuse_contact_request_handler(
     }
 
     request.status = "REFUSED".to_string();
-    let _ = store.put(req_id, serde_json::to_vec(&request).unwrap().into()).await;
+    if let Ok(bytes) = serde_json::to_vec(&request) {
+        let _ = store.put(req_id, bytes.into()).await;
+    }
     
     Ok(Json(serde_json::json!({"status": "refused"})))
 }
@@ -1631,7 +1432,8 @@ pub async fn generate_invitation_handler(
         services: None,
     };
     
-    Ok(Json(serde_json::to_value(inv).unwrap()))
+    let inv_value = serde_json::to_value(inv).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(inv_value))
 }
 
 pub async fn register_gateway_did_handler(
@@ -2001,7 +1803,7 @@ pub async fn approve_escalation_handler(
         });
         if let Err(e) = nats.publish(
             request.nats_reply_subject.clone(),
-            serde_json::to_string(&reply_payload).unwrap().into(),
+            serde_json::to_string(&reply_payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.into(),
         ).await {
             tracing::error!("❌ Failed to publish escalation approval via NATS: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -2030,7 +1832,9 @@ pub async fn approve_escalation_handler(
     // Update status
     request.status = "APPROVED".to_string();
     let save_key = if let Some(ref uid) = request.owner_user_id { format!("{}_{}", uid, req_id) } else { req_id.clone() };
-    let _ = store.put(save_key, serde_json::to_vec(&request).unwrap().into()).await;
+    if let Ok(bytes) = serde_json::to_vec(&request) {
+        let _ = store.put(save_key, bytes.into()).await;
+    }
 
     Ok(Json(serde_json::json!({"status": "approved"})))
 }
@@ -2125,7 +1929,7 @@ pub async fn deny_escalation_handler(
         });
         if let Err(e) = nats.publish(
             request.nats_reply_subject.clone(),
-            serde_json::to_string(&reply_payload).unwrap().into(),
+            serde_json::to_string(&reply_payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.into(),
         ).await {
             tracing::error!("❌ Failed to publish escalation denial via NATS: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -2151,7 +1955,9 @@ pub async fn deny_escalation_handler(
     // Update status
     request.status = "DENIED".to_string();
     let save_key = if let Some(ref uid) = request.owner_user_id { format!("{}_{}", uid, req_id) } else { req_id.clone() };
-    let _ = store.put(save_key, serde_json::to_vec(&request).unwrap().into()).await;
+    if let Ok(bytes) = serde_json::to_vec(&request) {
+        let _ = store.put(save_key, bytes.into()).await;
+    }
 
     Ok(Json(serde_json::json!({"status": "denied"})))
 }
@@ -2378,7 +2184,9 @@ pub async fn send_ledgerless_request_handler(
             status: "PENDING".to_string(),
             created_at: now_str,
         };
-        let _ = kv.put(req_id, serde_json::to_vec(&pending_req).unwrap().into()).await;
+        if let Ok(bytes) = serde_json::to_vec(&pending_req) {
+            let _ = kv.put(req_id, bytes.into()).await;
+        }
     }
 
     // Wrap the request message to include the DID document

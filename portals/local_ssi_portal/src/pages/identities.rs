@@ -79,6 +79,11 @@ pub fn Identities(
                     </button>
                     <button 
                         on:click=move |_| {
+                            if let Some(win) = web_sys::window() {
+                                if !win.confirm_with_message("Are you sure you want to publish your identity to the public DHT directory? This will make your DID discoverable by others.").unwrap_or(false) {
+                                    return;
+                                }
+                            }
                             let uid = user_id.clone();
                             let ab = base_url.get_value();
                             let current_active = active_did.get();
@@ -231,8 +236,10 @@ pub fn Identities(
                                                 set_enrich_alias.set(a_for_enrich.clone());
                                                 set_enrich_is_institutional.set(is_inst_for_show);
                                             }
-                                            class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold text-sm transition-all shadow-lg shadow-blue-600/20">
-                                            "ENRICH"
+                                            class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold text-sm transition-all shadow-lg shadow-blue-600/20"
+                                            title="Add a custom alias to easily identify this DID"
+                                        >
+                                            "Add details"
                                         </button>
                                     </div>
                                 }

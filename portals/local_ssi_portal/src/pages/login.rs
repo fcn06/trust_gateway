@@ -20,6 +20,7 @@ pub fn Login(
     let (show_invite, set_show_invite) = signal(false);
     let (error_msg, set_error_msg) = signal(Option::<String>::None);
     let (is_loading, set_is_loading) = signal(false);
+    let (is_register_mode, set_is_register_mode) = signal(false);
 
     let api_base = store_value(base_url);
     
@@ -42,6 +43,7 @@ pub fn Login(
                         set_registration_cookie.set(Some(cookie));
                     }
                     set_error_msg.set(Some("Registration successful! Now please sign in.".to_string()));
+                    set_is_register_mode.set(false);
                 },
                 Err(e) => {
                     log::error!("Registration error: {:?}", e);
@@ -52,13 +54,19 @@ pub fn Login(
         });
     };
 
-    let on_login = move |_| {
+    let on_continue = move |_| {
         let username = user_input.get();
         if username.is_empty() { return; }
         set_is_loading.set(true);
         set_error_msg.set(None);
 
         let ab = api_base.get_value();
+        
+        if is_register_mode.get() {
+            on_register(());
+            return;
+        }
+
         spawn_local(async move {
             match perform_webauthn_login(&ab, &username).await {
                 Ok((token_val, uid, cookie)) => {
@@ -74,8 +82,9 @@ pub fn Login(
                     }
                 },
                 Err(e) => {
-                    log::error!("Login error: {:?}", e);
-                    set_error_msg.set(Some(format!("Login failed: {}", e)));
+                    log::info!("Login error (likely user not found): {:?}, switching to register mode", e);
+                    set_is_register_mode.set(true);
+                    set_error_msg.set(Some("User not found. Please provide an invite code if you have one, then click Continue to create an account.".to_string()));
                 }
             }
             set_is_loading.set(false);
@@ -83,68 +92,74 @@ pub fn Login(
     };
 
     view! {
-        <div class="flex items-center justify-center min-h-screen">
-            <div class="bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-2xl w-full max-w-md">
-                <h2 class="text-2xl font-bold mb-6 text-center">"Sovereign Access"</h2>
-                <div class="space-y-4">
+        <div class="flex items-center justify-center min-h-screen bg-slate-950">
+            <div class="bg-slate-900 p-8 rounded-2xl border border-slate-800 shadow-2xl w-full max-w-md">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-white mb-2">"Agent in a Box"</h2>
+                    <p class="text-slate-400">"Your AI agent, under your control."</p>
+                </div>
+                <div class="space-y-5">
                     <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">"Username"</label>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">"Username"</label>
                         <input
                             type="text"
                             on:input=move |ev| set_user_input.set(event_target_value(&ev))
-                            class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all text-white"
-                            placeholder="e.g. alice"
+                            class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-white placeholder-slate-600"
+                            placeholder="Enter your username"
                         />
                     </div>
 
-                    // Collapsible invite code section
-                    <div>
+                    // Collapsible invite code section (only shown if in register mode or explicitly opened)
+                    <Show when=move || is_register_mode.get() || show_invite.get()>
+                        <div class="animate-in fade-in slide-in-from-top-2 duration-300">
+                            <label class="block text-sm font-medium text-slate-400 mb-2">"Invite Code (Optional)"</label>
+                            <input
+                                type="text"
+                                on:input=move |ev| set_invite_input.set(event_target_value(&ev))
+                                class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-white font-mono tracking-widest text-center uppercase placeholder-slate-600"
+                                placeholder="e.g. A3F29B"
+                                maxlength="6"
+                            />
+                        </div>
+                    </Show>
+
+                    <Show when=move || !is_register_mode.get() && !show_invite.get()>
                         <button
-                            on:click=move |_| set_show_invite.set(!show_invite.get())
-                            class="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                            on:click=move |_| set_show_invite.set(true)
+                            class="text-xs text-blue-400 hover:text-blue-300 transition-colors w-full text-center"
                         >
-                            {move || if show_invite.get() { "▾ Hide invite code" } else { "▸ Have an invite code?" }}
+                            "Have an invite code?"
                         </button>
-                        <Show when=move || show_invite.get()>
-                            <div class="mt-2">
-                                <input
-                                    type="text"
-                                    on:input=move |ev| set_invite_input.set(event_target_value(&ev))
-                                    class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none transition-all text-white font-mono tracking-widest text-center uppercase"
-                                    placeholder="e.g. A3F29B"
-                                    maxlength="6"
-                                />
-                                <p class="text-xs text-gray-500 mt-1">"Enter the 6-character code from your team owner."</p>
-                            </div>
-                        </Show>
-                    </div>
+                    </Show>
                     
-                    <div class="grid grid-cols-2 gap-4">
-                        <button
-                            on:click=on_register
-                            disabled=move || is_loading.get()
-                            class="bg-slate-700 border border-slate-600 hover:bg-slate-600 text-white font-bold py-3 rounded-lg transition-all disabled:opacity-50"
-                        >
-                            "Sign Up"
-                        </button>
-                        <button
-                            on:click=on_login
-                            disabled=move || is_loading.get()
-                            class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
-                        >
-                            "Sign In"
-                        </button>
-                    </div>
+                    <button
+                        on:click=on_continue
+                        disabled=move || is_loading.get()
+                        class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-lg transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                    >
+                        {move || if is_loading.get() {
+                            "Please wait..."
+                        } else if is_register_mode.get() {
+                            "Create Account"
+                        } else {
+                            "Continue"
+                        }}
+                    </button>
 
                     <Show when=move || error_msg.get().is_some()>
-                        <div class="p-3 rounded bg-red-900/20 border border-red-500/50 text-red-400 text-xs text-center">
+                        <div class="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center animate-in fade-in duration-300">
                             {move || error_msg.get()}
                         </div>
                     </Show>
 
-                    <p class="text-xs text-center text-gray-400 mt-4">
-                        "Your biometric data remains on this device."
-                    </p>
+                    <div class="mt-8 pt-6 border-t border-slate-800 text-center">
+                        <div class="inline-flex items-center justify-center space-x-2 text-emerald-400/90 bg-emerald-400/10 px-4 py-2 rounded-full">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                            <span class="text-xs font-medium">"Your biometric data remains on this device."</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

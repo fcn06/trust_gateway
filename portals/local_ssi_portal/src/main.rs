@@ -18,6 +18,7 @@ pub mod auth;
 pub mod utils;
 pub mod pages;
 pub mod components;
+pub mod nats_ws;
 
 // === Re-exports ===
 use types::{PortalConfig, RegistrationCookie, ConnectionPolicy, EnrichedIdentity};
@@ -180,9 +181,9 @@ fn App() -> impl IntoView {
                             </button>
                         </div>
                         <nav class="flex-1 overflow-y-auto p-4 space-y-6">
-                            // Hub
+                            // Act
                             <div>
-                                <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"Hub"</h3>
+                                <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"Act"</h3>
                                 <div class="space-y-1">
                                     <Show when=move || messaging_enabled>
                                         <button title="Unified Inbox" on:click=move |_| set_active_section.set("unified_inbox".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "unified_inbox" { "bg-blue-600/20 text-blue-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
@@ -193,32 +194,15 @@ fn App() -> impl IntoView {
                                     <button title="Validation" on:click=move |_| set_active_section.set("validation".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "validation" { "bg-blue-600/20 text-blue-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
                                         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                         <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Validation"</span>
+                                        // Visual badge for pending escalations
+                                        <span class=move || format!("bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-auto {}", if sidebar_collapsed.get() { "hidden" } else { "block" })>"3"</span>
                                     </button>
                                 </div>
                             </div>
-                            // My Network
-                            <Show when=move || messaging_enabled>
-                                <div>
-                                    <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"My Network"</h3>
-                                    <div class="space-y-1">
-                                        <button title="Manage Identities" on:click=move |_| set_active_section.set("manage_identities".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "manage_identities" { "bg-purple-600/20 text-purple-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
-                                            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2"></path></svg>
-                                            <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Manage Identities"</span>
-                                        </button>
-                                        <button title="Contact Requests" on:click=move |_| set_active_section.set("contact_requests".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "contact_requests" { "bg-purple-600/20 text-purple-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
-                                            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                                            <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Contacts & Invites"</span>
-                                        </button>
-                                        <button title="Setup Web Identity" on:click=move |_| set_active_section.set("setup_web_identity".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "setup_web_identity" { "bg-purple-600/20 text-purple-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
-                                            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
-                                            <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Setup web Identity"</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </Show>
-                            // Trust Center
+
+                            // Control
                             <div>
-                                <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"Trust Center"</h3>
+                                <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"Control"</h3>
                                 <div class="space-y-1">
                                     <button title="Activity" on:click=move |_| set_active_section.set("activity".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "activity" { "bg-emerald-600/20 text-emerald-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
                                         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -240,17 +224,28 @@ fn App() -> impl IntoView {
                                     </Show>
                                 </div>
                             </div>
-                            // Settings
+
+                            // Configure
                             <div>
-                                <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"Settings"</h3>
+                                <h3 class=move || format!("text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 transition-opacity {}", if sidebar_collapsed.get() { "opacity-0 invisible h-0" } else { "opacity-100 visible" })>"Configure"</h3>
                                 <div class="space-y-1">
-                                    <button title="Core" on:click=move |_| set_active_section.set("key".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "key" { "bg-slate-600/50 text-slate-200" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
-                                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
-                                        <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Core"</span>
-                                    </button>
+                                    <Show when=move || messaging_enabled>
+                                        <button title="Identities" on:click=move |_| set_active_section.set("manage_identities".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "manage_identities" { "bg-purple-600/20 text-purple-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
+                                            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2"></path></svg>
+                                            <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Identities"</span>
+                                        </button>
+                                        <button title="Contacts" on:click=move |_| set_active_section.set("contact_requests".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "contact_requests" { "bg-purple-600/20 text-purple-400" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
+                                            <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                                            <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Contacts"</span>
+                                        </button>
+                                    </Show>
                                     <button title="Integrations" on:click=move |_| set_active_section.set("integrations".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "integrations" { "bg-slate-600/50 text-slate-200" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
                                         <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 011-1h1a2 2 0 100-4H7a1 1 0 01-1-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"></path></svg>
                                         <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Integrations"</span>
+                                    </button>
+                                    <button title="Settings" on:click=move |_| set_active_section.set("key".to_string()) class=move || format!("w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-3 {}", if active_section.get() == "key" { "bg-slate-600/50 text-slate-200" } else { "text-slate-400 hover:bg-slate-700 hover:text-white" })>
+                                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+                                        <span class=move || if sidebar_collapsed.get() { "hidden" } else { "block" }>"Settings"</span>
                                     </button>
                                 </div>
                             </div>
@@ -297,26 +292,19 @@ fn App() -> impl IntoView {
                                 </button>
                             </div>
                             <div>
-                                <h3 class="text-xs font-bold text-slate-500 uppercase">Hub</h3>
+                                <h3 class="text-xs font-bold text-slate-500 uppercase">"Act"</h3>
                                 <div class="ml-2 mt-2 space-y-2">
                                     <Show when=move || messaging_enabled>
                                         <button on:click=move |_| { set_active_section.set("unified_inbox".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-blue-400">"Unified Inbox"</button>
                                     </Show>
-                                    <button on:click=move |_| { set_active_section.set("validation".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-blue-400">"Validation"</button>
-                                </div>
-                            </div>
-                            <Show when=move || messaging_enabled>
-                                <div class="mt-4">
-                                    <h3 class="text-xs font-bold text-slate-500 uppercase">My Network</h3>
-                                    <div class="ml-2 mt-2 space-y-2">
-                                        <button on:click=move |_| { set_active_section.set("manage_identities".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-purple-400">"Manage Identities"</button>
-                                        <button on:click=move |_| { set_active_section.set("contact_requests".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-purple-400">"Contact Requests & Invitations"</button>
-                                        <button on:click=move |_| { set_active_section.set("setup_web_identity".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-purple-400">"Setup web Identity"</button>
+                                    <div class="flex items-center justify-between">
+                                        <button on:click=move |_| { set_active_section.set("validation".to_string()); set_show_mobile_menu.set(false); } class="block text-left text-blue-400">"Validation"</button>
+                                        <span class="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">"3"</span>
                                     </div>
                                 </div>
-                            </Show>
+                            </div>
                             <div class="mt-4">
-                                <h3 class="text-xs font-bold text-slate-500 uppercase">Trust Center</h3>
+                                <h3 class="text-xs font-bold text-slate-500 uppercase">"Control"</h3>
                                 <div class="ml-2 mt-2 space-y-2">
                                     <button on:click=move |_| { set_active_section.set("activity".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Activity"</button>
                                     <button on:click=move |_| { set_active_section.set("replay".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-emerald-400">"Replay"</button>
@@ -327,10 +315,14 @@ fn App() -> impl IntoView {
                                 </div>
                             </div>
                             <div class="mt-4">
-                                <h3 class="text-xs font-bold text-slate-500 uppercase">Settings</h3>
+                                <h3 class="text-xs font-bold text-slate-500 uppercase">"Configure"</h3>
                                 <div class="ml-2 mt-2 space-y-2">
-                                    <button on:click=move |_| { set_active_section.set("key".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-slate-300">"Core"</button>
+                                    <Show when=move || messaging_enabled>
+                                        <button on:click=move |_| { set_active_section.set("manage_identities".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-purple-400">"Identities"</button>
+                                        <button on:click=move |_| { set_active_section.set("contact_requests".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-purple-400">"Contacts"</button>
+                                    </Show>
                                     <button on:click=move |_| { set_active_section.set("integrations".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-slate-300">"Integrations"</button>
+                                    <button on:click=move |_| { set_active_section.set("key".to_string()); set_show_mobile_menu.set(false); } class="block w-full text-left text-slate-300">"Settings"</button>
                                 </div>
                             </div>
                         </div>

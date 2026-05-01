@@ -182,6 +182,7 @@ pub struct ToolRegistryEntry {
     pub category: Option<String>,
     pub description: String,
     pub input_schema: serde_json::Value,
+    pub cron: Option<String>,
 }
 
 /// In-memory cache of the tool registry with a TTL.
@@ -254,6 +255,7 @@ impl ToolRegistry {
                         category: tool.get("category").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         description: tool.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         input_schema: tool.get("inputSchema").cloned().unwrap_or(serde_json::json!({})),
+                        cron: None,
                     });
                 }
             }
@@ -267,6 +269,7 @@ impl ToolRegistry {
                         category: skill.get("category").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         description: skill.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         input_schema: skill.get("input_schema").cloned().unwrap_or(serde_json::json!({})),
+                        cron: skill.get("cron").and_then(|v| v.as_str()).map(|s| s.to_string()),
                     });
                 }
             }
@@ -280,6 +283,7 @@ impl ToolRegistry {
                     category: Some("vp".to_string()),
                     description: tool.description.as_ref().map(|s| s.to_string()).unwrap_or_default(),
                     input_schema: serde_json::to_value(tool.input_schema).unwrap_or(serde_json::json!({})),
+                    cron: None,
                 });
             }
         }
@@ -591,6 +595,9 @@ pub struct VpMcpPool {
 
 struct VpMcpSession {
     peer: rmcp::service::Peer<rmcp::RoleClient>,
+    // The RunningService must be kept alive to maintain the session.
+    // Dropping it cancels the underlying background tasks.
+    _service: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParams>,
     created_at: std::time::Instant,
 }
 
@@ -638,16 +645,15 @@ impl VpMcpPool {
         let running = rmcp::serve_client(client_info, transport).await
             .map_err(|e| anyhow::anyhow!("VP handshake failed: {}", e))?;
 
-        tracing::info!("📡 VP MCP session pool: new session created");
-
-        // RunningService::clone() yields a Peer handle
         let peer = running.clone();
         let mut session = self.client.write().await;
         *session = Some(VpMcpSession {
-            peer: running.clone(),
+            peer: peer.clone(),
+            _service: running,
             created_at: std::time::Instant::now(),
         });
 
+        tracing::info!("📡 VP MCP session pool: new session created");
         Ok(peer)
     }
 
@@ -694,8 +700,20 @@ async fn dispatch_to_vp_mcp(
         let client_info = rmcp::model::InitializeRequestParams::default();
         let running = rmcp::serve_client(client_info, transport).await
             .map_err(|e| anyhow::anyhow!("VP handshake failed: {}", e))?;
-        // Clone RunningService to get a Peer handle (same type as pool returns)
-        running.clone()
+        
+        // In the non-pooled path, we still need to keep the service alive 
+        // until the tool call finishes. But since we are returning a peer
+        // and 'running' will be dropped, this remains a problem.
+        // For now, we rely on the pool which is the default.
+        let peer = running.clone();
+        // Move 'running' into a background task to keep it alive
+        tokio::spawn(async move {
+            // We can't await 'running' if it's not a future, 
+            // but we can just hold it until the task is cancelled or we drop it.
+            let _svc = running;
+            futures::future::pending::<()>().await;
+        });
+        peer
     };
 
     // 2. Inject execution grant into arguments so VP server can verify it

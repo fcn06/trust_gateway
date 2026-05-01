@@ -128,7 +128,7 @@ pub struct WebauthnSharedState {
     pub config: HostConfig,
     /// Hybrid Architecture: Global Gateway URL (derived from config)
     pub gateway_url: Option<String>,
-    pub connections_kv: async_nats::jetstream::kv::Store,
+    pub connections_kv: Option<async_nats::jetstream::kv::Store>,
     pub oid4vp_client_id: String,
     pub oid4vp_rsa_pem: String,
     /// Active conversation contexts, keyed by requester_did.
@@ -162,7 +162,7 @@ impl WebauthnSharedState {
         jwt_key: jwt_simple::prelude::HS256Key,
         webauthn: Webauthn,
         house_salt: Vec<u8>,
-        connections_kv: async_nats::jetstream::kv::Store,
+        connections_kv: Option<async_nats::jetstream::kv::Store>,
         http_client: reqwest::Client,
     ) -> Self {
         let gateway_url = config.gateway_url.clone();

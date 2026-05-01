@@ -33,6 +33,8 @@ pub struct ToolDefinition {
     pub risk_hint: Option<String>,
     /// Procedure type: "read", "write", "execute".
     pub procedure_type: Option<String>,
+    /// Optional cron schedule string.
+    pub cron: Option<String>,
 }
 
 /// Response from `GET /v1/tools/registry`.
@@ -74,6 +76,7 @@ pub async fn registry_handler(
                 tags: vec![],
                 risk_hint: None,
                 procedure_type: None,
+                cron: entry.cron.clone(),
             });
         }
         sources.push("host_skills_json".to_string());

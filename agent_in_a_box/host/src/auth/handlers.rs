@@ -18,7 +18,6 @@ use hmac::{Hmac, Mac};
 use rand::RngCore;
 use chacha20poly1305::{XChaCha20Poly1305, XNonce, Key, KeyInit, aead::Aead};
 use futures::StreamExt;
-use jwt_simple::prelude::MACLike; 
 
 use crate::shared_state::WebauthnSharedState;
 use crate::commands::{VaultCommand, AclCommand};
@@ -255,16 +254,16 @@ pub async fn update_profile_handler(
 pub async fn set_recovery_config_handler(
     State(shared): State<Arc<WebauthnSharedState>>,
     headers: HeaderMap,
-    Json(payload): Json<SetRecoveryRequest>,
+    Json(_payload): Json<SetRecoveryRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let claims = extract_claims(&shared, &headers).await?;
     let _user_id = claims.user_id;
 
-    // TODO: Recovery config was tied to the beacon protocol, which has been removed
-    // in the hybrid pivot. This endpoint is kept as a stub for future re-implementation
-    // using the new architecture (e.g., MLS-based recovery groups).
-    tracing::warn!("⚠️ Recovery config is not yet implemented in the hybrid architecture");
-    Ok(Json(serde_json::json!({ "status": "success", "message": "Recovery config endpoint (stub)" })))
+    // Recovery config was tied to the beacon protocol, which has been removed
+    // in the hybrid pivot. Returning 501 until re-implemented via MLS-based
+    // recovery groups. Clients should handle this gracefully (e.g. "Coming soon").
+    tracing::info!("ℹ️ Recovery config requested by {} — not yet implemented", _user_id);
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
 
 pub async fn link_remote_access_handler(
@@ -294,7 +293,7 @@ pub async fn link_remote_access_handler(
     
     let account_id = match hmac_rx.await {
         Ok(Ok(secret)) => {
-             let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).unwrap();
+             let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).expect("BUG: HMAC-SHA256 accepts any key length");
              mac.update(b"login");
              let result = mac.finalize();
              hex::encode(result.into_bytes())
@@ -332,7 +331,8 @@ pub async fn link_remote_access_handler(
 
     if let Some(kv_stores) = &shared.kv_stores {
         if let Some(provision_store) = kv_stores.get("provisioning") {
-            let record_bytes = serde_json::to_vec(&record).unwrap();
+            let record_bytes = serde_json::to_vec(&record)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             provision_store.put(code.clone(), record_bytes.into()).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         } else {
@@ -375,7 +375,9 @@ pub async fn generate_tenant_invite_handler(
     };
 
     if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("tenant_invites")) {
-        kv.put(&code, serde_json::to_vec(&invite).unwrap().into()).await
+        let invite_bytes = serde_json::to_vec(&invite)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        kv.put(&code, invite_bytes.into()).await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     } else {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -458,7 +460,8 @@ pub async fn check_handshake_status_handler(
 
     if let Some(kv_stores) = &shared.kv_stores {
         if let Some(store) = kv_stores.get("sovereign_kv") {
-            // O(1) lookup via thid index (written by process_send_message_logic)
+            // O(1) lookup via thid index (written by process_send_message_logic,
+            // backfilled at startup by init::backfill_thid_index for pre-index messages)
             if let Ok(Some(msg_id_entry)) = store.get(&format!("thid_{}", thid)).await {
                 if let Ok(msg_id) = String::from_utf8(msg_id_entry.to_vec()) {
                     if let Ok(Some(entry)) = store.get(&msg_id).await {
@@ -480,37 +483,6 @@ pub async fn check_handshake_status_handler(
                     }
                 }
             }
-
-            // Legacy fallback: scan for messages written before the thid_ index was introduced
-            if let Ok(mut keys_stream) = store.keys().await {
-                 while let Some(Ok(key)) = keys_stream.next().await {
-                      if key.starts_with("thid_") { continue; } // Skip index keys
-                      if let Ok(Some(entry)) = store.get(&key).await {
-                          match serde_json::from_slice::<serde_json::Value>(&entry) {
-                              Ok(json_msg) => {
-                                  let msg_thid = json_msg["thid"].as_str();
-                                  let msg_typ = json_msg["typ"].as_str().or_else(|| json_msg["type"].as_str());
-                                  
-                                  if msg_thid == Some(&thid) {
-                                      if let Some(typ) = msg_typ {
-                                          let typ_lower = typ.to_lowercase();
-                                          if typ_lower.contains("response") || 
-                                             typ_lower.contains("success") || 
-                                             typ_lower.contains("accepted") ||
-                                             typ_lower.contains("handshake") ||
-                                             typ_lower.contains("login") ||
-                                             typ_lower.contains("newsletter")
-                                          {
-                                               return Ok(Json(json_msg));
-                                          }
-                                      }
-                                  }
-                              },
-                              Err(_) => {},
-                          }
-                      }
-                 }
-             }
         }
     }
     
@@ -536,7 +508,7 @@ pub async fn subscribe_user_to_global_logins(shared: Arc<WebauthnSharedState>, u
              let _ = shared.vault_cmd_tx.send(VaultCommand::GetHmacSecret { user_id: user_id.clone(), resp: tx }).await;
              
              if let Ok(Ok(secret)) = rx.await {
-                 let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).unwrap();
+                 let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).expect("BUG: HMAC-SHA256 accepts any key length");
                  mac.update(b"login");
                  let hash = hex::encode(mac.finalize().into_bytes());
                  

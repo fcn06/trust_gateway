@@ -31,6 +31,8 @@ mod agent_api;
 mod approval_http;
 mod approval_store;
 mod approval_daemon;
+mod cron_scheduler;
+mod webhook_handler;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -450,6 +452,15 @@ async fn main() -> Result<()> {
         tokio::select! {
             _ = token.cancelled() => tracing::info!("🛑 Decision listener cancelled"),
             _ = approval_daemon::run_decision_listener(s2) => {}
+        }
+    });
+    
+    let token = cancel_token.clone();
+    let s3 = state.clone();
+    background_tasks.spawn(async move {
+        tokio::select! {
+            _ = token.cancelled() => tracing::info!("🛑 Cron Scheduler cancelled"),
+            _ = cron_scheduler::run_cron_scheduler(s3) => {}
         }
     });
     

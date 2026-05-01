@@ -238,6 +238,7 @@ async fn invoke_handler(
 
     // 1. Validate ExecutionGrant and extract claims
     if let Some(ref grant_token) = req.execution_grant {
+        tracing::debug!("🔐 Validating execution grant for '{}'...", req.skill_name);
         match state.grant_validator.validate(grant_token).await {
             Ok(grant) => {
                 // Verify the grant is for the requested action

@@ -119,7 +119,7 @@ pub fn TrustReplay(
             <div class="flex items-center justify-between">
                 <div>
                     <h2 class="text-2xl font-bold text-white flex items-center gap-3">
-                        <span class="text-3xl">"🔄"</span>
+                        <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                         "Trust Replay"
                     </h2>
                     <p class="text-slate-400 mt-1">"Review the full governance timeline for every action"</p>
@@ -229,7 +229,7 @@ pub fn TrustReplay(
                         <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
                             <div class="flex items-center gap-3 mb-6">
                                 <div class="w-12 h-12 rounded-lg bg-blue-900/30 border border-blue-500/20 flex items-center justify-center">
-                                    <span class="text-2xl">"🔄"</span>
+                                    <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                 </div>
                                 <div>
                                     <h3 class="text-xl font-bold text-white">{title}</h3>
@@ -263,26 +263,25 @@ pub fn TrustReplay(
                                     let details_pretty = serde_json::to_string_pretty(&details).unwrap_or_default();
                                     let has_details = details != serde_json::json!({});
 
-                                    // WS3.3: Fixed — use underscore format matching stored event types
-                                    let (dot_color, event_icon) = match event_type.as_str() {
-                                        "action_proposed" => ("bg-blue-500", "📤"),
-                                        "policy_evaluated" => ("bg-indigo-500", "⚖️"),
-                                        "approval_requested" | "proof_requested" => ("bg-amber-500", "⏳"),
-                                        "approval_approved" | "proof_verified" => ("bg-green-500", "✅"),
-                                        "approval_denied" => ("bg-red-500", "❌"),
-                                        "grant_issued" => ("bg-emerald-500", "🔑"),
-                                        "connector_invoked" => ("bg-indigo-400", "⚡"),
-                                        "action_succeeded" => ("bg-emerald-400", "🎉"),
-                                        "action_failed" => ("bg-red-400", "💥"),
-                                        "action_retried" => ("bg-amber-400", "🔄"),
-                                        "proof_presented" => ("bg-cyan-500", "🛡️"),
-                                        _ => ("bg-slate-500", "📝"),
+                                    // Replace emojis with clean dots
+                                    let dot_color = match event_type.as_str() {
+                                        "action_proposed" => "bg-blue-500",
+                                        "policy_evaluated" => "bg-indigo-500",
+                                        "approval_requested" | "proof_requested" => "bg-amber-500",
+                                        "approval_approved" | "proof_verified" => "bg-green-500",
+                                        "approval_denied" => "bg-red-500",
+                                        "grant_issued" => "bg-emerald-500",
+                                        "connector_invoked" => "bg-indigo-400",
+                                        "action_succeeded" => "bg-emerald-400",
+                                        "action_failed" => "bg-red-400",
+                                        "action_retried" => "bg-amber-400",
+                                        "proof_presented" => "bg-cyan-500",
+                                        _ => "bg-slate-500",
                                     };
 
                                     view! {
                                         <div class="relative">
-                                            <div class=format!("absolute -left-[35px] top-1 w-6 h-6 rounded-full {} ring-4 ring-slate-800 flex items-center justify-center text-xs shadow-lg", dot_color)>
-                                                {event_icon}
+                                            <div class=format!("absolute -left-[35px] top-2 w-5 h-5 rounded-full {} ring-4 ring-slate-800 flex items-center justify-center shadow-lg", dot_color)>
                                             </div>
                                             <div class="bg-slate-900/50 rounded-lg p-3 border border-slate-700/50">
                                                 <div class="flex items-center justify-between">
@@ -313,10 +312,12 @@ pub fn TrustReplay(
             // List view (WS3.2: uses filtered_actions)
             <Show when=move || selected_action.get().is_none() && !loading.get()>
                 <Show when=move || actions.get().is_empty()>
-                    <div class="text-center py-12">
-                        <span class="text-5xl">"📭"</span>
-                        <p class="text-slate-400 mt-4">"No actions recorded yet"</p>
-                        <p class="text-slate-500 text-sm mt-1">"Actions will appear here once the Trust Gateway processes them"</p>
+                    <div class="bg-slate-800/30 rounded-2xl p-12 text-center border text-slate-500 border-dashed border-slate-700">
+                        <div class="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </div>
+                        <p class="text-slate-300 text-lg font-medium">"No actions recorded yet"</p>
+                        <p class="text-slate-500 text-sm mt-2 max-w-sm mx-auto">"Trigger your first agent action to see the detailed governance timeline replay here."</p>
                     </div>
                 </Show>
                 <Show when=move || !actions.get().is_empty()>
@@ -360,14 +361,13 @@ pub fn TrustReplay(
                                     <div class="flex items-center justify-between">
                                         <div class="flex items-center gap-3">
                                             <div class="w-8 h-8 rounded-lg bg-slate-700/50 flex items-center justify-center">
-                                                <span class="text-sm">{
+                                                {
                                                     match status_icon.as_str() {
-                                                        "executed" => "✅",
-                                                        "denied" | "failed" => "❌",
-                                                        "approved" => "✅",
-                                                        _ => "⏳",
+                                                        "executed" | "approved" => view! { <div class="w-3 h-3 rounded-full bg-green-500"></div> }.into_any(),
+                                                        "denied" | "failed" => view! { <div class="w-3 h-3 rounded-full bg-red-500"></div> }.into_any(),
+                                                        _ => view! { <div class="w-3 h-3 rounded-full bg-amber-500 animate-pulse"></div> }.into_any(),
                                                     }
-                                                }</span>
+                                                }
                                             </div>
                                             <div>
                                                 <h4 class="text-sm font-bold text-white group-hover:text-blue-400 transition-colors">{title}</h4>

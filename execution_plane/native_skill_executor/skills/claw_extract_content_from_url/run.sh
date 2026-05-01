@@ -11,7 +11,7 @@ if [ -z "$URL" ]; then
 fi
 
 # 2. Execute the curl request, capturing the raw HTTP body Output
-RESPONSE=$(curl -s -X POST https://api.parsejet.com/v1/parse/auto/url \
+RESPONSE=$(curl --max-time 15 -s -X POST https://api.parsejet.com/v1/parse/auto/url \
   -H "Content-Type: application/json" \
   -d "{\"url\": \"${URL}\"}")
 

@@ -44,6 +44,9 @@ pub struct SkillManifest {
     /// "atomic" (single call) or "multi_step" (requires read-then-execute).
     #[serde(default)]
     pub procedure_type: Option<String>,
+    /// Optional cron schedule string (e.g. "0 9 * * 1").
+    #[serde(default)]
+    pub cron: Option<String>,
 }
 
 fn default_interpreter() -> String {
@@ -86,6 +89,9 @@ pub struct SkillInfo {
     /// "native" priority hint for LLM.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority_hint: Option<String>,
+    /// Optional cron schedule string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cron: Option<String>,
 }
 
 /// Documentation response for the `GET /skills/{name}/docs` endpoint.
@@ -243,6 +249,7 @@ impl SkillRegistry {
                 documentation_available: has_docs,
                 procedure_type: s.manifest.procedure_type.clone(),
                 priority_hint: s.manifest.priority_hint.clone(),
+                cron: s.manifest.cron.clone(),
             }
         }).collect()
     }

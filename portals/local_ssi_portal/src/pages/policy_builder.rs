@@ -99,6 +99,7 @@ pub fn PolicyBuilder(
                         "px-4 py-2 rounded-t-lg text-sm font-bold transition-all {}",
                         if active_tab.get() == "simulator" { "bg-purple-600 text-white shadow-[0_-4px_10px_rgba(147,51,234,0.3)]" } else { "text-slate-400 hover:text-white" }
                     )
+                    title="Test hypothetical tool calls without executing them"
                 >
                     "Simulation Engine"
                 </button>
@@ -159,6 +160,16 @@ pub fn PolicyBuilder(
                             let category_name = rule.get("categories").and_then(|a| a.as_array()).and_then(|arr| arr.get(0)).and_then(|v| v.as_str()).map(|s| s.to_string());
                             let min_amount = rule.get("min_amount").and_then(|a| a.as_str()).map(|s| s.to_string());
 
+                            let natural_desc = if let Some(m) = &min_amount {
+                                format!("{} if amount is greater than {}", display_effect, m)
+                            } else if let Some(a) = &action_name {
+                                format!("{} for action '{}'", display_effect, a)
+                            } else if let Some(c) = &category_name {
+                                format!("{} for category '{}'", display_effect, c)
+                            } else {
+                                format!("{} all actions", display_effect)
+                            };
+
                             view! {
                                 <div class="bg-[#0A0D14] border border-slate-700/50 rounded-xl p-4 flex flex-col md:flex-row gap-4 items-start md:items-center hover:border-purple-500/30 transition-colors">
                                     <div class="w-12 h-12 bg-slate-800 rounded-lg flex items-center justify-center font-mono text-xl text-slate-400 font-bold border border-slate-700 shrink-0">
@@ -169,19 +180,21 @@ pub fn PolicyBuilder(
                                         <div class="flex items-center gap-3">
                                             <span class="font-mono text-sm text-white font-bold">{id}</span>
                                             <span class=format!("px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border {}", effect_badge)>
-                                                {display_effect}
+                                                {display_effect.clone()}
                                                 {tier.map(|t| format!(" ({})", t.replace("tier1_", "").replace("tier3_", "")))}
                                             </span>
                                         </div>
                                         
+                                        <p class="text-xs text-slate-300 mt-1">{natural_desc}</p>
+                                        
                                         // Matchers overview
-                                        <div class="flex flex-wrap gap-2 text-[10px] font-mono">
-                                            {action_name.map(|n| view! { <span class="bg-cyan-900/30 text-cyan-400 px-2 py-0.5 rounded">"Action: " {n}</span> })}
-                                            {category_name.map(|c| view! { <span class="bg-emerald-900/30 text-emerald-400 px-2 py-0.5 rounded">"Category: " {c}</span> })}
-                                            {min_amount.map(|a| view! { <span class="bg-amber-900/30 text-amber-400 px-2 py-0.5 rounded">"> " {a}</span> })}
+                                        <div class="flex flex-wrap gap-2 text-[10px] font-mono mt-2">
+                                            {action_name.map(|n| view! { <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded-md">"Action: " {n}</span> })}
+                                            {category_name.map(|c| view! { <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded-md">"Category: " {c}</span> })}
+                                            {min_amount.map(|a| view! { <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded-md">"> " {a}</span> })}
                                         </div>
                                         
-                                        <div class="text-xs text-slate-500 italic mt-1">
+                                        <div class="text-xs text-slate-500 italic mt-2">
                                             {if !reason.is_empty() { format!("\"{}\"", reason) } else { "".to_string() }}
                                         </div>
                                     </div>

@@ -26,6 +26,8 @@ pub mod linker;
 pub mod init;
 pub mod audit;
 pub mod bindings;
+pub mod test_helpers;
+pub mod telegram_transport;
 
 // Re-exports
 use commands::{VaultCommand, AclCommand};
@@ -58,7 +60,7 @@ wasmtime::component::bindgen!({
 async fn main() -> anyhow::Result<()> {
     // 1. CLI Args & Config
     let args = CliArgs::parse();
-    let mut config = init::load_config()?;
+    let config = init::load_config()?;
     
     // Override log level
     if std::env::var("RUST_LOG").is_err() {
@@ -74,6 +76,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("🔌 Connecting to NATS...");
     let (nc, kv_stores) = init::setup_nats(&config).await?;
     tracing::info!("✅ Connected to NATS and initialized KV stores");
+
+    // Backfill thid index for O(1) handshake status lookups (idempotent migration)
+    if let Some(sovereign_kv) = kv_stores.get("sovereign_kv") {
+        init::backfill_thid_index(sovereign_kv).await;
+    }
 
     // 3. Load Keys
     let keys = init::load_server_keys()?;
@@ -131,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
         portal_id_map: RwLock::new(HashMap::new()),
         house_salt: keys.house_salt,
         gateway_url: config.gateway_url.clone(),
-        connections_kv: kv_stores.get("tenant_connections").cloned().expect("Connections KV missing"),
+        connections_kv: kv_stores.get("tenant_connections").cloned(),
         oid4vp_client_id: std::env::var("OID4VP_CLIENT_ID")
             .unwrap_or_else(|_| "did:web:example.com".to_string()),
         oid4vp_rsa_pem: std::env::var("OID4VP_RSA_PEM")
@@ -148,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
     let engine = Engine::new(&wasm_config)?;
 
     tracing::info!("🔗 Configuring Linker...");
-    let mut linker = linker::setup_linker(&engine).await?;
+    let linker = linker::setup_linker(&engine).await?;
 
     // 8. Load Components
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
@@ -312,6 +319,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/tenant/info", get(auth::get_tenant_info_handler))
         .route("/api/tenant/invite", post(auth::generate_tenant_invite_handler))
         
+        // Telegram Webhook
+        .route("/api/telegram/webhook", post(telegram_transport::telegram_webhook_handler))
+        
         .with_state(shared.clone())
         .layer(cors);
 
@@ -326,6 +336,31 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     
     let shutdown_nats = shared.nats.clone();
+    
+    // Register Telegram Webhook if enabled
+    let telegram_enabled = std::env::var("TELEGRAM_BOT_ENABLED").map(|v| v == "true").unwrap_or(false);
+    if telegram_enabled {
+        if let (Ok(token), Ok(url)) = (std::env::var("TELEGRAM_BOT_TOKEN"), std::env::var("TELEGRAM_WEBHOOK_URL")) {
+            if !token.is_empty() && token != "YOUR_TELEGRAM_BOT_TOKEN" && token != "your_telegram_bot_token" {
+                let set_webhook_url = format!("https://api.telegram.org/bot{}/setWebhook", token);
+                let payload = serde_json::json!({
+                    "url": format!("{}/api/telegram/webhook", url)
+                });
+                tracing::info!("📞 Registering Telegram Webhook: {}/api/telegram/webhook", url);
+                match shared.http_client.post(&set_webhook_url).json(&payload).send().await {
+                    Ok(res) => if !res.status().is_success() {
+                        tracing::warn!("⚠️ Failed to register Telegram Webhook: {}", res.status());
+                    } else {
+                        tracing::info!("✅ Telegram Webhook registered successfully.");
+                    },
+                    Err(e) => tracing::warn!("⚠️ Failed to reach Telegram API: {}", e),
+                }
+            } else {
+                tracing::info!("ℹ️ Telegram bot is enabled but token is placeholder/empty. Skipping registration.");
+            }
+        }
+    }
+
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let ctrl_c = tokio::signal::ctrl_c();

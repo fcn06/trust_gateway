@@ -7,11 +7,67 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
 [![NATS](https://img.shields.io/badge/NATS-JetStream-green?logo=nats.io)](https://nats.io)
 [![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20Streamable-purple)](https://modelcontextprotocol.io)
+[![Quick Start](https://img.shields.io/badge/Quick%20Start-3%20commands-brightgreen)](#zero-to-running--3-commands)
 
 ---
 
 **Show your support!**  
 If you find this project useful, please consider giving it a ⭐ on GitHub! It helps more developers discover the control plane for the agentic era.
+
+---
+
+## Zero to Running — 3 commands
+
+> No cloud account. No API key. No config file to edit first.
+
+**Check Prerequisites:** You need **Rust 1.75+**, **NATS Server**, and **Trunk** installed.  
+*(→ [Full Setup Guide](#full-configuration-reference) for first-time installation)*
+
+```bash
+git clone https://github.com/fcn06/trust_gateway.git
+cd trust_gateway
+make build && ./start_dev.sh
+```
+
+**That's it.** Open [http://localhost:8080](http://localhost:8080) — 
+your governance portal is live.
+
+The dev script auto-generates all secrets. 
+You can read the architecture after you've seen it work.
+
+---
+
+**What just started:**
+
+| Component | Address | What it does |
+|---|---|---|
+| Portal (Web UI) | `localhost:8080` | Identity, approvals, policy builder |
+| Trust Gateway | `localhost:3060` | Governance engine — point your agent here |
+| NATS JetStream | `localhost:4222` | Audit trail + messaging backbone |
+
+**Point your MCP-compatible agent at:**
+`http://localhost:3060/v1/mcp/sse`
+
+Or test manually:
+```bash
+# Is it alive?
+curl http://localhost:3060/health
+
+# Propose your first action
+curl -X POST http://localhost:3060/v1/actions/propose \
+  -H "Content-Type: application/json" \
+  -d '{"action_name": "hello_world", "arguments": {}}'
+```
+
+---
+
+## What you'll see
+
+### The Validation Center
+When an agent proposes an action that violates a "High Risk" policy, execution pauses. You get a real-time notification in the portal to **Approve** or **Deny** with a full business diff of the intent.
+
+### Visual Policy Builder
+Define your trust boundaries without writing code. Set thresholds for financial transactions, restrict sensitive tool access, and simulate policy changes before deploying them.
 
 ---
 
@@ -60,7 +116,10 @@ By decoupling **intelligence** (the AI) from **capability** (the tools), we ensu
 ---
 
 
-## Quick Start
+---
+
+
+## Full Configuration Reference
 
 ### Prerequisites
 
@@ -69,6 +128,9 @@ By decoupling **intelligence** (the AI) from **capability** (the tools), we ensu
 - **Wasm target**: `rustup target add wasm32-wasip2`
 - **NATS Server** with JetStream: `nats-server -js`
 - **Trunk** for the Web UI: `cargo install --locked trunk`
+
+> **Tip:** A single-command Docker Compose setup (NATS included) 
+> is on the roadmap. Star the repo to be notified.
 
 ### Build & Run
 
@@ -407,7 +469,7 @@ The Trust Gateway was designed with production-grade security from day one:
 | Property | How |
 |---|---|
 | **No silent fallbacks** | All listen address parsing uses `.expect()` — misconfigured bindings crash at startup, not silently bind to `0.0.0.0` |
-| **No C-library TLS** | `reqwest` uses `rustls` backend — eliminating OpenSSL's C attack surface |
+| **Rustls-first Networking** | Primary networking uses `rustls`; OpenSSL is currently limited to transitive attestation dependencies (WebAuthn). |
 | **No deadlocks under load** | All shared state uses `tokio::sync::RwLock` — no synchronous locks held across `.await` points |
 | **No lost audit events** | Graceful shutdown with `CancellationToken` + `TaskTracker` + `nc.flush().await` before exit |
 | **No grant replay** | JTI nonce store enforces consume-once semantics on every ExecutionGrant |
@@ -426,13 +488,16 @@ The Trust Gateway was designed with production-grade security from day one:
 | JetStream audit trail (90 days) | ✅ | ✅ |
 | WebAuthn / FIDO2 identity | ✅ | ✅ |
 | MCP + HTTP + NATS transports | ✅ | ✅ |
+| Telegram Bot & Mobile Approval Flow | ✅ | ✅ |
 | Circuit breakers per connector | ✅ | ✅ |
 | OS process isolation (The Claw) | ✅ | ✅ |
-| Deterministic graceful shutdown | ✅ | ✅ |
 | Wasm sandboxed skill execution | ❌ | ✅ |
 | Multi-tenancy | ❌ | ✅ |
+| E2EE Group Messaging (OpenMLS) | ❌ | ✅ |
+| Managed DID Transit (Mediator) | ❌ | ✅ |
 | Attribute-based policy (ABAC) | ❌ | ✅ |
-| EntraId support | ❌ | ✅ |
+| EntraId / SSO support | ❌ | ✅ |
+| Custom Branding & White-labeling | ❌ | ✅ |
 
 ---
 
@@ -444,6 +509,7 @@ Our goal is to build the most secure and transparent gateway for AI agents. Key 
 - **Dynamic ABAC** — Richer policy evaluation using real-time context (IP, location, user risk scores).
 - **Identity Federation** — Native OIDC and SAML integration for enterprise SSO.
 - **Audit Visualization** — A visual dashboard for inspecting the NATS JetStream audit trail.
+- **Advanced Swarm Governance** — Implementing complex, multi-agent policy evaluation for high-stakes collaborative workflows.
 - **Cross-Gateway Sync** — High-availability configurations for multi-region deployments.
 
 ---

@@ -1,8 +1,7 @@
 # AI Agents Trust Gateway -- Community Edition
 
-> **The execution control plane for the agentic era.**  
-> Built in Rust. Runs self-hosted. No cloud dependency.
-> An agent can draft a contract, but it has no power to sign it. Only the Notary has the official stamp
+🛑 Stop your AI Agents from doing things they shouldn't.
+Trust Gateway is a deterministic governance layer for LLMs. It sits between your Agent (Claude, GPT, LangChain) and your sensitive tools (Stripe, AWS, Gmail), ensuring no action is taken without a cryptographic grant or human approval.
 
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)

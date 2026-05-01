@@ -95,9 +95,12 @@ Think of it like a **Notary Public** for AI. An agent can draft a contract (a to
 sequenceDiagram
     actor User
     participant Agent as AI Agent
+
+    box rgba(100, 150, 255, 0.1)  Trust Gateway Solution
     participant GW as Trust Gateway
     actor Admin as Shop Admin
     participant BT as Business Tool
+    end
 
     User->>Agent: "Refund the last order"
     Agent->>GW: PROPOSE: Refund(order_123)

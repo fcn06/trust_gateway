@@ -93,6 +93,38 @@ pub fn Settings(
         }
     };
 
+    let (telegram_code, set_telegram_code) = signal(Option::<String>::None);
+    let (generating_telegram, set_generating_telegram) = signal(false);
+
+    let generate_telegram_link = {
+        let base_url = base_url.clone();
+        let token = token.clone();
+        move |_| {
+            let base = base_url.clone();
+            let tok = token.clone();
+            spawn_local(async move {
+                set_generating_telegram.set(true);
+                let url = format!("{}/link-remote", base);
+                match reqwasm::http::Request::post(&url)
+                    .credentials(reqwasm::http::RequestCredentials::Include)
+                    .header("Authorization", &format!("Bearer {}", tok))
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.ok() => {
+                        if let Ok(data) = resp.json::<serde_json::Value>().await {
+                            if let Some(code) = data.get("code").and_then(|c| c.as_str()) {
+                                set_telegram_code.set(Some(code.to_string()));
+                            }
+                        }
+                    }
+                    _ => log::error!("Failed to generate telegram link code"),
+                }
+                set_generating_telegram.set(false);
+            });
+        }
+    };
+
     view! {
         <div class="space-y-8">
             <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-300 to-gray-100 bg-clip-text text-transparent">
@@ -252,15 +284,29 @@ pub fn Settings(
                         </div>
                         <span class="text-xs bg-gray-500/20 text-gray-400 px-2 py-1 rounded-full">"Not configured"</span>
                     </div>
-                    <div class="flex items-center justify-between p-3 bg-slate-900 rounded-lg border border-slate-600">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-slate-900 rounded-lg border border-slate-600 gap-3 sm:gap-0">
                         <div class="flex items-center gap-3">
-                            <span class="text-xl">"💬"</span>
+                            <span class="text-xl">"✈️"</span>
                             <div>
-                                <p class="text-sm font-medium text-white">"WhatsApp"</p>
-                                <p class="text-xs text-gray-400">"Business API webhook"</p>
+                                <p class="text-sm font-medium text-white">"Telegram Bot"</p>
+                                <p class="text-xs text-gray-400">"Receive mobile approvals"</p>
                             </div>
                         </div>
-                        <span class="text-xs bg-gray-500/20 text-gray-400 px-2 py-1 rounded-full">"Not configured"</span>
+                        <div class="flex items-center gap-3">
+                            <Show when=move || telegram_code.get().is_some()>
+                                <div class="bg-slate-950 border border-blue-500/50 px-3 py-1 rounded text-center">
+                                    <p class="text-[9px] text-blue-400/80 mb-0.5 leading-none uppercase tracking-wider">"Send to Bot"</p>
+                                    <p class="text-xs font-mono font-bold text-white">{format!("/start {}", telegram_code.get().unwrap_or_default())}</p>
+                                </div>
+                            </Show>
+                            <button
+                                on:click=generate_telegram_link
+                                disabled=move || generating_telegram.get()
+                                class="bg-slate-700 hover:bg-slate-600 text-xs text-white font-medium py-1.5 px-3 rounded transition-colors disabled:opacity-50 border border-slate-600"
+                            >
+                                {move || if generating_telegram.get() { "Generating..." } else { "Link Device" }}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </section>

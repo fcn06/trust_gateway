@@ -10,7 +10,7 @@ endif
 all: build
 	@echo "✅ Full project built in RELEASE mode."
 
-build: trust-gateway host portal public-gateway connector-mcp skill-executor
+build: trust-gateway host portal public-gateway connector-mcp skill-executor vp-mcp
 	@echo "🚀 Build complete."
 
 trust-gateway:
@@ -45,6 +45,10 @@ connector-mcp:
 skill-executor:
 	@echo "🔨 Building Native Skill Executor (Claw)..."
 	cd execution_plane/native_skill_executor && cargo build --release
+
+vp-mcp:
+	@echo "🔨 Building VP MCP Server..."
+	cd execution_plane/vp_mcp_server && cargo build --release
 
 dev:
 	./start_dev.sh $(EDITION)

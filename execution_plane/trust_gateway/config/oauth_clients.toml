@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────
+# OAuth2 Client Registry
+#
+# Each [[clients]] entry represents an authorized OAuth2 client
+# (e.g. Claude Desktop, a Swarm Agent, a CI/CD pipeline).
+# ─────────────────────────────────────────────────────────
+
+[server]
+# The issuer URL used in OIDC discovery and JWT `iss` claim.
+# MUST match the public URL of this Trust Gateway.
+issuer_url = "http://127.0.0.1:3060"
+
+# Token lifetime in seconds (default: 1 hour)
+access_token_ttl_secs = 3600
+
+# Authorization code lifetime in seconds (default: 10 minutes)
+authorization_code_ttl_secs = 600
+
+# RSA or Ed25519 key path for signing OAuth2 access tokens.
+# If not set, falls back to the gateway's JWT_SECRET (HMAC).
+# token_signing_key_path = "/path/to/oauth_signing_key.pem"
+
+[[clients]]
+client_id = "claude_desktop"
+# The actual secret is read from this environment variable
+client_secret_env = "OAUTH_SECRET_CLAUDE_DESKTOP"
+redirect_uris = ["http://localhost:3000/callback", "http://127.0.0.1/callback"]
+allowed_scopes = ["mcp:execute", "tools:list", "tools:call"]
+# Optional: human-readable name shown on consent screen
+display_name = "Claude Desktop"
+
+[[clients]]
+client_id = "claude_web"
+client_secret_env = "OAUTH_SECRET_CLAUDE_WEB"
+redirect_uris = ["https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]
+allowed_scopes = ["mcp:execute", "tools:list", "tools:call"]
+display_name = "Claude.ai"

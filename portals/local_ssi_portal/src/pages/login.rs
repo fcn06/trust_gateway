@@ -78,6 +78,23 @@ pub fn Login(
                         set_user_id.set(uid);
                         set_username.set(username);
                         set_registration_cookie.set(Some(cookie));
+                        
+                        // Check for return_to parameter in the URL and redirect if present
+                        if let Some(win) = web_sys::window() {
+                            if let Ok(search) = win.location().search() {
+                                if !search.is_empty() {
+                                    if let Ok(params) = web_sys::UrlSearchParams::new_with_str(&search) {
+                                        if let Some(return_to) = params.get("return_to") {
+                                            log::info!("Redirecting to return_to: {}", return_to);
+                                            let _ = win.location().set_href(&return_to);
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Default fallback: advance to the portal dashboard
                         set_is_logged_in.set(true);
                     }
                 },

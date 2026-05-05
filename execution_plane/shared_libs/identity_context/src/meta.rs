@@ -222,7 +222,7 @@ pub fn build_identity_context_verified(
 
     Ok(crate::models::IdentityContext {
         tenant_id,
-        owner_did: verified_claims.iss.clone(),
+        owner_did: verified_claims.user_did.clone().unwrap_or_else(|| verified_claims.iss.clone()),
         requester_did,
         session_jwt: meta.session_jwt.clone(),
         source,

@@ -20,7 +20,7 @@ fi
 
 # LLM API Keys (sourced from environment or .env)
 export LLM_MCP_API_KEY="${LLM_MCP_API_KEY:-}"
-export LLM_A2A_API_KEY="${LLM_A2A_API_KEY:-}"
+#export LLM_A2A_API_KEY="${LLM_A2A_API_KEY:-}"
 
 # Google / OAuth
 export GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"

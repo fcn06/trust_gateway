@@ -27,6 +27,7 @@ pub struct ConnectorConfig {
     pub restaurant_service_url: String,
     pub vp_mcp_url: String,
     pub host_url: String,
+    pub portal_url: String,
 }
 
 pub struct SecurityState {
@@ -51,6 +52,8 @@ pub struct GatewayState {
     pub vp_mcp_pool: Option<router::VpMcpPool>,
     /// Allowed CORS origins (configurable via ALLOWED_ORIGINS env var).
     pub allowed_origins: Vec<String>,
+    /// Phase 1: OAuth2 Configuration
+    pub oauth_config: Option<crate::oauth::config::OAuthConfig>,
     /// JWT secret for session verification.
     pub jwt_secret: String,
     /// Pluggable token validator (dependency injection).
@@ -60,6 +63,16 @@ pub struct GatewayState {
     /// SSI Verifiable Presentations and falls back to `StandardJwtValidator`
     /// for regular web sessions.
     pub token_validator: Arc<dyn crate::auth::TokenValidator>,
+    /// Smart Filtering: Active SSE session senders for pushing notifications.
+    ///
+    /// Maps session_id → mpsc::Sender<Event> so that meta-tool handlers
+    /// (e.g., switch_context) can push `notifications/tools/list_changed`
+    /// events to the correct SSE stream.
+    pub sse_senders: dashmap::DashMap<String, tokio::sync::mpsc::Sender<axum::response::sse::Event>>,
+    /// Smart Filtering: Admin-configured tools that are always visible,
+    /// regardless of the active context bundle. Loaded from the
+    /// `--default-tools` CLI argument or DEFAULT_TOOLS env var.
+    pub default_tools: Vec<String>,
 }
 
 /// The payload received from the ssi_agent via NATS (backward compat).
@@ -131,6 +144,7 @@ pub async fn process_action(
             "session_jti": session_jti,
             "tenant_id": tenant_id,
             "operation_kind": format!("{:?}", action_req.action.operation),
+            "arguments": action_req.action.arguments,
         }),
     ).await;
 
@@ -225,7 +239,7 @@ pub async fn process_action(
     ).await;
 
     // 4. Branch on decision
-    match decision {
+    match &decision {
         ActionDecision::Allow { policy_id } => {
             tracing::info!("✅ Action '{}' allowed by policy '{}'", action_name, policy_id);
 
@@ -352,7 +366,7 @@ pub async fn process_action(
                 action_id,
                 status: "denied".to_string(),
                 result: None,
-                error: Some(reason),
+                error: Some(reason.clone()),
                 approval_id: None,
                 escalation: None,
             })
@@ -414,6 +428,16 @@ pub async fn process_action(
             // `escalation_requests` KV store (not the gateway's
             // `approval_records`). Publish an escalation request
             // to the Host so it appears in the portal.
+            // WS3.2: Build ActionReview for the portal
+            let action_review = crate::normalizer::build_action_review(
+                &action_req,
+                &decision,
+                &approval_id,
+                reason,
+                "",
+                &source_type,
+            );
+            
             let escalation_payload = serde_json::json!({
                 "tool_name": action_name,
                 "user_did": action_req.actor.owner_did,
@@ -423,6 +447,7 @@ pub async fn process_action(
                 "tier": format!("{}", tier),
                 "reason": reason,
                 "approval_id": approval_id,
+                "action_review": action_review,
             });
             match state.nats.request(
                 "host.v1.escalation.request".to_string(),
@@ -524,8 +549,19 @@ pub async fn process_action(
 ///
 /// Phase 2.1: Extracted from 3 duplicated copies across api.rs, gateway.rs, and mcp_sse.rs.
 pub fn build_action_request(proposed: identity_context::models::ProposedAction) -> ActionRequest {
-    let operation = crate::api::infer_operation(&proposed.tool_name);
-    let category = crate::api::infer_category(&proposed.tool_name);
+    // Phase 8: Strip namespace prefix (e.g. "lianxi.io:google_calendar_list" -> "google_calendar_list")
+    // This handles MCP clients (like Claude) that prefix tool names with the server name.
+    let canonical_name = if let Some(pos) = proposed.tool_name.rfind(':') {
+        let stripped = &proposed.tool_name[pos + 1..];
+        tracing::debug!("🏷️ Stripped namespace prefix: '{}' -> '{}'", proposed.tool_name, stripped);
+        stripped.to_string()
+    } else {
+        proposed.tool_name.clone()
+    };
+
+    let operation = crate::api::infer_operation(&canonical_name);
+    let category = crate::api::infer_category(&canonical_name);
+
 
     // Derive tenant_id: use identity context value, or fall back to a
     // deterministic default derived from the owner DID.  Community
@@ -555,7 +591,7 @@ pub fn build_action_request(proposed: identity_context::models::ProposedAction) 
         },
         source: proposed.identity.source.into(),
         action: ActionDescriptor {
-            name: proposed.tool_name,
+            name: canonical_name,
             category,
             resource: None,
             operation,
@@ -569,6 +605,7 @@ pub fn build_action_request(proposed: identity_context::models::ProposedAction) 
             arguments: proposed.arguments,
             tags: vec![],
         },
+
     }
 }
 

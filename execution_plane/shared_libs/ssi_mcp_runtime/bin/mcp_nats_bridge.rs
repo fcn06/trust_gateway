@@ -163,111 +163,13 @@ async fn main() -> Result<()> {
                 tracing::info!("Received list_tools request on {}", subject);
                 
                 // Fetch tools from standard MCP Server (SseServer)
-                let mut all_tools = match mcp_client.list_tools(Default::default()).await {
+                let all_tools = match mcp_client.list_tools(Default::default()).await {
                     Ok(res) => res.tools,
                     Err(e) => {
                          tracing::error!("Failed to fetch tools from VP server: {}", e);
                          vec![]
                     }
                 };
-                
-                // Fetch tools from Host Skills Registry (v5 Trust Gateway Architecture)
-                let skills_url = "http://127.0.0.1:3000/.well-known/skills.json";
-                match http_client.get(skills_url).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        if let Ok(skills_registry) = resp.json::<serde_json::Value>().await {
-                            // Extract MCP Tools
-                            if let Some(mcp_tools) = skills_registry.get("mcp_tools").and_then(|v| v.as_array()) {
-                                for ct in mcp_tools {
-                                    let name = ct["name"].as_str().unwrap_or("").to_string();
-                                    let description = ct["description"].as_str().unwrap_or("").to_string();
-                                    let mut input_schema = ct["input_schema"].clone();
-                                    if let Some(schema_obj) = input_schema.as_object_mut() {
-                                        if !schema_obj.contains_key("type") {
-                                            schema_obj.insert("type".to_string(), "object".into());
-                                        }
-                                    }
-                                    
-                                    all_tools.push(rmcp::model::Tool::new_with_raw(
-                                        name,
-                                        Some(description.into()),
-                                        input_schema.as_object().unwrap_or(&serde_json::Map::new()).clone()
-                                    ));
-                                }
-                            }
-                            
-                            // Extract Claw Skills (Phase 3.3: enhanced descriptions)
-                            if let Some(claw_skills) = skills_registry.get("claw_skills").and_then(|v| v.as_array()) {
-                                for ct in claw_skills {
-                                    let name = ct["name"].as_str().unwrap_or("").to_string();
-                                    let raw_desc = ct["description"].as_str().unwrap_or("").to_string();
-                                    let category = ct["category"].as_str().unwrap_or("general");
-                                    let has_docs = ct["documentation_available"].as_bool().unwrap_or(false);
-                                    
-                                    // Enhance description with taxonomy metadata for LLM awareness
-                                    let description = if has_docs {
-                                        format!(
-                                            "{} [Native Skill | Category: {} | Use `read_skill(\"{}\")` for full documentation]",
-                                            raw_desc, category, name
-                                        )
-                                    } else {
-                                        format!(
-                                            "{} [Native Skill | Category: {}]",
-                                            raw_desc, category
-                                        )
-                                    };
-                                    
-                                    let mut input_schema = ct["input_schema"].clone();
-                                    if let Some(schema_obj) = input_schema.as_object_mut() {
-                                        if !schema_obj.contains_key("type") {
-                                            schema_obj.insert("type".to_string(), "object".into());
-                                        }
-                                    }
-                                    
-                                    all_tools.push(rmcp::model::Tool::new_with_raw(
-                                        name,
-                                        Some(description.into()),
-                                        input_schema.as_object().unwrap_or(&serde_json::Map::new()).clone()
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    Ok(resp) => tracing::error!("Skills registry HTTP error: {}", resp.status()),
-                    Err(e) => tracing::error!("Failed to fetch tools from Skills registry: {}", e),
-                }
-
-                // Add built-in discover_agent_services tool
-                all_tools.push(rmcp::model::Tool::new_with_raw(
-                    "discover_agent_services",
-                    Some("Discover the services and capabilities (skills) of a target agent providing its DID.".into()),
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "target_did": {
-                                "type": "string",
-                                "description": "The DID of the target agent to discover services from."
-                            }
-                        },
-                        "required": ["target_did"]
-                    }).as_object().unwrap().clone()
-                ));
-
-                // Phase 2.2: Add read_skill meta-tool for skills.md philosophy
-                all_tools.push(rmcp::model::Tool::new_with_raw(
-                    "read_skill",
-                    Some("Read the full documentation and procedures for a native skill. Use this before executing complex multi-step skills to understand their workflows, prerequisites, and error handling. Returns the skill's README.md content and manifest metadata.".into()),
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "skill_name": {
-                                "type": "string",
-                                "description": "Name of the skill to read documentation for (e.g., 'claw_weather', 'claw_hello_world')"
-                            }
-                        },
-                        "required": ["skill_name"]
-                    }).as_object().unwrap().clone()
-                ));
 
                 println!("📊 BRIDGE list_tools: total={} tools", all_tools.len());
                 for t in &all_tools {
@@ -279,7 +181,6 @@ async fn main() -> Result<()> {
                         "tools": all_tools,
                         "nextCursor": null
                     });
-                    println!("📤 BRIDGE response payload bytes: {}", response.to_string().len());
                     if let Err(e) = nc.publish(reply_to.clone(), response.to_string().into()).await {
                         tracing::error!("❌ Failed to send NATS reply: {}", e);
                     } else {

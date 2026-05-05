@@ -254,12 +254,14 @@ fn normalize_google_calendar(_action_name: &str, args: &serde_json::Value) -> No
     let start = args.get("start")
         .or_else(|| args.get("start_time"))
         .or_else(|| args.get("startTime"))
+        .or_else(|| args.get("start_datetime"))
         .and_then(|v| v.as_str())
         .unwrap_or("TBD");
 
     let end = args.get("end")
         .or_else(|| args.get("end_time"))
         .or_else(|| args.get("endTime"))
+        .or_else(|| args.get("end_datetime"))
         .and_then(|v| v.as_str())
         .unwrap_or("TBD");
 

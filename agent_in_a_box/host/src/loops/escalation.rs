@@ -495,6 +495,39 @@ pub fn subscribe_to_escalation_results(shared: Arc<WebauthnSharedState>) {
                         continue;
                     };
 
+                    // ── KV State Sync ───────────────────────────────────────
+                    // Update the local KV store with the new status and result
+                    if let Some(kv) = shared.kv_stores.as_ref().and_then(|m| m.get("escalation_requests")) {
+                        let mut updated_esc = esc.clone();
+                        updated_esc.status = status.to_string();
+                        if let Some(res) = parsed.get("result") {
+                            updated_esc.arguments = Some(res.clone());
+                        }
+                        
+                        let key = if let Some(ref uid) = esc.owner_user_id {
+                            format!("{}_{}", uid, approval_id)
+                        } else {
+                            approval_id.to_string()
+                        };
+
+                        match serde_json::to_vec(&updated_esc) {
+                            Ok(bytes) => {
+                                if let Err(e) = kv.put(key, bytes.into()).await {
+                                    tracing::error!("❌ Failed to sync escalation state to KV: {}", e);
+                                }
+                            }
+                            Err(e) => tracing::error!("❌ Serialization error during KV sync: {}", e),
+                        }
+                    }
+
+                    // ── Chat Notification ──────────────────────────────────
+                    // Only send chat notifications for final states. 
+                    // "APPROVED" is an intermediate state (execution is starting).
+                    if status == "APPROVED" {
+                        tracing::info!("⏳ Escalation '{}' approved — waiting for execution result", approval_id);
+                        continue;
+                    }
+
                     // Extract conversation context (stored deterministically by subscribe_to_escalation_requests)
                     let (thid, sender_did, inst_did, user_id) = match (
                         &esc.conversation_thid,
@@ -513,6 +546,7 @@ pub fn subscribe_to_escalation_results(shared: Arc<WebauthnSharedState>) {
                             continue;
                         }
                     };
+
 
                     // Build notification text
                     let notification_text = if status == "succeeded" {

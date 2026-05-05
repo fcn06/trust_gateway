@@ -117,7 +117,7 @@ pub fn extract_identity_from_args(
 
             let identity = IdentityContext {
                 tenant_id: verified_claims.tenant_id.clone(),
-                owner_did: verified_claims.iss.clone(),
+                owner_did: verified_claims.user_did.clone().unwrap_or_else(|| verified_claims.iss.clone()),
                 requester_did: verified_claims.sub.clone(),
                 session_jwt: session_jwt.to_string(),
                 source,

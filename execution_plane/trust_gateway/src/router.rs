@@ -28,13 +28,13 @@ const RETRY_BASE_MS: u64 = 200;
 /// Multiplier for exponential backoff (delay = base * factor^attempt).
 const RETRY_FACTOR: u64 = 4;
 
-/// Which executor backend to dispatch to.
 #[derive(Debug, Clone, Copy)]
 enum ExecutorTarget {
     ConnectorMcp,
     ClawExecutor,
     VpMcp,
     RestaurantService,
+    InternalMeta,
 }
 
 /// Check if an error is transient and worth retrying.
@@ -293,6 +293,71 @@ impl ToolRegistry {
         *self.last_refresh.write().await = Some(std::time::Instant::now());
         tracing::info!("📋 Tool registry refreshed: {} entries cached", count);
     }
+
+    // ─── Smart Filtering Methods ────────────────────────────
+
+    /// Return tools filtered by category (bundle).
+    ///
+    /// If `category` is "discovery" or empty, returns an empty vec
+    /// (callers should inject default_tools + meta-tools separately).
+    pub async fn tools_by_category(&self, category: &str) -> Vec<(String, ToolRegistryEntry)> {
+        if category.is_empty() || category == "discovery" {
+            return Vec::new();
+        }
+        let entries = self.entries.read().await;
+        entries.iter()
+            .filter(|(_, v)| {
+                v.category.as_deref()
+                    .map(|c| c.eq_ignore_ascii_case(category))
+                    .unwrap_or(false)
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Search tools by keyword match against name and description.
+    ///
+    /// Returns matching (name, description, category) tuples for the
+    /// `search_skills` meta-tool response. Case-insensitive.
+    pub async fn search_tools(&self, query: &str) -> Vec<(String, String, String)> {
+        let query_lower = query.to_lowercase();
+        let entries = self.entries.read().await;
+        entries.iter()
+            .filter(|(name, entry)| {
+                name.to_lowercase().contains(&query_lower)
+                    || entry.description.to_lowercase().contains(&query_lower)
+            })
+            .map(|(name, entry)| {
+                (
+                    name.clone(),
+                    entry.description.clone(),
+                    entry.category.clone().unwrap_or_else(|| "uncategorized".to_string()),
+                )
+            })
+            .collect()
+    }
+
+    /// Return all unique categories present in the registry.
+    pub async fn all_categories(&self) -> Vec<String> {
+        let entries = self.entries.read().await;
+        let mut cats: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (_, entry) in entries.iter() {
+            if let Some(ref cat) = entry.category {
+                cats.insert(cat.clone());
+            }
+        }
+        let mut sorted: Vec<String> = cats.into_iter().collect();
+        sorted.sort();
+        sorted
+    }
+
+    /// Return specific tools by name (for default_tools injection).
+    pub async fn tools_by_names(&self, names: &[String]) -> Vec<(String, ToolRegistryEntry)> {
+        let entries = self.entries.read().await;
+        names.iter()
+            .filter_map(|name| entries.get(name).map(|e| (name.clone(), e.clone())))
+            .collect()
+    }
 }
 
 /// Discover tools from a standard MCP SSE server.
@@ -346,6 +411,10 @@ async fn determine_executor_target(state: &GatewayState, tool_name: &str) -> Exe
         return ExecutorTarget::VpMcp;
     }
 
+    if tool_name == "search_skills" || tool_name == "switch_context" || tool_name == "list_bundles" {
+        return ExecutorTarget::InternalMeta;
+    }
+
     // Default: connector_mcp_server
     ExecutorTarget::ConnectorMcp
 }
@@ -368,6 +437,7 @@ pub async fn dispatch_to_connector(
         ExecutorTarget::ClawExecutor => "claw_executor",
         ExecutorTarget::VpMcp => "vp_mcp",
         ExecutorTarget::RestaurantService => "restaurant_service",
+        ExecutorTarget::InternalMeta => "internal_meta",
     };
 
     // WS1.2: Check circuit breaker before dispatching
@@ -423,6 +493,7 @@ async fn dispatch_with_retry(
             ExecutorTarget::ClawExecutor => dispatch_to_claw_executor(state, req, grant).await,
             ExecutorTarget::VpMcp => dispatch_to_vp_mcp(state, req, grant).await,
             ExecutorTarget::RestaurantService => dispatch_to_restaurant_service(state, req, grant).await,
+            ExecutorTarget::InternalMeta => dispatch_internal_meta(state, req).await,
         };
 
         match result {
@@ -802,4 +873,98 @@ async fn dispatch_to_restaurant_service(
         let err_text = resp.text().await.unwrap_or_default();
         Err(anyhow::anyhow!("Restaurant service HTTP error {}: {}", status.as_u16(), err_text))
     }
+}
+
+// ─── Internal Meta Dispatch ─────────────────────────────────
+
+async fn dispatch_internal_meta(
+    state: &GatewayState,
+    req: &ActionRequest,
+) -> Result<ActionResult> {
+    let tool_name = req.action.name.as_str();
+    let args = &req.action.arguments;
+
+    let text = match tool_name {
+        "list_bundles" => {
+            let results = if let Some(ref registry) = state.tool_registry {
+                registry.refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url).await;
+                registry.all_tools().await
+            } else {
+                Vec::new()
+            };
+
+            let mut bundles = std::collections::HashSet::new();
+            for (_, entry) in results {
+                if let Some(cat) = entry.category {
+                    bundles.insert(cat);
+                }
+            }
+
+            if bundles.is_empty() {
+                "No tool bundles are currently available.".to_string()
+            } else {
+                let mut lines = vec!["Available tool bundles:".to_string()];
+                for b in bundles {
+                    lines.push(format!("  • {}", b));
+                }
+                lines.join("\n")
+            }
+        }
+        "search_skills" => {
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            if query.is_empty() {
+                "Please provide a search query.".to_string()
+            } else {
+                let results = if let Some(ref registry) = state.tool_registry {
+                    registry.refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url).await;
+                    registry.search_tools(query).await
+                } else {
+                    Vec::new()
+                };
+
+                if results.is_empty() {
+                    format!("No skills found matching '{}'.", query)
+                } else {
+                    let mut lines = vec![format!("Found {} skill(s) matching '{}':", results.len(), query)];
+                    for (name, desc, cat) in results {
+                        lines.push(format!("  • {} [{}] — {}", name, cat, desc));
+                    }
+                    lines.join("\n")
+                }
+            }
+        }
+        "switch_context" => {
+            let bundle = args.get("bundle_name").and_then(|v| v.as_str()).unwrap_or("");
+            if bundle.is_empty() {
+                "Please specify a bundle_name.".to_string()
+            } else {
+                // In NATS world, session_id is typically the correlation_id or owner_did
+                let session_id = &req.actor.session_jti;
+                
+                // Persist session state to NATS KV
+                if let Ok(store) = state.jetstream.get_key_value("mcp_session_state").await {
+                    let key = format!("session_{}", session_id);
+                    let val = serde_json::json!({
+                        "active_bundle": bundle,
+                        "last_updated": chrono::Utc::now().to_rfc3339(),
+                    });
+                    let _ = store.put(&key, val.to_string().into()).await;
+                }
+
+                format!("Successfully switched to bundle '{}'. Your tool list has been updated.", bundle)
+            }
+        }
+        _ => "Unknown meta-tool".to_string(),
+    };
+
+    Ok(ActionResult {
+        action_id: req.action_id.clone(),
+        status: ActionStatus::Succeeded,
+        connector: "trust_gateway".to_string(),
+        external_reference: None,
+        output: serde_json::json!([{
+            "type": "text",
+            "text": text,
+        }]),
+    })
 }

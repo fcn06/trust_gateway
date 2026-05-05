@@ -38,6 +38,7 @@ mod audit_sink;
 mod normalizer;
 mod audit_projector;
 mod router;
+pub mod oauth;
 mod mcp_sse;
 mod amount_extractor;
 mod policy_api;

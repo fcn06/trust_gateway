@@ -12,11 +12,13 @@ use crate::AppState;
 
 /// MCP tool definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
 }
+
 
 /// Tool execution request.
 #[derive(Debug, Deserialize)]
@@ -243,12 +245,22 @@ async fn execute_google_calendar_list(
             )
         })?;
 
+    let status = resp.status();
     let data: serde_json::Value = resp.json().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to parse Calendar response: {}", e),
         )
     })?;
+
+    if !status.is_success() {
+        tracing::error!("❌ Google Calendar list failed ({}): {:?}", status, data);
+        return Ok(Json(ToolExecuteResult {
+            success: false,
+            content: data.clone(),
+            error: Some(format!("Google API returned error {}", status)),
+        }));
+    }
 
     Ok(Json(ToolExecuteResult {
         success: true,
@@ -287,11 +299,21 @@ async fn execute_google_calendar_create(
         }
     };
 
+    let start_dt = args["start_time"]
+        .as_str()
+        .or_else(|| args["start_datetime"].as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing start_time/start_datetime".to_string()))?;
+    
+    let end_dt = args["end_time"]
+        .as_str()
+        .or_else(|| args["end_datetime"].as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing end_time/end_datetime".to_string()))?;
+
     let event_body = json!({
         "summary": args["summary"].as_str().unwrap_or("Untitled Event"),
         "description": args["description"].as_str().unwrap_or(""),
-        "start": { "dateTime": args["start_time"] },
-        "end": { "dateTime": args["end_time"] },
+        "start": { "dateTime": start_dt },
+        "end": { "dateTime": end_dt },
     });
 
     let client = state.http_client.clone();
@@ -308,12 +330,24 @@ async fn execute_google_calendar_create(
             )
         })?;
 
+    let status = resp.status();
     let data: serde_json::Value = resp.json().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to parse Calendar response: {}", e),
         )
     })?;
+
+    if !status.is_success() {
+        tracing::error!("❌ Google Calendar API failed ({}): {:?}", status, data);
+        return Ok(Json(ToolExecuteResult {
+            success: false,
+            content: data.clone(),
+            error: Some(format!("Google API returned error {}", status)),
+        }));
+    }
+
+    tracing::info!("✅ Google Calendar event created: {}", data["id"]);
 
     Ok(Json(ToolExecuteResult {
         success: true,

@@ -18,6 +18,7 @@ mod router;
 // mod session; — REMOVED: dead passthrough to identity_context::jwt (Phase 1.1)
 pub mod auth;
 pub mod vp_verifier;
+pub mod oauth;
 mod api;
 mod mcp_sse;
 mod amount_extractor;
@@ -73,9 +74,13 @@ struct Args {
     #[arg(long, env = "VP_MCP_URL", default_value = "http://127.0.0.1:4000/sse")]
     vp_mcp_url: String,
 
-    /// Host URL (for approval callbacks)
+    /// Host URL (for internal API proxies)
     #[arg(long, env = "HOST_URL", default_value = "http://127.0.0.1:3000")]
     host_url: String,
+
+    /// Public Portal URL (for external UI redirects like login)
+    #[arg(long, env = "PORTAL_URL", default_value = "http://127.0.0.1:3000")]
+    portal_url: String,
 
     /// NATS subject to subscribe to (backward compat with mcp_nats_bridge)
     #[arg(long, default_value = "mcp.v1.dispatch.>")]
@@ -96,6 +101,16 @@ struct Args {
     /// Comma-separated list of allowed CORS origins
     #[arg(long, env = "ALLOWED_ORIGINS", default_value = "http://localhost:8080,http://localhost:8083")]
     allowed_origins: String,
+
+    /// Path to the OAuth clients TOML file
+    #[arg(long, env = "OAUTH_CONFIG_PATH")]
+    oauth_config_path: Option<String>,
+
+    /// Comma-separated list of tool names that are always visible in MCP tools/list,
+    /// regardless of the active context bundle. These are the "default tools" for
+    /// the Smart Filtering system.
+    #[arg(long, env = "DEFAULT_TOOLS", default_value = "")]
+    default_tools: String,
 }
 
 #[tokio::main]
@@ -146,6 +161,25 @@ async fn main() -> Result<()> {
     tracing::info!("✅ Loaded policy ({} rules)", policy_engine.rule_count());
     tracing::info!("🔐 JWT secret loaded (len={})", args.jwt_secret.len());
 
+    // Load OAuth config (Phase 1)
+    let mut oauth_config = None;
+    if let Some(path) = &args.oauth_config_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => match toml::from_str::<crate::oauth::config::OAuthConfig>(&content) {
+                Ok(config) => {
+                    tracing::info!("✅ Loaded OAuth config from {} ({} clients)", path, config.clients.len());
+                    oauth_config = Some(config);
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to parse OAuth config at {}: {}", path, e);
+                }
+            },
+            Err(e) => {
+                tracing::warn!("⚠️ Could not read OAuth config at {}: {}", path, e);
+            }
+        }
+    }
+
     // Connect to NATS
     let nats_options = async_nats::ConnectOptions::new()
         .request_timeout(Some(std::time::Duration::from_secs(25)));
@@ -193,7 +227,7 @@ async fn main() -> Result<()> {
 
         // Create KV buckets for action reviews and timelines
         use async_nats::jetstream::kv;
-        for bucket_name in &["action_reviews", "action_timelines", "approval_records", "agent_registry", "agent_source_index", "audit_chain_heads", "tenant_action_index"] {
+        for bucket_name in &["action_reviews", "action_timelines", "approval_records", "agent_registry", "agent_source_index", "audit_chain_heads", "tenant_action_index", "oauth_auth_codes", "mcp_session_state"] {
             let kv_config = kv::Config {
                 bucket: bucket_name.to_string(),
                 history: 5,
@@ -288,6 +322,7 @@ async fn main() -> Result<()> {
             restaurant_service_url: args.restaurant_service_url.clone(),
             vp_mcp_url: args.vp_mcp_url.clone(),
             host_url: args.host_url.clone(),
+            portal_url: args.portal_url.clone(),
         },
         approval_store,
         agent_registry,
@@ -313,6 +348,7 @@ async fn main() -> Result<()> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect(),
+        oauth_config,
         jwt_secret: args.jwt_secret.clone(),
         // Phase 1 SSI Identity: Use SsiTokenValidator to handle VP tokens,
         // with automatic fallback to StandardJwtValidator for UI sessions.
@@ -327,6 +363,13 @@ async fn main() -> Result<()> {
                 .build()
                 .unwrap_or_default(),
         }),
+        // Smart Filtering: Active SSE session senders
+        sse_senders: dashmap::DashMap::new(),
+        // Smart Filtering: Admin-configured default tools
+        default_tools: args.default_tools.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
     });
 
     let cancel_token = tokio_util::sync::CancellationToken::new();

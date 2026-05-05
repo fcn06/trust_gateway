@@ -60,11 +60,22 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/v1/approvals", get(crate::approval_http::list_approvals_handler))
         .route("/v1/approvals/:approval_id", get(crate::approval_http::get_approval_handler))
         .route("/v1/approvals/:approval_id/decision", post(crate::approval_http::submit_decision_handler))
+        // Portal Compatibility: Direct escalation management
+        .route("/api/escalation_requests", get(crate::approval_http::list_escalations_handler))
+        .route("/api/escalation_requests/:id/approve", post(crate::approval_http::approve_escalation_handler))
+        .route("/api/escalation_requests/:id/deny", post(crate::approval_http::deny_escalation_handler))
+
         // Phase 5: Action status polling (async approval flow)
         .route("/v1/actions/status/:action_id", get(crate::approval_http::action_status_handler))
         .route("/v1/mcp/sse", get(crate::mcp_sse::sse_handler)
             .post(crate::mcp_sse::messages_handler))
         .route("/v1/mcp/messages", post(crate::mcp_sse::messages_handler))
+        // OAuth2/OIDC discovery endpoints (unauthenticated)
+        .route("/.well-known/openid-configuration", get(crate::oauth::discovery::openid_configuration_handler))
+        .route("/.well-known/oauth-authorization-server", get(crate::oauth::discovery::openid_configuration_handler))
+        .route("/auth/authorize", get(crate::oauth::authorize::authorize_handler))
+        .route("/auth/authorize/consent", post(crate::oauth::authorize::consent_handler))
+        .route("/auth/token", post(crate::oauth::token::token_handler))
         // OAuth Proxy (Redirect to Connector MCP Server)
         .route("/oauth/*path", get(connector_proxy_handler).post(connector_proxy_handler))
         // Timeline API (Trust Replay)
@@ -424,36 +435,37 @@ async fn propose_action_handler(
 ///
 /// Proxies the Host's /.well-known/skills.json and transforms it
 /// into a flat MCP-compatible tool list with routing metadata.
+/// GET /v1/tools/list
+///
+/// Legacy PicoClaw endpoint. Now protected by authentication and uses
+/// the same Smart Filtering logic as the MCP SSE endpoints.
 async fn tools_list_handler(
     State(state): State<Arc<GatewayState>>,
-) -> Json<serde_json::Value> {
-    let mut tools = Vec::new();
-
-    // Pull from ToolRegistry cache (Phase 6 centralization)
-    if let Some(ref registry) = state.tool_registry {
-        // Ensure cache is populated (including VP MCP tools)
-        registry.refresh_if_stale(&state.http_client, &state.connectors.host_url, &state.connectors.vp_mcp_url).await;
-        
-        for (name, entry) in registry.all_tools().await {
-            tools.push(serde_json::json!({
-                "name": name,
-                "description": entry.description,
-                "inputSchema": entry.input_schema,
-                "executor_type": entry.executor_type,
-                "tags": [],
-                "operation_kind": infer_operation(&name),
-                "category": entry.category.unwrap_or_else(|| "unknown".to_string()),
-            }));
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    // 1. Enforce Authentication
+    let verified = match state.token_validator.validate(&headers, &state.jwt_secret).await {
+        Ok(v) => v,
+        Err(status) => {
+            tracing::warn!("🚫 /v1/tools/list rejected: Authentication failed ({})", status);
+            let mut response = status.into_response();
+            if status == axum::http::StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    axum::http::HeaderValue::from_static("Bearer realm=\"trust_gateway\"")
+                );
+            }
+            return response;
         }
-    }
+    };
 
-    let total = tools.len();
-    tracing::info!("🔎 Tools list: returning {} tools from cache", total);
+    let session_id = verified.claims().jti.clone();
 
-    Json(serde_json::json!({
-        "tools": tools,
-        "total": total,
-    }))
+    // 2. Reuse the shared MCP filtering logic (which injects meta-tools)
+    let mcp_response = crate::mcp_sse::handle_tools_list(&state, None, &session_id).await;
+
+    // 3. Return the response (JsonRpcResponse serializes directly)
+    Json(mcp_response).into_response()
 }
 
 

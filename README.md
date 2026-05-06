@@ -1,3 +1,9 @@
+[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
+[![NATS](https://img.shields.io/badge/NATS-JetStream-green?logo=nats.io)](https://nats.io)
+[![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20Streamable-purple)](https://modelcontextprotocol.io)
+[![Quick Start](https://img.shields.io/badge/Quick%20Start-3%20commands-brightgreen)](#zero-to-running--3-commands)
+
 ## **AI Agents Trust Gateway — Community Edition**
 
 **The governance layer between AI reasoning and real-world execution.**
@@ -10,19 +16,7 @@ Your AI agent proposes actions. Trust Gateway decides whether they execute — c
 AI Agent → PROPOSES intent → Trust Gateway → evaluates policy → EXECUTES (or blocks)
 ```
 
-
 This matters especially when the AI brain and the business tools come from *different companies*. Trust Gateway lets you expose your tools to the world while retaining complete control over how they're used.
-
-[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
-[![NATS](https://img.shields.io/badge/NATS-JetStream-green?logo=nats.io)](https://nats.io)
-[![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20Streamable-purple)](https://modelcontextprotocol.io)
-[![Quick Start](https://img.shields.io/badge/Quick%20Start-3%20commands-brightgreen)](#zero-to-running--3-commands)
-
----
-
-**Show your support!**  
-If you find this project useful, please consider giving it a ⭐ on GitHub! It helps more developers discover the control plane for the agentic era.
 
 ---
 
@@ -55,7 +49,7 @@ Point any MCP-compatible agent at: `http://localhost:3060/v1/mcp/sse`
 
 **3\. Identity that scales with your integrations** Trust Gateway uses OAuth2 \+ WebAuthn today — the same standards your stack already relies on. No new infrastructure required to get started.
 
-For B2B tool sharing, this matters beyond convenience: OAuth2 requires Company A to create an account at Company B for every integration — an O(N²) problem as your agent ecosystem grows. Trust Gateway's architecture supports SSI-based identity (DID/WebAuthn) as an upgrade path, collapsing this to O(N): each company maintains one identity, recognized across all integrations seamlessly.
+For B2B tool sharing, OAuth2 requires Company A to create an account at Company B for every integration — an O(N²) problem as your ecosystem grows. Trust Gateway's SSI-based identity layer (DID/WebAuthn) is an upgrade path that collapses this to O(N): one identity per company, recognized across all integrations.
 
 ---
 

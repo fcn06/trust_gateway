@@ -6,7 +6,10 @@ Most AI safety work tries to make models better. Trust Gateway takes a different
 
 Your AI agent proposes actions. Trust Gateway decides whether they execute — cryptographically, deterministically, with a human in the loop when the stakes require it. The model cannot bypass this. Even if it hallucinates a dangerous command, it lacks the cryptographic authority to make it happen.
 
+```
 AI Agent → PROPOSES intent → Trust Gateway → evaluates policy → EXECUTES (or blocks)
+```
+
 
 This matters especially when the AI brain and the business tools come from *different companies*. Trust Gateway lets you expose your tools to the world while retaining complete control over how they're used.
 
@@ -107,7 +110,7 @@ priority = 20
 * [Configuration Reference](documentation/configuration.md)
 * [High Level Flow](documentation/high_level_flow.md)  
 * [Interactive Walkthrough](documentation/interactive_walkthrough.md)  
-* [Community Vs Entreprise](documentation/community_vs_entreprise.md)  
+* [Community Vs Enterprise](documentation/community_vs_enterprise.md)  
 
 ---
 

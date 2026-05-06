@@ -24,10 +24,11 @@ This matters especially when the AI brain and the business tools come from *diff
 
 Requires: Rust 1.75+, NATS Server with JetStream, Trunk
 
-bash  
-git clone https://github.com/fcn06/trust_gateway.git  
-cd trust_gateway  
+```bash
+git clone https://github.com/fcn06/trust_gateway.git
+cd trust_gateway
 make build && ./start_dev.sh
+```
 
 Open [http://localhost:8080](http://localhost:8080) — governance portal is live.
 

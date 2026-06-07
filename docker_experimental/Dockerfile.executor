@@ -1,0 +1,38 @@
+# Dockerfile for Executor Host
+
+# --- Builder Stage ---
+FROM rust:1.80-slim-bookworm as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    openssl libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the entire workspace
+COPY . .
+
+# Build the executor_host binary
+WORKDIR /app/lianxi-community/execution_plane/executor_host
+RUN cargo build --release --locked
+
+# --- Final Stage ---
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/lianxi-community/execution_plane/target/release/executor_host .
+
+ENTRYPOINT ["./executor_host"]
+

@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────
+# Agent Registry — Bootstrap Configuration
+#
+# Agents listed here are registered automatically at gateway
+# startup if they don't already exist in the KV store.
+#
+# Runtime agents can be added via POST /v1/agents.
+#
+# Fields:
+#   agent_id           — Stable identifier (survives restarts)
+#   name               — Human-readable display name
+#   owner              — Responsible entity (DID, user, or "system")
+#   agent_type         — internal_agent / external_swarm / automation
+#   environment        — dev / staging / prod
+#   policy_profile     — Maps to policy.toml rules
+#   delegated_identity — Identity source (DID, SSO principal, "system")
+#   allowed_tools      — Tool-level allowlist (empty = policy-only)
+# ─────────────────────────────────────────────────────────────
+
+[[agents]]
+agent_id = "ssi-agent-default"
+name = "SSI Agent"
+owner = "system"
+agent_type = "internal_agent"
+environment = "prod"
+policy_profile = "internal_default"
+delegated_identity = "system"
+allowed_tools = []
+
+[[agents]]
+agent_id = "picoclaw-default"
+name = "PicoClaw WebSocket Agent"
+owner = "system"
+agent_type = "internal_agent"
+environment = "prod"
+policy_profile = "picoclaw_default"
+delegated_identity = "system"
+allowed_tools = []

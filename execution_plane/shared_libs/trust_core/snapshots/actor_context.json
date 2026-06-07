@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ActorContext",
+  "description": "Who is performing the action and under what authority.\n\nDerived from the session JWT issued by `ssi_vault`.",
+  "type": "object",
+  "required": [
+    "auth_level",
+    "owner_did",
+    "requester_did",
+    "session_jti"
+  ],
+  "properties": {
+    "auth_level": {
+      "description": "Current authentication level of the actor.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/AuthLevel"
+        }
+      ]
+    },
+    "auth_method": {
+      "description": "The method used to authenticate this actor. Propagated from `IdentityContext.auth_method` during normalization. Used by the policy matcher for `auth_methods` rule filtering.",
+      "default": "hmac_jwt",
+      "allOf": [
+        {
+          "$ref": "#/definitions/AuthMethod"
+        }
+      ]
+    },
+    "oauth_scopes": {
+      "description": "Scopes granted by the token (used for OAuth2 scope matching).",
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "owner_did": {
+      "description": "DID of the entity that owns the tenant / agent box (from JWT `iss`).",
+      "type": "string"
+    },
+    "requester_did": {
+      "description": "DID of the entity that initiated the action (from JWT `sub`). May be the same as `owner_did` for first-party requests.",
+      "type": "string"
+    },
+    "session_jti": {
+      "description": "Session correlation token (from JWT `jti`).",
+      "type": "string"
+    },
+    "user_did": {
+      "description": "Optional end-user DID when the action is on behalf of a customer.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "definitions": {
+    "AuthLevel": {
+      "description": "Authentication strength of the current session.\n\nExpanded to a 5-tier numeric hierarchy (1-5) to enable strict `>= min_auth_level` policy evaluations.",
+      "oneOf": [
+        {
+          "description": "Level 1: Static API Key (Long-lived, lowest assurance).",
+          "type": "string",
+          "enum": [
+            "level1_api_key"
+          ]
+        },
+        {
+          "description": "Level 2: Bearer Token (e.g., OAuth2 with scopes).",
+          "type": "string",
+          "enum": [
+            "level2_bearer"
+          ]
+        },
+        {
+          "description": "Level 3: Session Token (e.g., HMAC JWT, standard login).",
+          "type": "string",
+          "enum": [
+            "level3_session"
+          ]
+        },
+        {
+          "description": "Level 4: Verified Presentation (DID VP / EdDSA signed).",
+          "type": "string",
+          "enum": [
+            "level4_verified"
+          ]
+        },
+        {
+          "description": "Level 5: Hardware-backed (WebAuthn).",
+          "type": "string",
+          "enum": [
+            "level5_web_authn"
+          ]
+        }
+      ]
+    },
+    "AuthMethod": {
+      "description": "The method used to authenticate a request. Included in audit events and policy evaluation.",
+      "oneOf": [
+        {
+          "description": "Static API key.",
+          "type": "string",
+          "enum": [
+            "api_key"
+          ]
+        },
+        {
+          "description": "OAuth2 or similar Bearer token.",
+          "type": "string",
+          "enum": [
+            "o_auth2"
+          ]
+        },
+        {
+          "description": "Standard HMAC JWT (e.g. Host session).",
+          "type": "string",
+          "enum": [
+            "hmac_jwt"
+          ]
+        },
+        {
+          "description": "Verified Presentation or EdDSA JWT.",
+          "type": "string",
+          "enum": [
+            "vp_ed_dsa"
+          ]
+        },
+        {
+          "description": "WebAuthn hardware-backed token.",
+          "type": "string",
+          "enum": [
+            "web_authn"
+          ]
+        }
+      ]
+    }
+  }
+}

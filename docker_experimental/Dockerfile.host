@@ -1,0 +1,63 @@
+# Dockerfile for Agent Host
+
+# --- Builder Stage ---
+FROM rust:1.80-slim-bookworm as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    openssl libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install wasm target and cargo-component
+RUN rustup target add wasm32-wasip2
+RUN cargo install cargo-component
+
+WORKDIR /app
+
+# Copy the entire workspace
+COPY . .
+
+# Build the WASM component first (needed by the host)
+WORKDIR /app/lianxi-community/agent_in_a_box
+RUN cargo component build --release -p ssi_vault --target wasm32-wasip2
+
+# Build the host
+WORKDIR /app/lianxi-community/agent_in_a_box/host
+ARG EDITION
+RUN if [ "${EDITION}" = "community" ]; then \
+        cargo build --release --locked; \
+    elif [ "${EDITION}" = "professional" ]; then \
+        cargo build --release --locked --features "messaging"; \
+    elif [ "${EDITION}" = "enterprise" ]; then \
+        cargo build --release --locked --features "messaging enterprise"; \
+    else \
+        cargo build --release --locked; \
+    fi
+
+# --- Final Stage ---
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the compiled binary
+COPY --from=builder /app/lianxi-community/agent_in_a_box/target/release/host .
+
+# Copy the WASM component
+COPY --from=builder /app/lianxi-community/agent_in_a_box/target/wasm32-wasip2/release/ssi_vault.wasm .
+
+# Copy the config folder (contains policy.toml)
+COPY --from=builder /app/lianxi-community/agent_in_a_box/host/config /app/config
+
+EXPOSE 3000
+
+ENTRYPOINT ["./host"]
+

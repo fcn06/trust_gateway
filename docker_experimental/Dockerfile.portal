@@ -1,0 +1,38 @@
+# Dockerfile for Local SSI Portal (Web UI)
+
+# --- Builder Stage ---
+FROM rust:1.80-slim-bookworm as builder
+
+# Install Trunk and other build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    openssl libssl-dev \
+    ca-certificates \
+    && cargo install --locked trunk \
+    && rustup target add wasm32-unknown-unknown \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the entire workspace
+COPY . .
+
+# Build the frontend application using Trunk
+WORKDIR /app/lianxi-community/portals/local_ssi_portal
+ARG EDITION
+RUN EDITION=${EDITION} trunk build --release
+
+# --- Final Stage ---
+FROM nginx:stable-alpine
+
+# Copy the built static assets from the builder stage
+# Trunk typically outputs to a 'dist' directory relative to the Trunk.toml
+COPY --from=builder /app/lianxi-community/portals/local_ssi_portal/dist /usr/share/nginx/html
+
+# Expose the default Nginx port
+EXPOSE 80
+
+# Start Nginx
+CMD ["nginx", "-g", "daemon off;"]
+

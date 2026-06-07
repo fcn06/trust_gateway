@@ -1,0 +1,32 @@
+[package]
+name = "ssi_vault"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.46.0"
+ed25519-dalek = "2.1"
+x25519-dalek = { version = "2.0", features = ["static_secrets", "getrandom"] }
+rand = "0.8"
+getrandom = { version = "0.2", features = ["js"] } # Using js for entropy if in browser, but P2 usually uses wasi
+hex = "0.4"
+base64 = "0.21"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+uuid = { version = "1.0", features = ["v4", "v7"] }
+lazy_static = "1.4"
+hkdf = "0.12"
+sha2 = "0.10"
+hmac = "0.12"
+chacha20poly1305 = "0.10"
+curve25519-dalek = { version = "4", default-features = false }
+argon2 = { version = "0.5", default-features = false, features = ["std"] }
+zeroize = { version = "1.7", features = ["derive"] }
+secrecy = "0.8"
+tracing = "0.1"
+ssi_crypto = { path = "../ssi_crypto" }
+[package.metadata.component]
+package = "sovereign:ssi-vault"

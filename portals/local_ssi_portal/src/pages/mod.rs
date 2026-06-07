@@ -1,0 +1,47 @@
+//! Pages module - Main domain pages for the SSI portal.
+
+pub mod dashboard;
+pub mod identities;
+pub mod messaging;
+pub mod acl;
+pub mod invitations;
+pub mod contact_requests;
+pub mod contacts_and_invitations;
+pub mod escalation_requests;
+pub mod profile;
+pub mod self_service;
+pub mod login;
+pub mod inbox;
+pub mod integrations;
+
+pub mod settings;
+pub mod trust_replay;
+
+pub mod setup_web_identity;
+pub mod approved_contacts;
+
+pub use dashboard::Dashboard;
+pub use identities::Identities;
+pub use messaging::Messaging;
+pub use acl::AclManager;
+pub use invitations::InvitationsSection;
+pub use contact_requests::ContactRequestsSection;
+pub use contacts_and_invitations::ContactsAndInvitations;
+pub use escalation_requests::EscalationRequestsSection;
+pub use profile::Profile;
+pub use self_service::SelfService;
+pub use login::Login;
+pub use inbox::Inbox;
+pub use integrations::Integrations;
+
+pub use settings::Settings;
+pub use trust_replay::TrustReplay;
+pub mod policy_builder;
+pub use policy_builder::PolicyBuilder;
+
+pub use setup_web_identity::SetupWebIdentity;
+pub use approved_contacts::ApprovedContactsSection;
+pub mod agent_registry;
+pub use agent_registry::AgentRegistry;
+pub mod b2b_policies;
+pub use b2b_policies::B2bPoliciesManager;

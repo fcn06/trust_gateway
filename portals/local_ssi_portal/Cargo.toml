@@ -1,0 +1,25 @@
+[package]
+name = "local_ssi_portal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+leptos = { version = "0.8", features = ["csr"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wasm-bindgen = "0.2"
+reqwasm = "0.5"
+gloo-timers = { version = "0.3", features = ["futures"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlDocument", "Storage", "MessageEvent", "WebSocket", "console", "Navigator", "Clipboard", "CredentialsContainer", "PublicKeyCredential", "CredentialCreationOptions", "CredentialRequestOptions", "AuthenticatorAttestationResponse", "AuthenticatorAssertionResponse", "Location", "History", "UrlSearchParams"] }
+serde-wasm-bindgen = "0.6"
+base64 = "0.21"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+console_log = "1.0"
+log = "0.4"
+pulldown-cmark = "0.13.1"
+
+[profile.release]
+codegen-units = 1
+lto = true

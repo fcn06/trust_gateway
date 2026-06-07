@@ -1,0 +1,48 @@
+# Dockerfile for Trust Gateway
+
+# --- Builder Stage ---
+FROM rust:1.80-slim-bookworm as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    openssl libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the entire workspace to allow building relative components
+COPY . .
+
+# Build the project
+WORKDIR /app/lianxi-community/execution_plane/trust_gateway
+RUN cargo build --release --locked
+
+# --- Final Stage ---
+# Use a minimal base image for the final artifact
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/lianxi-community/execution_plane/target/release/trust_gateway .
+
+# Copy the config folder (contains policy.toml)
+COPY --from=builder /app/lianxi-community/agent_in_a_box/host/config /app/config
+
+# Expose the port the application runs on
+EXPOSE 3060
+
+# Set the entrypoint to run the application
+ENTRYPOINT ["./trust_gateway"]
+

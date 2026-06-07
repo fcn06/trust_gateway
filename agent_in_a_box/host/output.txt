@@ -1,0 +1,327 @@
+warning: unused variable: `target_id`
+  --> ssi_crypto/src/did_document.rs:68:5
+   |
+68 |     target_id: &str,
+   |     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_target_id`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `INFO_DID_DERIVATION` is never used
+  --> ssi_crypto/src/did.rs:10:7
+   |
+10 | const INFO_DID_DERIVATION: &[u8] = b"sovereign:did-derivation";
+   |       ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ssi_crypto` (lib) generated 2 warnings
+warning: unused import: `jwt_simple::prelude::Ed25519KeyPair`
+ --> host/src/shared_state.rs:9:5
+  |
+9 | use jwt_simple::prelude::Ed25519KeyPair;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `PathBuf`
+ --> host/src/registry.rs:7:23
+  |
+7 | use std::path::{Path, PathBuf};
+  |                       ^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> host/src/auth/mod.rs:1:5
+  |
+1 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> host/src/auth/mod.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `HeaderMap`, `Json`, `Method`, `Path as AxumPath`, `Query`, `Router`, `State`, `StatusCode`, `response::IntoResponse`, and `routing::post`
+ --> host/src/auth/mod.rs:4:15
+  |
+4 |     extract::{State, Json, Path as AxumPath, Query},
+  |               ^^^^^  ^^^^  ^^^^^^^^^^^^^^^^  ^^^^^
+5 |     http::{StatusCode, HeaderMap, Method},
+  |            ^^^^^^^^^^  ^^^^^^^^^  ^^^^^^
+6 |     response::IntoResponse,
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+7 |     Router, routing::post,
+  |     ^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `serde::Deserialize`
+ --> host/src/auth/mod.rs:9:5
+  |
+9 | use serde::Deserialize;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `webauthn_rs::prelude::*`
+  --> host/src/auth/mod.rs:11:5
+   |
+11 | use webauthn_rs::prelude::*;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `jwt_simple::prelude::Duration`
+  --> host/src/auth/mod.rs:12:5
+   |
+12 | use jwt_simple::prelude::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::oneshot`
+  --> host/src/auth/mod.rs:13:5
+   |
+13 | use tokio::sync::oneshot;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+  --> host/src/auth/mod.rs:14:5
+   |
+14 | use anyhow::Result;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `hex`
+  --> host/src/auth/mod.rs:15:5
+   |
+15 | use hex;
+   |     ^^^
+
+warning: unused imports: `Digest` and `Sha256`
+  --> host/src/auth/mod.rs:16:12
+   |
+16 | use sha2::{Sha256, Digest};
+   |            ^^^^^^  ^^^^^^
+
+warning: unused imports: `Hmac` and `Mac`
+  --> host/src/auth/mod.rs:17:12
+   |
+17 | use hmac::{Hmac, Mac};
+   |            ^^^^  ^^^
+
+warning: unused import: `rand::RngCore`
+  --> host/src/auth/mod.rs:18:5
+   |
+18 | use rand::RngCore;
+   |     ^^^^^^^^^^^^^
+
+warning: unused imports: `KeyInit`, `Key`, `XChaCha20Poly1305`, `XNonce`, and `aead::Aead`
+  --> host/src/auth/mod.rs:19:24
+   |
+19 | ...ly1305::{XChaCha20Poly1305, XNonce, Key, KeyInit, aead::Aead};
+   |             ^^^^^^^^^^^^^^^^^  ^^^^^^  ^^^  ^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `futures::StreamExt`
+  --> host/src/auth/mod.rs:20:5
+   |
+20 | use futures::StreamExt;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `jwt_simple::prelude::MACLike`
+  --> host/src/auth/mod.rs:21:5
+   |
+21 | use jwt_simple::prelude::MACLike; 
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::shared_state::WebauthnSharedState`
+  --> host/src/auth/mod.rs:23:5
+   |
+23 | use crate::shared_state::WebauthnSharedState;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AclCommand` and `VaultCommand`
+  --> host/src/auth/mod.rs:24:23
+   |
+24 | use crate::commands::{VaultCommand, AclCommand};
+   |                       ^^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused imports: `calculate_blind_key` and `compute_local_subject`
+  --> host/src/auth/mod.rs:25:20
+   |
+25 | use crate::logic::{compute_local_subject, calculate_blind_key};
+   |                    ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `LinkRemoteResponse`, `MyClaims`, `RegistrationCookie`, `TenantInvite`, `TenantMembership`, and `TenantRecord`
+  --> host/src/auth/mod.rs:26:18
+   |
+26 | ...::{RegistrationCookie, LinkRemoteResponse, MyClaims, TenantRecord, TenantMembership, TenantInvite}; 
+   |       ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `crate::handlers::api::process_accept_invitation_logic`
+  --> host/src/auth/mod.rs:30:5
+   |
+30 | use crate::handlers::api::process_accept_invitation_logic;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Sha256`
+ --> host/src/auth/logic.rs:6:12
+  |
+6 | use sha2::{Sha256, Digest};
+  |            ^^^^^^
+
+warning: unused import: `Hmac`
+ --> host/src/auth/logic.rs:7:12
+  |
+7 | use hmac::{Hmac, Mac};
+  |            ^^^^
+
+warning: unused import: `super::handlers::subscribe_user_to_global_logins`
+  --> host/src/auth/logic.rs:12:5
+   |
+12 | use super::handlers::subscribe_user_to_global_logins;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::dtos::*`
+  --> host/src/auth/logic.rs:15:5
+   |
+15 | use super::dtos::*;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> host/src/auth/handlers.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Method`, `Query`, `Router`, and `routing::post`
+ --> host/src/auth/handlers.rs:4:46
+  |
+4 |     extract::{State, Json, Path as AxumPath, Query},
+  |                                              ^^^^^
+5 |     http::{StatusCode, HeaderMap, Method},
+  |                                   ^^^^^^
+6 |     response::IntoResponse,
+7 |     Router, routing::post,
+  |     ^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `serde::Deserialize`
+ --> host/src/auth/handlers.rs:9:5
+  |
+9 | use serde::Deserialize;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `webauthn_rs::prelude::*`
+  --> host/src/auth/handlers.rs:11:5
+   |
+11 | use webauthn_rs::prelude::*;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `jwt_simple::prelude::Duration`
+  --> host/src/auth/handlers.rs:12:5
+   |
+12 | use jwt_simple::prelude::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `compute_local_subject`
+  --> host/src/auth/handlers.rs:25:20
+   |
+25 | use crate::logic::{compute_local_subject, calculate_blind_key};
+   |                    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MyClaims`
+  --> host/src/auth/handlers.rs:26:58
+   |
+26 | use crate::dto::{RegistrationCookie, LinkRemoteResponse, MyClaims, Tenan...
+   |                                                          ^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> host/src/linker.rs:1:5
+  |
+1 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused imports: `ResourceTable` and `WasiCtx`
+ --> host/src/linker.rs:4:21
+  |
+4 | use wasmtime_wasi::{WasiCtx, ResourceTable};
+  |                     ^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `Context`
+ --> host/src/linker.rs:7:22
+  |
+7 | use anyhow::{Result, Context};
+  |                      ^^^^^^^
+
+warning: unused imports: `AclCommand` and `VaultCommand`
+  --> host/src/main.rs:30:16
+   |
+30 | use commands::{VaultCommand, AclCommand};
+   |                ^^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused variable: `msg`
+   --> host/src/handlers/api.rs:325:9
+    |
+325 |     let msg = crate::dto::map_dto_to_wit(dto.clone());
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_msg`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> host/src/handlers/api.rs:1203:36
+     |
+1203 | ...   if let Ok(mut req) = serde_json::from_slice::<ContactRequest>(&e...
+     |                 ----^^^
+     |                 |
+     |                 help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `payload`
+   --> host/src/auth/handlers.rs:239:10
+    |
+239 |     Json(payload): Json<SetRecoveryRequest>,
+    |          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload`
+
+warning: unused variable: `shared_clone`
+   --> host/src/auth/handlers.rs:485:18
+    |
+485 |              let shared_clone = shared.clone();
+    |                  ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_shared_clone`
+
+warning: unused import: `jwt_simple::prelude::MACLike`
+  --> host/src/auth/handlers.rs:21:5
+   |
+21 | use jwt_simple::prelude::MACLike; 
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `generic_linker`
+   --> host/src/main.rs:194:9
+    |
+194 |     let generic_linker = linker.clone();
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_generic_linker`
+
+warning: variable does not need to be mutable
+  --> host/src/main.rs:60:9
+   |
+60 |     let mut config = init::load_config()?;
+   |         ----^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> host/src/main.rs:149:9
+    |
+149 |     let mut linker = linker::setup_linker(&engine).await?;
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused import: `std::collections::HashMap`
+ --> host/src/bin/export_key.rs:8:5
+  |
+8 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Digest`
+ --> host/src/bin/export_key.rs:3:20
+  |
+3 | use sha2::{Sha256, Digest};
+  |                    ^^^^^^
+
+warning: `host` (bin "host") generated 45 warnings (run `cargo fix --bin "host"` to apply 40 suggestions)
+warning: `host` (bin "export_key") generated 2 warnings (run `cargo fix --bin "export_key"` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s

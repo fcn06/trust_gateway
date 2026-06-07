@@ -1,0 +1,19 @@
+[package]
+name = "community_adapters"
+version = "0.1.0"
+edition = "2021"
+description = "Community edition adapter implementations for the edition port traits"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+trust_core = { path = "../trust_core" }
+async-trait = "0.1"
+async-nats = "0.37"
+anyhow = "1.0"
+tracing = "0.1"
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }

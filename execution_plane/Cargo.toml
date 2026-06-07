@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "trust_gateway",
+    "executor_host",
+    "connector_mcp_server",
+    "vp_mcp_server",
+    "native_tool_executor",
+    "shared_libs/*",
+]

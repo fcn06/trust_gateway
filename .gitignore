@@ -1,0 +1,20 @@
+/target/
+**/target/
+**/*.wasm
+**/.env
+*.log
+.DS_Store
+**/dist/
+# WS1: Ed25519 grant signing keys (auto-generated, never commit)
+.keys/
+
+# Cryptographic material — NEVER commit
+*.pem
+*.seed
+server.keys
+keys.json
+secrets_server*.conf
+
+.nats_data
+.agents
+nats*.conf

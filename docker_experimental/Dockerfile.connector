@@ -1,0 +1,41 @@
+# Dockerfile for Connector MCP Server (OAuth Helper)
+
+# --- Builder Stage ---
+FROM rust:1.80-slim-bookworm as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    openssl libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the entire workspace
+COPY . .
+
+# Build the connector_mcp_server binary
+WORKDIR /app/lianxi-community/execution_plane/connector_mcp_server
+RUN cargo build --release --locked
+
+# --- Final Stage ---
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/lianxi-community/execution_plane/target/release/connector_mcp_server .
+
+# Expose the port the application runs on
+EXPOSE 3050
+
+# Set the entrypoint to run the application
+ENTRYPOINT ["./connector_mcp_server"]

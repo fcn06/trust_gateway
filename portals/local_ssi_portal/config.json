@@ -1,0 +1,5 @@
+{
+  "api_base_url": "http://localhost:3060/api",
+  "connector_url": "http://localhost:3060",
+  "cloudflare_beacon_token": ""
+}

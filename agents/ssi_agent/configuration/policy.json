@@ -1,0 +1,12 @@
+{
+  "description": "Tool escalation policy. Tools listed in 'safe_tools' can be executed without user approval. All other tools require explicit user approval via the escalation flow.",
+  "safe_tools": [
+    "get_current_weather",
+    "vp_search",
+    "google_calendar_list_events",
+    "stripe_list_payments",
+    "shopify_list_orders",
+    "discover_agent_services",
+    "read_skill"
+  ]
+}

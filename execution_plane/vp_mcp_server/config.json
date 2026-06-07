@@ -1,0 +1,7 @@
+{
+    "host": "127.0.0.1",
+    "port": 4000,
+    "sse_path": "/sse",
+    "message_path": "/message",
+    "disable_auth": true
+}

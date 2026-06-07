@@ -1,0 +1,41 @@
+# Dockerfile for SSI Identity Agent
+
+# --- Builder Stage ---
+FROM rust:1.80-slim-bookworm as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    openssl libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the entire workspace
+COPY . .
+
+# Build the launch_identity_agent binary
+WORKDIR /app/lianxi-community/agents/ssi_agent/ssi_identity_agent
+RUN cargo build --release --locked
+
+# --- Final Stage ---
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/lianxi-community/agents/ssi_agent/target/release/launch_identity_agent .
+
+# Copy the configuration folder
+COPY --from=builder /app/lianxi-community/agents/ssi_agent/configuration /app/configuration
+
+# Set the entrypoint to run the agent
+ENTRYPOINT ["./launch_identity_agent"]

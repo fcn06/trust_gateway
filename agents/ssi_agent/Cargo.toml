@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+
+# Used while refactoring to add agent_protocol_backbone
+members = [ 
+                "ssi_identity_agent",
+                "ssi_mcp_runtime" ]
+
+
+[workspace.dependencies]
+ssi_mcp_runtime = { path = "./ssi_mcp_runtime" }
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3

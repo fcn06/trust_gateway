@@ -1,0 +1,21 @@
+{
+  "name": "claw_weather",
+  "description": "Get current weather for a location. CRITICAL: You MUST provide arguments as a valid JSON object with the 'location' key (e.g. {\"location\": \"Boston\"}). Do NOT supply a raw string.",
+  "script": "run.sh",
+  "interpreter": "bash",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "location": {
+        "type": "string",
+        "description": "The city or location to search for, e.g., 'London' or 'Chengdu'"
+      }
+    },
+    "required": ["location"]
+  },
+  "env": {},
+  "tags": ["weather", "utility"],
+  "category": "utility",
+  "priority_hint": "native",
+  "procedure_type": "atomic"
+}

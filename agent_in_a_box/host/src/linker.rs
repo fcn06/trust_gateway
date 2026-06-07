@@ -1,0 +1,543 @@
+use std::sync::Arc;
+use wasmtime::Engine;
+use wasmtime::component::Linker;
+use wasmtime_wasi::{WasiCtx, ResourceTable};
+use futures::StreamExt;
+use tokio::sync::oneshot;
+use anyhow::{Result, Context};
+
+use crate::shared_state::HostState;
+use crate::commands::{VaultCommand, AclCommand};
+use crate::sovereign::gateway::common_types::MlsMessage;
+
+// Helper to bind persistence for specific stores (Vault, ACL, MLS, Contact Store)
+async fn bind_persistence(
+    linker: &mut Linker<HostState>, 
+    store_selector: fn(&HostState) -> Option<async_nats::jetstream::kv::Store>
+) -> Result<()> {
+    let mut p_linker = linker.instance("sovereign:gateway/persistence")?;
+
+    p_linker.func_wrap_async("get", move |caller, (key,): (String,)| {
+        let store_opt = store_selector(caller.data());
+        Box::new(Box::pin(async move {
+            if let Some(store) = store_opt {
+                let encoded_key = hex::encode(key);
+                match store.get(encoded_key).await {
+                    Ok(Some(entry)) => Ok((Ok(Some(entry.to_vec())),)),
+                    Ok(None) => Ok((Ok(None),)),
+                    Err(e) => {
+                        tracing::error!("❌ [Linker] KV Get Error: {}", e);
+                        Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::StorageError),))
+                    }
+                }
+            } else {
+                 tracing::warn!("⚠️ [Linker] KV Store not available for Get");
+                 Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::NotAvailable),))
+            }
+        }))
+    })?;
+
+    p_linker.func_wrap_async("set", move |caller, (key, value): (String, Vec<u8>)| {
+         let store_opt = store_selector(caller.data());
+         Box::new(Box::pin(async move {
+            if let Some(store) = store_opt {
+                let encoded_key = hex::encode(key);
+                match store.put(encoded_key, value.into()).await {
+                    Ok(_) => Ok((Ok(()),)),
+                    Err(e) => {
+                        tracing::error!("❌ [Linker] KV Put Error: {}", e);
+                        Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::StorageError),))
+                    }
+                }
+            } else {
+                tracing::warn!("⚠️ [Linker] KV Store not available for Set");
+                Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::NotAvailable),))
+            }
+        }))
+    })?;
+
+    p_linker.func_wrap_async("list-keys", move |caller, (): ()| {
+         let store_opt = store_selector(caller.data());
+         Box::new(Box::pin(async move {
+            if let Some(store) = store_opt {
+                let mut keys = Vec::new();
+                match store.keys().await {
+                    Ok(mut stream) => {
+                         while let Some(k_res) = stream.next().await {
+                             if let Ok(k) = k_res { 
+                                 if let Ok(decoded_bytes) = hex::decode(&k) {
+                                     if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+                                         keys.push(decoded_str);
+                                     }
+                                 }
+                             } 
+                         }
+                         Ok((Ok(keys),))
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ [Linker] KV ListKeys Error: {}", e);
+                        Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::StorageError),))
+                    }
+                }
+            } else {
+                tracing::warn!("⚠️ [Linker] KV Store not available for ListKeys");
+                Ok((Err(crate::sovereign::gateway::persistence::PersistenceError::NotAvailable),))
+            }
+        }))
+    })?;
+
+    p_linker.func_wrap_async("get-house-salt", move |caller, (): ()| {
+        let salt = caller.data().shared.house_salt.clone();
+        Box::new(Box::pin(async move {
+            Ok((salt,))
+        }))
+    })?;
+    Ok(())
+}
+
+pub async fn setup_linker(engine: &Engine) -> Result<Linker<HostState>> {
+    let mut linker: Linker<HostState> = Linker::new(engine);
+    
+    // Add WASI to Linker
+    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+
+    // === 1. Vault Interface Binding ===
+    let mut vault_linker = linker.instance("sovereign:gateway/vault")?;
+    
+    vault_linker.func_wrap_async("create-identity", |caller, (id,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::CreateIdentity(id, tx)).await;
+            match rx.await {
+                Ok(did) if !did.is_empty() => Ok((Ok(did),)),
+                Ok(_) => Ok((Err("Vault failed to create identity (empty DID returned)".to_string()),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("resolve-did-to-user-id", |caller, (did,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::ResolveDid { did, resp: tx }).await;
+            match rx.await {
+                Ok(Some(uid)) => Ok((Ok(uid),)),
+                Ok(None) => Ok((Err("DID not found".to_string()),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("sign-message", |caller, (did, msg): (String, Vec<u8>)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            
+            // Resolve DID to user_id to ensure consistent hashing routes to the correct worker
+            let (tx_r, rx_r) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::ResolveDid { did: did.clone(), resp: tx_r }).await;
+            let user_id = match rx_r.await {
+                Ok(Some(uid)) => uid,
+                _ => {
+                    tracing::warn!("⚠️ [Linker] Failed to resolve DID {} to user_id for signing", did);
+                    return Ok((Err("Unauthorized: DID not found".to_string()),));
+                }
+            };
+
+            let (tx, rx) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::SignMessage { user_id, did, msg, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(sig)) => Ok((Ok(sig),)),
+                Ok(Err(e)) => Ok((Err(format!("Vault signing error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("list-identities", |caller, (user_id,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::ListIdentities(user_id, tx)).await;
+            match rx.await {
+                Ok(dids) => Ok((Ok(dids),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("get-active-did", |caller, (user_id,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::GetActiveDid(user_id, tx)).await;
+            match rx.await {
+                Ok(did) if !did.is_empty() => Ok((Ok(did),)),
+                Ok(_) => Ok((Err("No active DID found for user".to_string()),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("set-active-did", |caller, (user_id, did): (String, String)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::SetActiveDid(user_id, did, tx)).await;
+            match rx.await {
+                Ok(Ok(res)) => Ok((Ok(res),)),
+                Ok(Err(e)) => Ok((Err(e),)),
+                Err(_) => Ok((Err("Channel closed".to_string()),)),
+            }
+        }))
+    })?;
+    
+    vault_linker.func_wrap_async("generate-master-seed", |caller, (uid, path): (String, String)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::GenerateMasterSeed { user_id: uid, derivation_path: path, resp: tx }).await;
+            match rx.await { 
+                Ok(Ok(s)) => Ok((Ok(s),)), 
+                Ok(Err(e)) => Ok((Err(format!("Vault error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)), 
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("derive-link-nkey", |caller, (uid,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+             let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::DeriveLinkNkey { user_id: uid, resp: tx }).await;
+            match rx.await { 
+                Ok(Ok(s)) => Ok((Ok(s),)), 
+                Ok(Err(e)) => Ok((Err(format!("Vault error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)), 
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("get-hmac-secret", |caller, (uid,): (String,)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            let mut target_uid = uid.clone();
+            
+            if uid.starts_with("did:") {
+                let (tx, rx) = oneshot::channel();
+                let _ = shared.vault_cmd_tx.send(VaultCommand::ResolveDid { did: uid.clone(), resp: tx }).await;
+                if let Ok(Some(resolved)) = rx.await {
+                    tracing::debug!("🔗 Resolved DID {} to User ID {} for HMAC retrieval", uid, resolved);
+                    target_uid = resolved;
+                } else {
+                    tracing::warn!("⚠️ Failed to resolve DID {} for HMAC retrieval", uid);
+                }
+            }
+
+            let (tx, rx) = oneshot::channel();
+             let _ = shared.vault_cmd_tx.send(VaultCommand::GetHmacSecret { user_id: target_uid, resp: tx }).await;
+            match rx.await { 
+                Ok(Ok(s)) => Ok((s,)), 
+                Ok(Err(e)) => {
+                    tracing::error!("❌ Vault GetHmacSecret error: {}", e);
+                    Ok((Vec::new(),))
+                }
+                Err(_) => {
+                    tracing::error!("❌ Vault task communication failed for GetHmacSecret");
+                    Ok((Vec::new(),))
+                }
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("unlock-vault", |caller, (uid, path): (String, String)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::UnlockVault { user_id: uid, derivation_path: path, resp: tx }).await;
+            match rx.await { 
+                Ok(Ok(res)) => Ok((Ok(res),)), 
+                Ok(Err(e)) => Ok((Err(format!("Vault error: {}", e)),)),
+                Err(_) => Ok((Err("Vault task communication failed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("is-unlocked", |caller, (uid,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::IsUnlocked { user_id: uid, resp: tx }).await;
+            let res = rx.await.unwrap_or(false);
+            Ok((res,))
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("encrypt-routing-token", |caller, (routing_key, target_id): (String, String)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::EncryptRoutingToken { routing_key, target_id, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(token)) => Ok((Ok(token),)),
+                Ok(Err(e)) => Ok((Err(e),)),
+                Err(_) => Ok((Err("Channel closed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("issue-session-jwt", |caller, (subject, scope, user_did, ttl_seconds, tenant_id): (String, Vec<String>, String, u32, String)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            
+            // Resolve DID to user_id for consistent hashing
+            let (tx_r, rx_r) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::ResolveDid { did: user_did.clone(), resp: tx_r }).await;
+            let user_id = match rx_r.await {
+                Ok(Some(uid)) => uid,
+                _ => {
+                    tracing::warn!("⚠️ [Linker] Failed to resolve DID {} to user_id for JWT issuance", user_did);
+                    return Ok((Err("Unauthorized: DID not found".to_string()),));
+                }
+            };
+
+            let (tx, rx) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::IssueSessionJwt { user_id, subject, scope, user_did, ttl_seconds, tenant_id, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(jwt)) => Ok((Ok(jwt),)),
+                Ok(Err(e)) => Ok((Err(e),)),
+                Err(_) => Ok((Err("Channel closed".to_string()),)),
+            }
+        }))
+    })?;
+
+    vault_linker.func_wrap_async("create-service-did", |caller, (tenant_id,): (String,)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::CreateServiceDid { tenant_id, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(did)) => Ok((Ok(did),)),
+                Ok(Err(e)) => Ok((Err(e),)),
+                Err(_) => Ok((Err("Channel closed".to_string()),)),
+            }
+        }))
+    })?;
+
+    // NEW: DID Document generation (Hybrid Architecture)
+    vault_linker.func_wrap_async("create-did-document", |caller, (user_id, gateway_url, target_id): (String, String, String)| {
+        Box::new(Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            let _ = caller.data().shared.vault_cmd_tx.send(VaultCommand::CreateDidDocument { user_id, gateway_url, target_id, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(doc)) => Ok((Ok(doc),)),
+                Ok(Err(e)) => Ok((Err(e),)),
+                Err(_) => Ok((Err("Channel closed".to_string()),)),
+            }
+        }))
+    })?;
+
+    // NEW: ECDH Key Exchange (Item 5: Encrypted Handshakes)
+    vault_linker.func_wrap_async("ecdh-handshake", |caller, (did, peer_pubkey): (String, Vec<u8>)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            // Resolve DID to user_id for consistent hashing
+            let (tx_r, rx_r) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::ResolveDid { did: did.clone(), resp: tx_r }).await;
+            let user_id = match rx_r.await {
+                Ok(Some(uid)) => uid,
+                _ => {
+                    tracing::warn!("⚠️ [Linker] Failed to resolve DID {} to user_id for ECDH handshake", did);
+                    return Ok((Err(crate::sovereign::gateway::vault::VaultError::KeyNotFound),));
+                }
+            };
+
+            let (tx, rx) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::EcdhHandshake { user_id, did, peer_pubkey, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(bytes)) => Ok((Ok(bytes),)),
+                Ok(Err(e)) => Ok((Err(crate::sovereign::gateway::vault::VaultError::SigningFailed(e)),)),
+                Err(_) => Ok((Err(crate::sovereign::gateway::vault::VaultError::SigningFailed("Channel closed".to_string())),)),
+            }
+        }))
+    })?;
+
+    // === 1b. Delegation Linker (UCAN — Unchanged) ===
+    let mut delegation_linker = linker.instance("sovereign:gateway/delegation")?;
+
+    delegation_linker.func_wrap("validate-ucan", |_caller, (token, resource, action): (String, String, String)| {
+        let cap = ssi_crypto::ucan::Capability { resource, action };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        match ssi_crypto::ucan::decode_ucan(&token) {
+            Ok(ucan) => {
+                match ssi_crypto::ucan::validate_ucan(&ucan, &cap, now) {
+                    ssi_crypto::ucan::UcanValidationResult::Authorized => Ok((Ok::<String, String>("authorized".to_string()),)),
+                    ssi_crypto::ucan::UcanValidationResult::RequiresApproval => Ok((Ok("requires_approval".to_string()),)),
+                    ssi_crypto::ucan::UcanValidationResult::Denied(r) => Ok((Err(r),)),
+                }
+            }
+            Err(e) => Ok((Err(e),)),
+        }
+    })?;
+
+    delegation_linker.func_wrap("create-action-request", |_caller, (tool_name, args_hash, summary): (String, String, String)| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let req = ssi_crypto::ucan::create_action_request(&tool_name, &args_hash, &summary, 300, now);
+        Ok(((req.request_id, req.tool_name, req.human_summary, req.payload_hash, req.expires_at),))
+    })?;
+
+    delegation_linker.func_wrap("verify-action-response", |_caller, (request_id, approved, signature, expected_hash, user_pubkey): (String, bool, Option<Vec<u8>>, String, Vec<u8>)| {
+        let crypto_response = ssi_crypto::ucan::ActionResponse {
+            request_id,
+            approved,
+            signature,
+        };
+        if user_pubkey.len() != 32 {
+            return Ok((Err::<bool, String>(format!("Invalid pubkey length: {}", user_pubkey.len())),));
+        }
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&user_pubkey);
+        match ssi_crypto::ucan::verify_action_response(&crypto_response, &expected_hash, &pk) {
+            Ok(v) => Ok((Ok(v),)),
+            Err(e) => Ok((Err(e),)),
+        }
+    })?;
+
+    // === 2. Identity Linker (Host-native — Wasm identity_server removed) ===
+    let mut identity_linker = linker.instance("sovereign:gateway/identity")?;
+
+    // NOTE: The identity_server Wasm component has been removed.
+    // WebAuthn is handled natively by the Host (auth/logic.rs).
+    // The WIT identity interface is still imported by the host-orchestrator world,
+    // so we must provide linker bindings. These are now direct implementations.
+
+    identity_linker.func_wrap_async("authenticate", |caller, (id,): (String,)| {
+        Box::new(Box::pin(async move {
+            // Inline: call VaultCommand::GetActiveDid directly instead of routing through identity loop
+            let shared = caller.data().shared.clone();
+            let (tx, rx) = oneshot::channel();
+            let _ = shared.vault_cmd_tx.send(VaultCommand::GetActiveDid(id.clone(), tx)).await;
+            let nkey_seed = rx.await.unwrap_or_default();
+            Ok((crate::sovereign::gateway::identity::AuthSession {
+                user_id: id,
+                nkey_seed,
+            },))
+        }))
+    })?;
+
+    // Global portal has been removed — process-global-login is a no-op error
+    identity_linker.func_wrap_async("process-global-login", |_caller, (_assertion,): (Vec<u8>,)| {
+        Box::new(Box::pin(async move {
+            Ok((Err::<bool, String>("Global login not supported — global_ssi_portal has been removed".to_string()),))
+        }))
+    })?;
+    
+    identity_linker.func_wrap_async("start-registration", |caller, (username,): (String,)| {
+        Box::new(Box::pin(async move {
+            match crate::auth::start_registration_logic(&caller.data().shared, username, None).await {
+                Ok((session_id, ccr)) => {
+                    let res = serde_json::json!({ "session_id": session_id, "options": ccr });
+                    Ok((serde_json::to_string(&res).unwrap(),))
+                }
+                Err(e) => {
+                    tracing::error!("❌ start-registration error: {:?}", e);
+                    Ok(("error".to_string(),))
+                }
+            }
+        }))
+    })?;
+
+    identity_linker.func_wrap_async("finish-registration", |caller, (session_id, response): (String, String)| {
+        Box::new(Box::pin(async move {
+            match crate::auth::finish_registration_logic(caller.data().shared.clone(), session_id, response).await {
+                Ok((success, _, _)) => Ok((success,)),
+                Err(e) => {
+                    tracing::error!("❌ finish-registration error: {:?}", e);
+                    Ok((false,))
+                }
+            }
+        }))
+    })?;
+
+    identity_linker.func_wrap_async("start-login", |caller, (username,): (String,)| {
+        Box::new(Box::pin(async move {
+            match crate::auth::start_login_logic(&caller.data().shared, username).await {
+                Ok((session_id, rcr)) => {
+                    let res = serde_json::json!({ "session_id": session_id, "options": rcr });
+                    Ok((serde_json::to_string(&res).unwrap(),))
+                }
+                Err(e) => {
+                    tracing::error!("❌ start-login error: {:?}", e);
+                    Ok(("error".to_string(),))
+                }
+            }
+        }))
+    })?;
+
+    identity_linker.func_wrap_async("finish-login", |caller, (session_id, response): (String, String)| {
+        Box::new(Box::pin(async move {
+            match crate::auth::finish_login_logic(caller.data().shared.clone(), session_id, response).await {
+                Ok((token, _uid, _username, _cookie)) => Ok((token,)),
+                Err(e) => {
+                    tracing::error!("❌ finish-login error: {:?}", e);
+                    Ok(("error".to_string(),))
+                }
+            }
+        }))
+    })?;
+
+    // === 3. Messaging Sender Linker ===
+    let mut messaging_linker = linker.instance("sovereign:gateway/messaging-sender")?;
+    messaging_linker.func_wrap_async("send", |_caller, (_msg,): (MlsMessage,)| {
+        Box::new(Box::pin(async move {
+            tracing::info!("📥 [Community Edition] messaging-sender.send is a no-op");
+            let res: Result<String, String> = Ok("disabled".to_string());
+            Ok((res,))
+        }))
+    })?;
+
+    // === 7. ACL Linker (Unchanged) ===
+    let mut acl_linker = linker.instance("sovereign:gateway/acl")?;
+    acl_linker.func_wrap_async("check-permission", |caller, (owner_did, subject, perm): (String, String, crate::sovereign::gateway::common_types::Permission)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            let (a_tx, a_rx) = oneshot::channel();
+            let _ = shared.acl_cmd_tx.send(AclCommand::CheckPermission { owner: owner_did, subject, perm, resp: a_tx }).await;
+            match a_rx.await {
+                Ok(res) => Ok((res,)),
+                Err(_) => Err(anyhow::anyhow!("ACL task terminated")),
+            }
+        }))
+    })?;
+
+    acl_linker.func_wrap_async("update-policy", |caller, (owner_did, policy): (String, crate::sovereign::gateway::common_types::ConnectionPolicy)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            let (tx, rx) = oneshot::channel();
+            let _ = shared.acl_cmd_tx.send(AclCommand::UpdatePolicy { owner: owner_did, policy, resp: tx }).await;
+            match rx.await {
+                Ok(Ok(_)) => Ok((Ok(true),)),
+                Ok(Err(e)) => Ok((Err(e),)),
+                Err(_) => Ok((Err("ACL task closed".to_string()),)),
+            }
+        }))
+    })?;
+
+    acl_linker.func_wrap_async("get-policies", |caller, (owner_did,): (String,)| {
+        Box::new(Box::pin(async move {
+            let shared = caller.data().shared.clone();
+            let (tx, rx) = oneshot::channel();
+            let _ = shared.acl_cmd_tx.send(AclCommand::GetPolicies { owner: owner_did, resp: tx }).await;
+            let policies = rx.await.unwrap_or_default();
+            Ok((policies,))
+        }))
+    })?;
+
+    Ok(linker)
+}
+
+// Helper to create specialized linkers for specific persistence stores
+pub async fn create_specialized_linker(
+    base_linker: &Linker<HostState>,
+    store_selector: fn(&HostState) -> Option<async_nats::jetstream::kv::Store>
+) -> Result<Linker<HostState>> {
+    let mut specific = base_linker.clone();
+    bind_persistence(&mut specific, store_selector).await?;
+    Ok(specific)
+}

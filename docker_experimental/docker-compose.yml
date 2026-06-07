@@ -1,0 +1,217 @@
+# Docker Compose configuration for Trust Gateway development environment
+version: "3.8"
+
+services:
+  nats:
+    image: natsio/nats-server:latest
+    command: "-js --config /etc/nats/nats-server.conf"
+    ports:
+      - "4222:4222" # NATS client port
+      - "8222:8222" # NATS monitoring port
+      - "6222:6222" # NATS cluster port
+      - "9222:9222" # NATS WebSocket port
+    volumes:
+      - ./nats-server.conf:/etc/nats/nats-server.conf
+      - ./nats-server-auth.conf:/etc/nats/nats-server-auth.conf
+      - nats_data:/data
+    networks:
+      - trust_gateway_net
+
+  nats-init:
+    image: natsio/nats-box:latest
+    environment:
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_TG}
+    volumes:
+      - ./init_infra.sh:/app/init_infra.sh
+    entrypoint: ["/bin/sh", "-c", "/app/init_infra.sh"]
+    depends_on:
+      - nats
+    networks:
+      - trust_gateway_net
+
+  trust-gateway:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.gateway
+      args:
+        EDITION: ${EDITION:-community}
+    container_name: trust_gateway
+    ports:
+      - "3060:3060" # Trust Gateway API port
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - LLM_MCP_API_KEY=${LLM_MCP_API_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:3060/oauth/google/callback}
+      - DEFAULT_TOOLS=${DEFAULT_TOOLS:-search_skills,switch_context,list_bundles,vp_search,claw_weather,google_calendar_create_event,google_calendar_list_events}
+      - EDITION=${EDITION:-community}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - UI_PROJECTION_ENABLED=${UI_PROJECTION_ENABLED:-1}
+      - POLICY_SIGNATURE_REQUIRED=${POLICY_SIGNATURE_REQUIRED:-0}
+      - GRANT_SIGNING_KEY_PATH=/etc/keys/grant_signing.pem
+      - GRANT_VERIFY_KEY_PATH=/etc/keys/grant_verify.pem
+      - GRANT_SIGNING_KEY_ID=${GRANT_SIGNING_KEY_ID:-gateway-ed25519-1}
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_TG}
+      - POLICY_PATH=/app/config/policy.toml
+      - LIANXI_ENV=development
+    volumes:
+      - ./keys:/etc/keys
+      - ../agent_in_a_box/host/config:/app/config
+    depends_on:
+      - nats
+      - nats-init
+    networks:
+      - trust_gateway_net
+
+  agent-host:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.host
+      args:
+        EDITION: ${EDITION:-community}
+    container_name: agent_host
+    ports:
+      - "3000:3000" # Agent Host API port
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_HOST}
+      - GRANT_VERIFY_KEY_PATH=/etc/keys/grant_verify.pem
+      - EDITION=${EDITION:-community}
+      - POLICY_PATH=/app/config/policy.toml
+    volumes:
+      - ./keys:/etc/keys
+      - ../agent_in_a_box/host/config:/app/config
+    depends_on:
+      - nats
+      - nats-init
+    networks:
+      - trust_gateway_net
+
+  ssi-agent:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.agent
+    container_name: ssi_agent
+    ports:
+      - "8082:8082" # HTTP Port
+      - "8083:8083" # WS Port
+    environment:
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_SSI}
+      - NATS_DISPATCH_ENABLED=true
+      - LLM_MCP_API_KEY=${LLM_MCP_API_KEY}
+      - LLM_A2A_API_KEY=${LLM_A2A_API_KEY}
+    depends_on:
+      - nats
+      - nats-init
+    networks:
+      - trust_gateway_net
+
+  executor-native:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.executor
+    container_name: executor_native
+    environment:
+      - EXECUTOR_PROFILE=native-tool
+      - NATIVE_TOOLS_DIR=/app/lianxi-community/native_tools
+      - GRANT_VERIFY_KEY_PATH=/etc/keys/grant_verify.pem
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_NSE}
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - ./keys:/etc/keys
+    depends_on:
+      - nats
+      - nats-init
+      - trust-gateway
+    networks:
+      - trust_gateway_net
+
+  executor-connector:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.executor
+    container_name: executor_connector
+    environment:
+      - EXECUTOR_PROFILE=connector
+      - GRANT_VERIFY_KEY_PATH=/etc/keys/grant_verify.pem
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_CONN}
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - ./keys:/etc/keys
+    depends_on:
+      - nats
+      - nats-init
+      - trust-gateway
+    networks:
+      - trust_gateway_net
+
+  executor-vp:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.executor
+    container_name: executor_vp
+    environment:
+      - EXECUTOR_PROFILE=vp
+      - GRANT_VERIFY_KEY_PATH=/etc/keys/grant_verify.pem
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_VP}
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - ./keys:/etc/keys
+    depends_on:
+      - nats
+      - nats-init
+      - trust-gateway
+    networks:
+      - trust_gateway_net
+
+  connector-mcp-helper:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.connector
+    container_name: connector_mcp_helper
+    ports:
+      - "3050:3050" # OAuth helper listener port
+    environment:
+      - CONNECTOR_LISTEN=0.0.0.0:3050
+      - NATS_URL=nats://nats:4222
+      - NATS_NKEY_SEED=${NATS_NKEY_SEED_CONN}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - JWT_SECRET=${JWT_SECRET}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+    depends_on:
+      - nats
+      - nats-init
+    networks:
+      - trust_gateway_net
+
+  local-ssi-portal:
+    build:
+      context: ../../
+      dockerfile: lianxi-community/docker_experimental/Dockerfile.portal
+      args:
+        EDITION: ${EDITION:-community}
+    container_name: local_ssi_portal
+    ports:
+      - "8080:80" # Map Nginx port 80 to 8080
+    depends_on:
+      - trust-gateway
+      - agent-host
+    networks:
+      - trust_gateway_net
+
+volumes:
+  nats_data: {}
+
+networks:
+  trust_gateway_net:
+    driver: bridge

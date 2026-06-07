@@ -1,0 +1,21 @@
+{
+  "name": "claw_hello_world",
+  "description": "Example Claw skill — echoes back the provided message",
+  "script": "run.sh",
+  "interpreter": "bash",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "description": "Message to echo back"
+      }
+    },
+    "required": ["message"]
+  },
+  "env": {},
+  "tags": ["example"],
+  "category": "diagnostics",
+  "priority_hint": "native",
+  "procedure_type": "atomic"
+}

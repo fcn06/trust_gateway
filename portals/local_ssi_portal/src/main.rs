@@ -44,6 +44,21 @@ fn App() -> impl IntoView {
     let (sidebar_collapsed, set_sidebar_collapsed) = signal(false);
     let (escalations_count, set_escalations_count) = signal(0);
 
+    let (current_path, set_current_path) = signal(
+        window()
+            .and_then(|w| w.location().pathname().ok())
+            .unwrap_or_else(|| "/".to_string())
+    );
+
+    let redirect_to_onboarding = move || {
+        if let Some(win) = window() {
+            if let Ok(history) = win.history() {
+                let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/onboarding"));
+                set_current_path.set("/onboarding".to_string());
+            }
+        }
+    };
+
     let messaging_enabled = EDITION.unwrap_or("professional") != "community";
 
     /// Gate: Only allow specific tenants to access Agent-related features.
@@ -142,7 +157,7 @@ fn App() -> impl IntoView {
         let logged_in = is_logged_in.get();
         let tok = token.get();
         let api_base = config.get().api_base_url;
-        let _active = active_did.get();
+        let active = active_did.get();
         let _refresh = refresh_trigger.get();
 
         if logged_in && !api_base.is_empty() {
@@ -151,7 +166,30 @@ fn App() -> impl IntoView {
                     set_policies.set(list);
                 }
                 if let Ok(list) = api::list_identities(&api_base, tok.clone()).await {
-                    set_identities.set(list);
+                    set_identities.set(list.clone());
+                    
+                    if !active.is_empty() {
+                        let is_enriched = list.iter().any(|id| id.did == active && !id.alias.is_empty());
+                        if !is_enriched {
+                            let username_val = get_cookie("ssi_username").unwrap_or_default();
+                            if !username_val.is_empty() {
+                                log::info!("Active DID {} not enriched. Performing background setup for {}", active, username_val);
+                                let _ = api::enrich_identity(&api_base, active.clone(), username_val.clone(), false, tok.clone()).await;
+                                
+                                let seed_req = types::SendMessageRequest {
+                                    to: active.clone(),
+                                    body: "@agent hello".to_string(),
+                                    r#type: "https://didcomm.org/message/2.0/chat".to_string(),
+                                    thid: Some("@agent".to_string()),
+                                };
+                                let _ = api::send_message(&api_base, seed_req, tok.clone()).await;
+                                
+                                if let Ok(new_list) = api::list_identities(&api_base, tok.clone()).await {
+                                    set_identities.set(new_list);
+                                }
+                            }
+                        }
+                    }
                 }
                 if let Ok(list) = api::get_escalation_requests(&api_base, tok.clone()).await {
                     let pending_count = list.iter().filter(|r| r.status == "PENDING" || r.status == "PENDING_PROOF").count();
@@ -167,7 +205,34 @@ fn App() -> impl IntoView {
                 when=move || is_logged_in.get()
                 fallback=move || {
                     let api_base = config.get().api_base_url;
-                    view! { <pages::Login base_url=api_base set_is_logged_in set_username set_token set_user_id set_registration_cookie /> }
+                    if current_path.get() == "/onboarding" {
+                        view! {
+                            <pages::Onboarding
+                                base_url=api_base
+                                username=username
+                                set_is_logged_in
+                                set_username
+                                set_token
+                                set_user_id
+                                set_registration_cookie
+                                set_current_path
+                                set_active_section
+                            />
+                        }.into_any()
+                    } else {
+                        view! {
+                            <pages::Login
+                                base_url=api_base
+                                username=username
+                                set_is_logged_in
+                                set_username
+                                set_token
+                                set_user_id
+                                set_registration_cookie
+                                set_current_path
+                            />
+                        }.into_any()
+                    }
                 }
             >
                 <div class="flex h-screen overflow-hidden bg-slate-900">

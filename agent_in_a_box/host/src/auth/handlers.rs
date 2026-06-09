@@ -251,21 +251,6 @@ pub async fn update_profile_handler(
     Json(profile).into_response()
 }
 
-pub async fn set_recovery_config_handler(
-    State(shared): State<Arc<WebauthnSharedState>>,
-    headers: HeaderMap,
-    Json(_payload): Json<SetRecoveryRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let claims = extract_claims(&shared, &headers).await?;
-    let _user_id = claims.user_id;
-
-    // Recovery config was tied to the beacon protocol, which has been removed
-    // in the hybrid pivot. Returning 501 until re-implemented via MLS-based
-    // recovery groups. Clients should handle this gracefully (e.g. "Coming soon").
-    tracing::info!("ℹ️ Recovery config requested by {} — not yet implemented", _user_id);
-    Err(StatusCode::NOT_IMPLEMENTED)
-}
-
 pub async fn link_remote_access_handler(
     State(shared): State<Arc<WebauthnSharedState>>,
     headers: HeaderMap,

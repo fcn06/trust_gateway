@@ -23,6 +23,7 @@ pub fn Inbox(
     let (compose_text, set_compose_text) = signal(String::new());
     let (show_new_msg, set_show_new_msg) = signal(false);
     let (new_recipient, set_new_recipient) = signal(String::new());
+    let (new_topic, set_new_topic) = signal(String::new());
     let (sending, set_sending) = signal(false);
 
     let base_sv = StoredValue::new(base_url.clone());
@@ -64,14 +65,66 @@ pub fn Inbox(
 
     let threads = move || {
         let msgs = messages.get();
+        let my_dids: Vec<String> = identities.get().into_iter().map(|id| id.did).collect();
         let mut groups: HashMap<String, Vec<PlainDidcomm>> = HashMap::new();
         
+        // Build the set of message IDs belonging to the "@agent" thread using fixed-point iteration.
+        let mut agent_message_ids = std::collections::HashSet::new();
+        agent_message_ids.insert("@agent".to_string());
+        
+        let mut added = true;
+        while added {
+            added = false;
+            for msg in &msgs {
+                if agent_message_ids.contains(&msg.id) {
+                    continue;
+                }
+                
+                let body_str = match &msg.body {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Object(obj) => obj.get("content").and_then(|c| c.as_str()).unwrap_or_default().to_string(),
+                    _ => String::new(),
+                };
+                
+                let is_agent = msg.thid.as_deref() == Some("@agent")
+                    || body_str.contains("@agent")
+                    || msg.alias.as_deref() == Some("AI Agent")
+                    || msg.thid.as_ref().map(|t| agent_message_ids.contains(t)).unwrap_or(false);
+                    
+                if is_agent {
+                    agent_message_ids.insert(msg.id.clone());
+                    added = true;
+                }
+            }
+        }
+        
         for msg in msgs {
+            let is_from_self = msg.from.as_ref().map(|f| my_dids.contains(f)).unwrap_or(true);
+            let is_to_self = msg.to.as_ref().map(|tos| tos.iter().all(|t| my_dids.contains(t))).unwrap_or(true);
+            let is_self_message = is_from_self && is_to_self;
+            
             let mut thread_id = "unknown".to_string();
-            if let Some(thid) = &msg.thid {
-                thread_id = thid.clone();
-            } else if let Some(from) = &msg.from {
-                thread_id = from.clone();
+            if agent_message_ids.contains(&msg.id) {
+                thread_id = "@agent".to_string();
+            } else if is_self_message {
+                let body_str = match &msg.body {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Object(obj) => obj.get("content").and_then(|c| c.as_str()).unwrap_or_default().to_string(),
+                    _ => String::new(),
+                };
+                if msg.thid.as_deref() == Some("@agent") || body_str.contains("@agent") {
+                    thread_id = "@agent".to_string();
+                } else if let Some(thid) = &msg.thid {
+                    thread_id = thid.clone();
+                } else if let Some(from) = &msg.from {
+                    thread_id = from.clone();
+                }
+            } else {
+                if let Some(thid) = &msg.thid {
+                    thread_id = thid.clone();
+                } else if let Some(from) = &msg.from {
+                    thread_id = from.clone();
+                }
             }
             groups.entry(thread_id).or_insert_with(Vec::new).push(msg);
         }
@@ -95,13 +148,13 @@ pub fn Inbox(
             let text = compose_text.get();
             if text.is_empty() { return; }
             
-            // Resolve recipient and thread ID
-            let msgs = messages.get();
+            // Resolve recipient and thread ID using the unified thread logic
+            let curr_threads = threads();
+            let thread_msgs = curr_threads.into_iter()
+                .find(|(t, _)| t == &tid)
+                .map(|(_, m)| m)
+                .unwrap_or_default();
             let my_dids: Vec<String> = identities.get().into_iter().map(|id| id.did).collect();
-            
-            let thread_msgs: Vec<&PlainDidcomm> = msgs.iter().filter(|m| {
-                m.thid.as_ref() == Some(&tid) || (m.thid.is_none() && m.from.as_ref() == Some(&tid))
-            }).collect();
             
             // Recipient is the first "other" DID we find in the thread. 
             // If all messages are from us, the recipient is ourselves.
@@ -123,7 +176,7 @@ pub fn Inbox(
                 to: recipient_did,
                 body: text,
                 r#type: "https://didcomm.org/message/2.0/chat".to_string(),
-                thid: Some(tid),
+                thid: if tid.starts_with("did:") { None } else { Some(tid.clone()) },
             };
             let b2 = base_sv.get_value();
             let t2 = token_sv.get_value();
@@ -157,7 +210,14 @@ pub fn Inbox(
     let do_send_new = move || {
         let rec = new_recipient.get();
         let text = compose_text.get();
+        let topic = new_topic.get();
         if !rec.is_empty() && !text.is_empty() {
+            let my_dids: Vec<String> = identities.get().into_iter().map(|id| id.did).collect();
+            let is_self = my_dids.contains(&rec);
+            
+            let thid = if is_self && !topic.is_empty() { Some(topic.clone()) } else { None };
+            let active_thread_id = if is_self && !topic.is_empty() { topic } else { rec.clone() };
+            
             let b = base_sv.get_value();
             let t = token_sv.get_value();
             let b2 = base_sv.get_value();
@@ -166,14 +226,15 @@ pub fn Inbox(
                 to: rec.clone(),
                 body: text,
                 r#type: "https://didcomm.org/message/2.0/chat".to_string(),
-                thid: None,
+                thid,
             };
             spawn_local(async move {
                 set_sending.set(true);
                 if let Ok(_) = api::send_message(&b, req, t).await {
                     set_compose_text.set(String::new());
+                    set_new_topic.set(String::new());
                     set_show_new_msg.set(false);
-                    set_selected_thread.set(Some(rec));
+                    set_selected_thread.set(Some(active_thread_id));
                     if let Ok(msgs) = api::get_messages(&b2, t2).await {
                         let ui_msgs: Vec<PlainDidcomm> = msgs.into_iter().filter(|m| {
                             if let Some(msg_type) = &m.msg_type {
@@ -282,7 +343,19 @@ pub fn Inbox(
                                     let is_self_message = contact_did_opt.is_none();
                                     
                                     let display_name = if is_self_message {
-                                        "Myself".to_string()
+                                        if tid == "@agent" {
+                                            "🤖 My Agent".to_string()
+                                        } else if tid.starts_with("did:") {
+                                            "Myself".to_string()
+                                        } else {
+                                            match tid.as_str() {
+                                                "Links" => "📎 Links (Self)".to_string(),
+                                                "Tasks" => "✅ Tasks (Self)".to_string(),
+                                                "Ideas" => "💡 Ideas (Self)".to_string(),
+                                                "General" => "📁 General (Self)".to_string(),
+                                                custom => format!("🏷️ {} (Self)", custom),
+                                            }
+                                        }
                                     } else if let Some(contact_did) = &contact_did_opt {
                                         if let Some(policy) = policies.get().iter().find(|p| &p.did == contact_did) {
                                             policy.alias.clone()
@@ -310,7 +383,25 @@ pub fn Inbox(
 
                                     let is_agent = display_name.to_lowercase().contains("agent");
                                     let avatar_icon = if is_self_message {
-                                        view! { <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-400 font-bold text-[10px] flex-shrink-0">"ME"</div> }.into_any()
+                                        let (bg, symbol) = match tid.as_str() {
+                                            "@agent" => ("bg-emerald-600/20 text-emerald-400", "🤖"),
+                                            "Links" => ("bg-blue-600/20 text-blue-400", "📎"),
+                                            "Tasks" => ("bg-green-600/20 text-green-400", "✅"),
+                                            "Ideas" => ("bg-yellow-500/20 text-yellow-400", "💡"),
+                                            "General" => ("bg-slate-600/20 text-slate-400", "📁"),
+                                            _ => {
+                                                if tid.starts_with("did:") {
+                                                    ("bg-slate-700/20 text-slate-300", "👤")
+                                                } else {
+                                                    ("bg-slate-800/50 text-slate-300 border border-slate-700", "🏷️")
+                                                }
+                                            }
+                                        };
+                                        view! {
+                                            <div class=format!("w-8 h-8 rounded-full {} flex items-center justify-center text-sm flex-shrink-0", bg)>
+                                                {symbol}
+                                            </div>
+                                        }.into_any()
                                     } else if is_agent {
                                         view! { <div class="w-8 h-8 rounded-full bg-emerald-600/20 text-emerald-400 flex items-center justify-center flex-shrink-0"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg></div> }.into_any()
                                     } else {
@@ -378,6 +469,22 @@ pub fn Inbox(
                                             </optgroup>
                                         </select>
                                     </div>
+                                    <Show when=move || {
+                                        let rec = new_recipient.get();
+                                        let my_dids: Vec<String> = identities.get().into_iter().map(|id| id.did).collect();
+                                        !rec.is_empty() && my_dids.contains(&rec)
+                                    }>
+                                        <div>
+                                            <label class="block text-sm font-medium text-slate-400 mb-1">"Topic (Optional):"</label>
+                                            <input
+                                                type="text"
+                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg p-3 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                                placeholder="e.g. Links, Tasks, Ideas, Recipes..."
+                                                prop:value=move || new_topic.get()
+                                                on:input=move |ev| set_new_topic.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                    </Show>
                                     <div class="flex-1">
                                         <label class="block text-sm font-medium text-slate-400 mb-1">"Message:"</label>
                                         <textarea
@@ -389,7 +496,10 @@ pub fn Inbox(
                                     </div>
                                     <div class="flex justify-end gap-3">
                                         <button 
-                                            on:click=move |_| set_show_new_msg.set(false)
+                                            on:click=move |_| {
+                                                set_show_new_msg.set(false);
+                                                set_new_topic.set(String::new());
+                                            }
                                             class="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 transition-colors font-medium text-sm">
                                             "Cancel"
                                         </button>
@@ -433,8 +543,22 @@ pub fn Inbox(
                                     })
                                 });
                                 
-                                let header_name = if contact_did_opt.is_none() {
-                                    "Myself".to_string()
+                                let is_self_message = contact_did_opt.is_none();
+                                
+                                let header_name = if is_self_message {
+                                    if curr_tid == "@agent" {
+                                        "My Agent".to_string()
+                                    } else if curr_tid.starts_with("did:") {
+                                        "Myself".to_string()
+                                    } else {
+                                        match curr_tid.as_str() {
+                                            "Links" => "Myself: Links".to_string(),
+                                            "Tasks" => "Myself: Tasks".to_string(),
+                                            "Ideas" => "Myself: Ideas".to_string(),
+                                            "General" => "Myself: General".to_string(),
+                                            custom => format!("Myself: {}", custom),
+                                        }
+                                    }
                                 } else if let Some(contact_did) = &contact_did_opt {
                                     if let Some(policy) = policies.get().iter().find(|p| &p.did == contact_did) {
                                         policy.alias.clone()
@@ -462,7 +586,8 @@ pub fn Inbox(
                                                 <span class="text-[10px] text-slate-400 font-semibold tracking-wider bg-slate-800 px-2.5 py-0.5 rounded-full uppercase">{header_name}</span>
                                             </div>
                                             {thread_msgs.into_iter().map(|msg| {
-                                                let is_outbound = my_dids.contains(&msg.from.clone().unwrap_or_default());
+                                                let is_agent_reply = msg.alias.as_deref() == Some("AI Agent");
+                                                let is_outbound = my_dids.contains(&msg.from.clone().unwrap_or_default()) && !is_agent_reply;
                                                 let align_class = if is_outbound { "justify-end" } else { "justify-start" };
                                                 let bubble_class = if is_outbound { 
                                                     "bg-blue-600 text-white rounded-l-xl rounded-tr-xl" 

@@ -9,18 +9,31 @@ use crate::auth::{perform_webauthn_register, perform_webauthn_login};
 #[component]
 pub fn Login(
     base_url: String,
+    username: ReadSignal<String>,
     set_is_logged_in: WriteSignal<bool>,
     set_username: WriteSignal<String>,
     set_token: WriteSignal<String>,
     set_user_id: WriteSignal<String>,
     set_registration_cookie: WriteSignal<Option<RegistrationCookie>>,
+    set_current_path: WriteSignal<String>,
 ) -> impl IntoView {
-    let (user_input, set_user_input) = signal(String::new());
+    let (user_input, set_user_input) = signal(username.get());
     let (invite_input, set_invite_input) = signal(String::new());
     let (show_invite, set_show_invite) = signal(false);
     let (error_msg, set_error_msg) = signal(Option::<String>::None);
     let (is_loading, set_is_loading) = signal(false);
     let (is_register_mode, set_is_register_mode) = signal(false);
+
+    // Check if redirected from successful onboarding
+    Effect::new(move |_| {
+        if let Some(win) = web_sys::window() {
+            if let Ok(search) = win.location().search() {
+                if search.contains("registered=true") {
+                    set_error_msg.set(Some("Registration successful! Now please sign in.".to_string()));
+                }
+            }
+        }
+    });
 
     let api_base = store_value(base_url);
     
@@ -67,6 +80,7 @@ pub fn Login(
             return;
         }
 
+        let username_clone = username.clone();
         spawn_local(async move {
             match perform_webauthn_login(&ab, &username).await {
                 Ok((token_val, uid, cookie)) => {
@@ -99,9 +113,14 @@ pub fn Login(
                     }
                 },
                 Err(e) => {
-                    log::info!("Login error (likely user not found): {:?}, switching to register mode", e);
-                    set_is_register_mode.set(true);
-                    set_error_msg.set(Some("No account found for this username. Click 'Create Account' below to get started.".to_string()));
+                    log::info!("Login error (likely user not found): {:?}, redirecting to onboarding", e);
+                    set_username.set(username_clone);
+                    if let Some(win) = web_sys::window() {
+                        if let Ok(history) = win.history() {
+                            let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/onboarding"));
+                            set_current_path.set("/onboarding".to_string());
+                        }
+                    }
                 }
             }
             set_is_loading.set(false);
@@ -125,6 +144,7 @@ pub fn Login(
                         <input
                              type="text"
                              on:input=move |ev| set_user_input.set(event_target_value(&ev))
+                             prop:value=move || user_input.get()
                              class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-white placeholder-slate-600"
                              placeholder="Enter your username"
                         />
@@ -147,16 +167,16 @@ pub fn Login(
                     <div class="flex justify-between items-center text-xs mt-2 px-1">
                         <button
                             on:click=move |_| {
-                                set_is_register_mode.update(|v| *v = !*v);
-                                set_error_msg.set(None);
+                                if let Some(win) = web_sys::window() {
+                                    if let Ok(history) = win.history() {
+                                        let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/onboarding"));
+                                        set_current_path.set("/onboarding".to_string());
+                                    }
+                                }
                             }
                             class="text-blue-400 hover:text-blue-300 transition-colors"
                         >
-                            {move || if is_register_mode.get() {
-                                "Already have an account? Sign In"
-                            } else {
-                                "New here? Create Account"
-                            }}
+                            "New here? Create Account"
                         </button>
                         <Show when=move || !is_register_mode.get() && !show_invite.get()>
                             <button

@@ -361,13 +361,6 @@ pub struct GetMessagesQuery {
     pub recipient: Option<String>,
 }
 
-// === Recovery DTOs ===
-
-#[derive(Deserialize)]
-pub struct SetRecoveryRequest {
-    pub nickname: String,
-    pub secret: String,
-}
 
 // === MCP DTOs ===
 

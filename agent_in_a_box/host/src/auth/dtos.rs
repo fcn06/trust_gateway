@@ -13,8 +13,6 @@ pub struct StartLoginRequest { pub username: String }
 #[derive(Deserialize)]
 pub struct FinishLoginRequest { pub session_id: String, pub response: String }
 
-#[derive(Deserialize)]
-pub struct SetRecoveryRequest { pub nickname: String, pub secret: String }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct UserProfile {

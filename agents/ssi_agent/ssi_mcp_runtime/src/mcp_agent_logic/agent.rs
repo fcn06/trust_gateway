@@ -269,7 +269,7 @@ impl McpAgent {
         for msg in self.messages.iter().rev() {
             if msg.role == "assistant" {
                 if let Some(tool_calls) = &msg.tool_calls {
-                    let has_search = tool_calls.iter().any(|tc| tc.function.name == "search_skills" || tc.function.name == "list_bundles");
+                    let has_search = tool_calls.iter().any(|tc| tc.function.name == "search_skills" || tc.function.name == "list_bundles" || tc.function.name == "vp_search");
                     if has_search {
                         consecutive_searches += 1;
                     } else {
@@ -722,11 +722,14 @@ impl McpAgent {
         }
 
         if final_message.is_none() {
-            warn!("Agent finished without a definitive final message.");
-            return Err(anyhow::anyhow!(
-                "Agent reached maximum loops ({}) without returning a final answer (likely an infinite tool calling loop).",
-                self.agent_mcp_config.agent_mcp_max_loops
-            ));
+            warn!("Agent finished without a definitive final message. Generating fallback response.");
+            let fallback_message = Message {
+                role: self.agent_mcp_config.agent_mcp_role_assistant.clone(),
+                content: Some("I apologize, but I encountered an execution issue while trying to process your request (maximum reasoning steps exceeded). This often happens if an external service is unavailable or rate-limited. Please try again in a few moments.".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            };
+            final_message = Some(fallback_message);
         }
 
         Ok(final_message)

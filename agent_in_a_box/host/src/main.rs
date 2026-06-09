@@ -161,12 +161,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/login/start", post(auth::start_login_handler))
         .route("/login/finish", post(auth::finish_login_handler))
         .route("/profile", get(auth::get_profile_handler).post(auth::update_profile_handler))
-        .route("/recovery/config", post(auth::set_recovery_config_handler))
         .route("/handshake/status/:thid", get(auth::check_handshake_status_handler));
 
     let app = Router::new()
         .route("/api/link-remote", post(auth::link_remote_access_handler))
-        .route("/api/recovery", post(auth::set_recovery_config_handler))
         .nest("/api/webauthn", auth_routes)
         .route("/api/identities", post(handlers::api::create_identity_handler).get(handlers::api::list_identities_handler))
         .route("/api/identities/generate_did_web", post(handlers::api::generate_did_web_handler))

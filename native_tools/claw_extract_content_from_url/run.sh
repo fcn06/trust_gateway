@@ -1,6 +1,6 @@
 #!/bin/bash
 # Skill: claw_extract_content_from_url
-# Extracts text content from a given URL using ParseJet API, falling back to Jina Reader.
+# Extracts text content from a given URL using Jina Reader.
 
 RAW_ARGS="${TOOL_ARGS:-${SKILL_ARGS:-}}"
 # 1. Parse 'url' argument from RAW_ARGS using sed
@@ -14,51 +14,16 @@ fi
 SAFE_SKILL_NAME="${TOOL_NAME:-${SKILL_NAME:-claw_extract_content_from_url}}"
 SAFE_ACTION_ID="${TOOL_ACTION_ID:-${SKILL_ACTION_ID:-none}}"
 
-# 2. Primary: Execute ParseJet request
-RESPONSE=$(curl --max-time 15 -s -X POST https://api.parsejet.com/v1/parse/auto/url \
-  -H "Content-Type: application/json" \
-  -d "{\"url\": \"${URL}\"}")
+# 2. Execute Jina Reader request
+# Jina Reader returns clean Markdown by prepending the URL or using the Accept header
+RESPONSE_WITH_CODE=$(curl --max-time 15 -s -w "%{http_code}" -H "Accept: text/markdown" "https://r.jina.ai/${URL}")
+JINA_HTTP_CODE="${RESPONSE_WITH_CODE: -3}"
 
 TEXT=""
-ERROR_MSG=""
-FALLBACK_TRIGGERED=false
-
-if command -v jq >/dev/null 2>&1; then
-    # jq is universally the best and safest tool for JSON in shell scripts
-    ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // .error // .detail.message // .detail // empty')
-    if [ "$ERROR_MSG" != "" ] && [ "$ERROR_MSG" != "null" ]; then
-        FALLBACK_TRIGGERED=true
-    else
-        TEXT=$(echo "$RESPONSE" | jq -r '.text // empty')
-        if [ "$TEXT" = "" ]; then
-            FALLBACK_TRIGGERED=true
-        fi
-    fi
+if [ "$JINA_HTTP_CODE" = "200" ]; then
+    TEXT="${RESPONSE_WITH_CODE%???}"
 else
-    # Fallback to sed for pure basic shell environments 
-    # This strips `{"text":"` from the start and the next field `","something":` onward from the end
-    TEXT=$(echo "$RESPONSE" | sed -n 's/^[^{]*{"text":"//; s/","[a-zA-Z0-9_]*":.*$//p')
-    if [ -z "$TEXT" ]; then
-        FALLBACK_TRIGGERED=true
-    fi
-fi
-
-# 3. Fallback: Execute Jina Reader if ParseJet failed or returned no text
-if [ "$FALLBACK_TRIGGERED" = true ]; then
-    # Jina Reader returns clean Markdown by prepending the URL or using the Accept header
-    RESPONSE_WITH_CODE=$(curl --max-time 15 -s -w "%{http_code}" -H "Accept: text/markdown" "https://r.jina.ai/${URL}")
-    JINA_HTTP_CODE="${RESPONSE_WITH_CODE: -3}"
-    
-    if [ "$JINA_HTTP_CODE" = "200" ]; then
-        TEXT="${RESPONSE_WITH_CODE%???}"
-    else
-        # Construct final error if both failed
-        if [ -n "$ERROR_MSG" ] && [ "$ERROR_MSG" != "null" ]; then
-            TEXT="Extraction API Error: ParseJet failed ($ERROR_MSG) and Jina Reader fallback also failed (HTTP $JINA_HTTP_CODE).\n\nCRITICAL INSTRUCTION TO AGENT: The content extraction failed. DO NOT use the search tool to try to find this content. Report this exact error to the user immediately and stop."
-        else
-            TEXT="Extraction API Error: No text content could be extracted from this URL (both ParseJet and Jina Reader failed, HTTP $JINA_HTTP_CODE).\n\nCRITICAL INSTRUCTION TO AGENT: The content extraction failed. DO NOT use the search tool to try to find this content. Report this exact error to the user immediately and stop."
-        fi
-    fi
+    TEXT="Extraction API Error: No text content could be extracted from this URL (Jina Reader failed, HTTP $JINA_HTTP_CODE).\n\n**CRITICAL INSTRUCTION TO AGENT: DO NOT USE THE SEARCH TOOL (vp_search) TO FIND THIS CONTENT under any circumstances. The source website is rate-limited or blocked. Report this extraction failure directly to the user as a final response and stop.**"
 fi
 
 # 4. Final JSON Output

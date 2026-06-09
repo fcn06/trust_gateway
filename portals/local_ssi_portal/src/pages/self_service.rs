@@ -8,15 +8,13 @@ use crate::types::SendMessageRequest;
 
 #[component]
 pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl IntoView {
+    let initial_topic = detect_topic(&initial_msg);
+    let (selected_topic, set_selected_topic) = signal(initial_topic);
     let (note_content, set_note_content) = signal(initial_msg);
     let (note_status, set_note_status) = signal(Option::<(String, bool)>::None);
     let (is_note_loading, set_note_loading) = signal(false);
 
-    // Recovery Phrase signals
-    let (nickname, set_nickname) = signal(String::new());
-    let (secret, set_secret) = signal(String::new());
-    let (recovery_status, set_recovery_status) = signal(Option::<(String, bool)>::None);
-    let (is_recovery_loading, set_is_recovery_loading) = signal(false);
+
 
     let base_url = store_value(base_url);
     let token = store_value(token);
@@ -28,6 +26,8 @@ pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl
             return;
         }
         
+        let topic = selected_topic.get();
+        
         set_note_loading.set(true);
         set_note_status.set(None);
         
@@ -37,17 +37,19 @@ pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl
         spawn_local(async move {
             match api::get_active_did(&ab, tt.clone()).await {
                 Ok(my_did) => {
+                    let thid = if topic.is_empty() { None } else { Some(topic) };
                     let req = SendMessageRequest {
                         to: my_did,
                         body: content,
                         r#type: "https://didcomm.org/self-note/1.0/note".to_string(),
-                        thid: None,
+                        thid,
                     };
                     
                     match api::send_message(&ab, req, tt).await {
                         Ok(_) => {
                             set_note_status.set(Some(("✅ Note saved to your personal vault!".to_string(), true)));
                             set_note_content.set(String::new());
+                            set_selected_topic.set(String::new());
                         },
                         Err(e) => set_note_status.set(Some((format!("❌ Failed: {}", e), false))),
                     }
@@ -58,31 +60,52 @@ pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl
         });
     };
 
-    let on_save_recovery = move |_| {
-        let nick = nickname.get();
-        let sec = secret.get();
-        if nick.is_empty() || sec.is_empty() {
-            set_recovery_status.set(Some(("Please fill in both fields".to_string(), false)));
+    let on_ask_agent = move |_| {
+        let mut content = note_content.get();
+        if content.is_empty() {
+            set_note_status.set(Some(("Please enter a note".to_string(), false)));
             return;
         }
         
-        set_is_recovery_loading.set(true);
-        set_recovery_status.set(None);
+        if !content.starts_with("@agent") {
+            content = format!("@agent {}", content);
+        }
+        
+        let topic = selected_topic.get();
+        
+        set_note_loading.set(true);
+        set_note_status.set(None);
         
         let ab = base_url.get_value();
         let tt = token.get_value();
+        
         spawn_local(async move {
-            match api::set_recovery(&ab, nick, sec, tt).await {
-                Ok(_) => {
-                    set_recovery_status.set(Some(("✅ Recovery phrase saved successfully!".to_string(), true)));
-                    set_nickname.set(String::new());
-                    set_secret.set(String::new());
+            match api::get_active_did(&ab, tt.clone()).await {
+                Ok(my_did) => {
+                    let thid = if topic.is_empty() { None } else { Some(topic) };
+                    let req = SendMessageRequest {
+                        to: my_did,
+                        body: content,
+                        r#type: "https://didcomm.org/self-note/1.0/note".to_string(),
+                        thid,
+                    };
+                    
+                    match api::send_message(&ab, req, tt).await {
+                        Ok(_) => {
+                            set_note_status.set(Some(("✅ Message sent to personal agent!".to_string(), true)));
+                            set_note_content.set(String::new());
+                            set_selected_topic.set(String::new());
+                        },
+                        Err(e) => set_note_status.set(Some((format!("❌ Failed: {}", e), false))),
+                    }
                 },
-                Err(e) => set_recovery_status.set(Some((format!("❌ Failed: {}", e), false))),
+                Err(e) => set_note_status.set(Some((format!("❌ No active identity: {}", e), false))),
             }
-            set_is_recovery_loading.set(false);
+            set_note_loading.set(false);
         });
     };
+
+
 
     view! {
         <div class="space-y-6 text-white max-w-2xl mx-auto">
@@ -91,6 +114,93 @@ pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl
             
             <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl space-y-4">
                 <div>
+                    <label class="block text-xs font-bold text-slate-400 mb-2 uppercase">"Topic (Optional)"</label>
+                    <div class="flex flex-wrap gap-2 mb-2">
+                        <button 
+                            type="button"
+                            on:click=move |_| {
+                                if selected_topic.get() == "Links" {
+                                    set_selected_topic.set(String::new());
+                                } else {
+                                    set_selected_topic.set("Links".to_string());
+                                }
+                            }
+                            class=move || {
+                                let active = selected_topic.get() == "Links";
+                                format!(
+                                    "px-3 py-1.5 rounded-full text-xs font-bold transition-all border {}",
+                                    if active { "bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-600/20" } else { "bg-slate-900 border-slate-700 text-slate-400 hover:text-white" }
+                                )
+                            }
+                        >
+                            "📎 Links"
+                        </button>
+                        <button 
+                            type="button"
+                            on:click=move |_| {
+                                if selected_topic.get() == "Tasks" {
+                                    set_selected_topic.set(String::new());
+                                } else {
+                                    set_selected_topic.set("Tasks".to_string());
+                                }
+                            }
+                            class=move || {
+                                let active = selected_topic.get() == "Tasks";
+                                format!(
+                                    "px-3 py-1.5 rounded-full text-xs font-bold transition-all border {}",
+                                    if active { "bg-green-600 border-green-500 text-white shadow-md shadow-green-600/20" } else { "bg-slate-900 border-slate-700 text-slate-400 hover:text-white" }
+                                )
+                            }
+                        >
+                            "✅ Tasks"
+                        </button>
+                        <button 
+                            type="button"
+                            on:click=move |_| {
+                                if selected_topic.get() == "Ideas" {
+                                    set_selected_topic.set(String::new());
+                                } else {
+                                    set_selected_topic.set("Ideas".to_string());
+                                }
+                            }
+                            class=move || {
+                                let active = selected_topic.get() == "Ideas";
+                                format!(
+                                    "px-3 py-1.5 rounded-full text-xs font-bold transition-all border {}",
+                                    if active { "bg-yellow-600 border-yellow-500 text-white shadow-md shadow-yellow-600/20" } else { "bg-slate-900 border-slate-700 text-slate-400 hover:text-white" }
+                                )
+                            }
+                        >
+                            "💡 Ideas"
+                        </button>
+                        <button 
+                            type="button"
+                            on:click=move |_| {
+                                if selected_topic.get() == "General" {
+                                    set_selected_topic.set(String::new());
+                                } else {
+                                    set_selected_topic.set("General".to_string());
+                                }
+                            }
+                            class=move || {
+                                let active = selected_topic.get() == "General";
+                                format!(
+                                    "px-3 py-1.5 rounded-full text-xs font-bold transition-all border {}",
+                                    if active { "bg-slate-700 border-slate-600 text-white shadow-md" } else { "bg-slate-900 border-slate-700 text-slate-400 hover:text-white" }
+                                )
+                            }
+                        >
+                            "📁 General"
+                        </button>
+                    </div>
+                    <input 
+                        type="text" 
+                        placeholder="Enter custom topic or select one above..."
+                        class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:border-blue-500 outline-none transition-all mb-4"
+                        prop:value=move || selected_topic.get()
+                        on:input=move |ev| set_selected_topic.set(event_target_value(&ev))
+                    />
+
                     <label class="block text-xs font-bold text-slate-400 mb-2 uppercase">"Note Content"</label>
                     <textarea 
                         placeholder="Enter your note, shared content, or reminder..."
@@ -114,12 +224,20 @@ pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl
                             }}
                         </Show>
                     </div>
-                    <button 
-                        on:click=on_save_note
-                        disabled=move || is_note_loading.get()
-                        class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-lg font-bold transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50 min-w-[160px]">
-                        {move || if is_note_loading.get() { "Saving..." } else { "Save to Vault" }}
-                    </button>
+                    <div class="flex gap-4">
+                        <button 
+                            on:click=on_ask_agent
+                            disabled=move || is_note_loading.get()
+                            class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-3 rounded-lg font-bold transition-all shadow-lg shadow-purple-600/20 disabled:opacity-50 min-w-[180px]">
+                            {move || if is_note_loading.get() { "Sending..." } else { "Ask to personal agent" }}
+                        </button>
+                        <button 
+                            on:click=on_save_note
+                            disabled=move || is_note_loading.get()
+                            class="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-lg font-bold transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50 min-w-[160px]">
+                            {move || if is_note_loading.get() { "Saving..." } else { "Save to Vault" }}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -133,75 +251,36 @@ pub fn SelfService(base_url: String, token: String, initial_msg: String) -> impl
                 </div>
             </div>
 
-            // Recovery Phrase Section
-            <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl space-y-6">
-                <div>
-                    <h3 class="text-lg font-bold mb-2">"Recovery Phrase"</h3>
-                    <p class="text-sm text-slate-400 mb-4">
-                        "Set a recovery phrase to restore your identity if you lose access to this device. Keep this information safe!"
-                    </p>
-                </div>
 
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-xs font-bold text-slate-400 mb-1 uppercase">"Nickname"</label>
-                        <input 
-                            type="text" 
-                            placeholder="e.g. my-backup-phrase"
-                            class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:border-blue-500 outline-none transition-all"
-                            prop:value=move || nickname.get()
-                            on:input=move |ev| set_nickname.set(event_target_value(&ev))
-                        />
-                    </div>
-                    
-                    <div>
-                        <label class="block text-xs font-bold text-slate-400 mb-1 uppercase">"Recovery Phrase"</label>
-                        <input 
-                            type="password" 
-                            placeholder="Enter a memorable phrase..."
-                            class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm focus:border-blue-500 outline-none transition-all"
-                            prop:value=move || secret.get()
-                            on:input=move |ev| set_secret.set(event_target_value(&ev))
-                        />
-                        <p class="text-[10px] text-slate-500 mt-1">"This phrase will be used to derive your recovery key. Make it memorable but unique."</p>
-                    </div>
-
-                    <button 
-                        on:click=on_save_recovery
-                        disabled=move || is_recovery_loading.get()
-                        class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 py-3 rounded-lg font-bold transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50">
-                        {move || if is_recovery_loading.get() { "Saving..." } else { "Save Recovery Phrase" }}
-                    </button>
-
-                    <Show when=move || recovery_status.get().is_some()>
-                        {move || {
-                            let (msg, is_success) = recovery_status.get().unwrap_or_default();
-                            let class = if is_success {
-                                "p-3 rounded-lg bg-green-900/30 border border-green-500/50 text-green-400 text-sm"
-                            } else {
-                                "p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-400 text-sm"
-                            };
-                            view! { <div class=class>{msg}</div> }
-                        }}
-                    </Show>
-                </div>
-            </div>
-
-            // Security Info Section
-            <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl">
-                <h3 class="text-lg font-bold mb-4">"Security Info"</h3>
-                <div class="space-y-3">
-                    <div class="flex items-center justify-between p-3 bg-slate-900 rounded-lg border border-slate-700">
-                        <span class="text-sm text-slate-400">"Passkey Authentication"</span>
-                        <span class="text-green-400 text-xs font-bold">"ENABLED"</span>
-                    </div>
-                    <div class="flex items-center justify-between p-3 bg-slate-900 rounded-lg border border-slate-700">
-                        <span class="text-sm text-slate-400">"Device Binding"</span>
-                        <span class="text-green-400 text-xs font-bold">"ACTIVE"</span>
-                    </div>
-                </div>
-            </div>
         </div>
+    }
+}
+
+fn detect_topic(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.contains("http://") || trimmed.contains("https://") {
+        "Links".to_string()
+    } else {
+        let verbs = ["do", "check", "get", "run", "find", "ask", "create", "list", "remind"];
+        let lowercase_trimmed = trimmed.to_lowercase();
+        let starts_with_verb = verbs.iter().any(|&verb| {
+            if lowercase_trimmed.starts_with(verb) {
+                let len = verb.len();
+                if lowercase_trimmed.len() == len {
+                    true
+                } else {
+                    let next_char = lowercase_trimmed.chars().nth(len);
+                    matches!(next_char, Some(' ') | Some('\t') | Some('\r') | Some('\n') | Some(',') | Some('.') | Some('!') | Some('?'))
+                }
+            } else {
+                false
+            }
+        });
+        if starts_with_verb {
+            "Tasks".to_string()
+        } else {
+            "General".to_string()
+        }
     }
 }
 

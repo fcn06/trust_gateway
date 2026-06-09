@@ -120,14 +120,6 @@ pub struct ContactRequestsResponse {
     pub requests: Vec<ContactRequest>,
 }
 
-// === Recovery ===
-
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
-pub struct SetRecoveryRequest {
-    pub nickname: String,
-    pub secret: String,
-}
-
 // === Authentication ===
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

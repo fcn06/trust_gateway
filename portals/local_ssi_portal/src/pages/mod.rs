@@ -45,3 +45,5 @@ pub mod agent_registry;
 pub use agent_registry::AgentRegistry;
 pub mod b2b_policies;
 pub use b2b_policies::B2bPoliciesManager;
+pub mod onboarding;
+pub use onboarding::Onboarding;

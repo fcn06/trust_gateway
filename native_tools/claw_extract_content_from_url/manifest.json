@@ -20,7 +20,6 @@
     "scraper",
     "url",
     "extract",
-    "parsejet",
     "jina"
   ],
   "category": "extraction",

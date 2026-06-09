@@ -292,20 +292,7 @@ pub async fn update_profile(base_url: &str, profile: UserProfile, token: String)
     if resp.ok() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
-// === Recovery APIs ===
 
-pub async fn set_recovery(base_url: &str, nickname: String, secret: String, token: String) -> Result<(), String> {
-    let req = SetRecoveryRequest { nickname, secret };
-    let resp = Request::post(&format!("{}/recovery", base_url))
-        .credentials(RequestCredentials::Include)
-        .header("Authorization", &auth_header(&token))
-        .header("Content-Type", "application/json")
-        .body(serde_json::to_string(&req).unwrap())
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.ok() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
-}
 
 // === Remote Access APIs ===
 

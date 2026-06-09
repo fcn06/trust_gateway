@@ -2,7 +2,7 @@
 
 This skill provides an automated way to extract raw content from a given internet URL. 
 The url can point to html pages, pdf files, doc files but also Youtube videos.
-It interfaces with the `ParseJet` extraction API to process pages and return structured or unstructured text content.
+It interfaces with the Jina Reader extraction API to process pages and return structured or unstructured text content.
 
 ## Parameters
 
@@ -10,12 +10,12 @@ It interfaces with the `ParseJet` extraction API to process pages and return str
 
 ## Output Structure
 
-The output is returned as standard JSON enclosing the response retrieved from the ParseJet service.
+The output is returned as standard JSON enclosing the response retrieved from the Jina Reader service.
 
 ```json
 {
   "result": {
-    // ParseJet response payload
+    // Jina Reader response payload
   },
   "skill": "claw_extract_content_from_url",
   "action_id": "<action_id>"

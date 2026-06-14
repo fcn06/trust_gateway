@@ -22,10 +22,16 @@ fi
 NK_BIN="nk"
 if [ -x "./nk" ]; then
     NK_BIN="./nk"
+elif [ -x "./nkeys" ]; then
+    NK_BIN="./nkeys"
 elif ! command -v nk &> /dev/null; then
     echo "📥 Downloading 'nk' tool..."
     curl -sf https://binaries.nats.dev/nats-io/nkeys/nk@latest | sh
-    NK_BIN="./nk"
+    if [ -x "./nkeys" ]; then
+        NK_BIN="./nkeys"
+    elif [ -x "./nk" ]; then
+        NK_BIN="./nk"
+    fi
 fi
 
 echo "🔑 Generating ephemeral NATS nkeys for services..."
@@ -42,7 +48,6 @@ NATS_NKEY_SEED_CONN=$($NK_BIN -gen user)
 PUB_CONN=$(echo "$NATS_NKEY_SEED_CONN" | $NK_BIN -inkey /dev/stdin -pubout)
 
 NATS_NKEY_SEED_NSE=$($NK_BIN -gen user)
-PUB_NSE=$($NK_BIN -gen user) # Use a separate seed for NSE
 PUB_NSE_KEY=$(echo "$NATS_NKEY_SEED_NSE" | $NK_BIN -inkey /dev/stdin -pubout)
 
 NATS_NKEY_SEED_VP=$($NK_BIN -gen user)

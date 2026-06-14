@@ -206,12 +206,29 @@ pub async fn execute_tool_call_v2(
                 "pending_approval" | "pending_proof" => {
                     let approval_id = gateway_response.get("approval_id").and_then(|v| v.as_str()).unwrap_or("unknown");
                     let escalation = gateway_response.get("escalation").and_then(|v| v.as_str()).unwrap_or("standard");
-                    Ok(CallToolResult::success(vec![
-                        rmcp::model::Content::text(format!(
-                            "This action requires {} approval. Approval ID: {}. Please check the portal to approve.",
-                            escalation, approval_id
-                        ))
-                    ]))
+                    
+                    let val = serde_json::json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": format!(
+                                    "This action requires {} approval. Approval ID: {}. Please check the portal to approve.",
+                                    escalation, approval_id
+                                )
+                            }
+                        ],
+                        "isError": false,
+                        "is_error": false,
+                        "meta": {
+                            "status": status,
+                            "approval_id": approval_id,
+                            "escalation": escalation
+                        }
+                    });
+                    
+                    let result: CallToolResult = serde_json::from_value(val)
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize CallToolResult: {}", e))?;
+                    Ok(result)
                 }
                 _ => {
                     tracing::error!("Action failed or rejected by Gateway: {}", status);

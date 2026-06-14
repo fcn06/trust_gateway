@@ -122,6 +122,8 @@ pub trait AuthVerifier: Send + Sync {
 /// This is the canonical verifier for session JWTs issued by the Host.
 pub struct HmacAuthVerifier {
     key: jwt_simple::prelude::HS256Key,
+    allowed_audience: Option<String>,
+    required_issuer: Option<String>,
 }
 
 impl HmacAuthVerifier {
@@ -129,6 +131,17 @@ impl HmacAuthVerifier {
     pub fn new(secret: &str) -> Self {
         Self {
             key: jwt_simple::prelude::HS256Key::from_bytes(secret.as_bytes()),
+            allowed_audience: None,
+            required_issuer: None,
+        }
+    }
+
+    /// Create a new HMAC-SHA256 verifier with audience and issuer checks.
+    pub fn with_audience_and_issuer(secret: &str, audience: String, issuer: String) -> Self {
+        Self {
+            key: jwt_simple::prelude::HS256Key::from_bytes(secret.as_bytes()),
+            allowed_audience: Some(audience),
+            required_issuer: Some(issuer),
         }
     }
 
@@ -136,6 +149,8 @@ impl HmacAuthVerifier {
     pub fn from_bytes(secret: &[u8]) -> Self {
         Self {
             key: jwt_simple::prelude::HS256Key::from_bytes(secret),
+            allowed_audience: None,
+            required_issuer: None,
         }
     }
 }
@@ -151,6 +166,13 @@ impl AuthVerifier for HmacAuthVerifier {
         let mut options = VerificationOptions::default();
         // Phase 6: Strict clock skew enforcement (±5 seconds)
         options.time_tolerance = Some(Duration::from_secs(5));
+        
+        if let Some(aud) = &self.allowed_audience {
+            options.allowed_audiences = Some(std::collections::HashSet::from([aud.clone()]));
+        }
+        if let Some(iss) = &self.required_issuer {
+            options.allowed_issuers = Some(std::collections::HashSet::from([iss.clone()]));
+        }
         
         let verified = self
             .key
@@ -351,5 +373,57 @@ mod tests {
         assert!(decode_jwt_claims("not-a-jwt").is_none());
         assert!(decode_jwt_claims("").is_none());
         assert!(decode_jwt_claims("only.one").is_none());
+    }
+
+    #[test]
+    fn test_hmac_auth_verifier_audience_and_issuer() {
+        use jwt_simple::prelude::{HS256Key, Claims, MACLike, Duration};
+        
+        #[derive(Serialize, Deserialize)]
+        struct TestCustomClaims {
+            tenant_id: String,
+            scope: Vec<String>,
+        }
+
+        let secret = "test-secret-key-12345678901234567890";
+        let key = HS256Key::from_bytes(secret.as_bytes());
+        
+        let claims = Claims::with_custom_claims(
+            TestCustomClaims {
+                tenant_id: "test_tenant".to_string(),
+                scope: vec!["test_scope".to_string()],
+            },
+            Duration::from_secs(3600)
+        )
+        .with_issuer("test_issuer")
+        .with_subject("test_subject")
+        .with_audience("test_audience");
+        
+        let token = key.authenticate(claims).unwrap();
+        
+        // 1. Success validation
+        let verifier = HmacAuthVerifier::with_audience_and_issuer(
+            secret,
+            "test_audience".to_string(),
+            "test_issuer".to_string(),
+        );
+        let verified = verifier.verify(&token).unwrap();
+        assert_eq!(verified.tenant_id, "test_tenant");
+        
+        // 2. Mismatched audience
+        let verifier_bad_aud = HmacAuthVerifier::with_audience_and_issuer(
+            secret,
+            "wrong_audience".to_string(),
+            "test_issuer".to_string(),
+        );
+        assert!(verifier_bad_aud.verify(&token).is_err());
+        
+        // 3. Mismatched issuer
+        let verifier_bad_iss = HmacAuthVerifier::with_audience_and_issuer(
+            secret,
+            "test_audience".to_string(),
+            "wrong_issuer".to_string(),
+        );
+        assert!(verifier_bad_iss.verify(&token).is_err());
     }
 }

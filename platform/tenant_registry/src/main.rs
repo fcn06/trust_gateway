@@ -60,8 +60,8 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("🔌 Connecting to NATS at {}", cli.nats_url);
     let mut nats_options = async_nats::ConnectOptions::new();
-    if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-        nats_options = async_nats::ConnectOptions::with_nkey(seed);
+    if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+        nats_options = async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string());
     }
     let nats = async_nats::connect_with_options(&cli.nats_url, nats_options).await?;
     let js = jetstream::new(nats);

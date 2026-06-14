@@ -7,6 +7,7 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
+identity_context = { path = "../../../execution_plane/shared_libs/identity_context" }
 #llm_api = { workspace = true }
 #configuration = { workspace = true }
 #rmcp = { workspace = true }

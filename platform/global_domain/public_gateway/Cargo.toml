@@ -5,6 +5,7 @@ edition = "2021"
 description = "HTTP to NATS bridge for DIDComm service endpoints"
 
 [dependencies]
+identity_context = { path = "../../../execution_plane/shared_libs/identity_context" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"

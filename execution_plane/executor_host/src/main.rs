@@ -50,8 +50,8 @@ async fn main() -> Result<()> {
     tracing::info!("🚀 Unified Executor Host starting [profile={}]", args.profile);
 
     // 1. Connect to NATS
-    let mut nats_options = if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-        async_nats::ConnectOptions::with_nkey(seed)
+    let mut nats_options = if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+        async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string())
     } else {
         async_nats::ConnectOptions::new()
     };
@@ -156,8 +156,11 @@ fn build_grant_validator(args: &Args) -> Result<trust_core::grant_validator::Gra
         }
     }
 
-    if let Some(ref secret) = args.jwt_secret {
-        validator = validator.with_hmac_key(secret);
+    let jwt_secret_wrapper = args.jwt_secret.clone().map(identity_context::SecretString::new)
+        .or_else(|| identity_context::load_secret("JWT_SECRET"));
+
+    if let Some(ref secret) = jwt_secret_wrapper {
+        validator = validator.with_hmac_key(secret.expose_secret());
         tracing::info!("✅ HMAC grant validation enabled (fallback/legacy)");
     }
 

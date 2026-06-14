@@ -39,8 +39,8 @@ pub fn load_config() -> Result<HostConfig> {
 // Setup NATS and KV Stores
 pub async fn setup_nats(config: &HostConfig) -> Result<(async_nats::Client, HashMap<String, Store>)> {
     let mut nats_options = async_nats::ConnectOptions::new();
-    if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-        nats_options = async_nats::ConnectOptions::with_nkey(seed);
+    if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+        nats_options = async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string());
     }
     nats_options = nats_options.request_timeout(Some(std::time::Duration::from_secs(30)));
     let nc = async_nats::connect_with_options(&config.nats_global_domain_url, nats_options).await
@@ -166,11 +166,12 @@ pub fn load_server_keys() -> Result<ServerKeys> {
         k
     };
 
-    // Override JWT key if environment variable is set (synchronization for dev mode)
-    if let Ok(env_secret) = std::env::var("JWT_SECRET") {
-        if !env_secret.is_empty() {
-            tracing::info!("🔐 Syncing JWT key with environment (JWT_SECRET set, len={})", env_secret.len());
-            keys.jwt_key_bytes = env_secret.as_bytes().to_vec();
+    // Override JWT key if environment variable/secret is set (synchronization for dev mode)
+    if let Some(env_secret) = identity_context::load_secret("JWT_SECRET") {
+        let secret_val = env_secret.expose_secret();
+        if !secret_val.is_empty() {
+            tracing::info!("🔐 Syncing JWT key with environment (JWT_SECRET set, len={})", secret_val.len());
+            keys.jwt_key_bytes = secret_val.as_bytes().to_vec();
         }
     }
 

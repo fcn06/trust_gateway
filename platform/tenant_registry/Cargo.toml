@@ -6,6 +6,7 @@ description = "Multi-tenant control plane: tenant CRUD, NATS provisioning, KV na
 
 [dependencies]
 tenant_context = { path = "../tenant_context" }
+identity_context = { path = "../../execution_plane/shared_libs/identity_context" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

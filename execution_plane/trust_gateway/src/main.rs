@@ -79,7 +79,7 @@ struct Args {
 
     /// JWT signing secret (shared with Host's ssi_vault)
     #[arg(long, env = "JWT_SECRET")]
-    jwt_secret: String,
+    jwt_secret: Option<String>,
 
     /// Path to the agents TOML bootstrap file
     #[arg(long, env = "AGENTS_PATH", default_value = "config/agents.toml")]
@@ -200,11 +200,19 @@ async fn main() -> Result<()> {
 
     tracing::info!("🚀 Trust Gateway starting...");
 
+    let jwt_secret_wrapper = if let Some(ref sec) = args.jwt_secret {
+        identity_context::SecretString::new(sec.clone())
+    } else {
+        identity_context::load_secret("JWT_SECRET")
+            .expect("JWT_SECRET must be configured via environment variable, systemd LoadCredential, or --jwt-secret argument")
+    };
+    let jwt_secret_raw = jwt_secret_wrapper.expose_secret();
+
     // ── WS6: Dev-secret detection guard ─────────────────────
     // Refuse to start with the known dev secret unless explicitly
     // in development mode. Prevents accidental production deployment.
     let lianxi_env = std::env::var("LIANXI_ENV").unwrap_or_else(|_| "development".to_string());
-    if args.jwt_secret.contains("dev-secret") && lianxi_env != "development" {
+    if jwt_secret_raw.contains("dev-secret") && lianxi_env != "development" {
         tracing::error!(
             "🚨 CRITICAL: JWT_SECRET contains the known dev secret but LIANXI_ENV={}. \
              Refusing to start. Set a strong secret via: export JWT_SECRET=$(openssl rand -base64 32)",
@@ -212,7 +220,7 @@ async fn main() -> Result<()> {
         );
         std::process::exit(1);
     }
-    if args.jwt_secret.contains("dev-secret") {
+    if jwt_secret_raw.contains("dev-secret") {
         tracing::warn!(
             "⚠️ Using development JWT secret — NOT suitable for production. \
              Set JWT_SECRET to a strong random value and LIANXI_ENV=production for deployment."
@@ -236,15 +244,15 @@ async fn main() -> Result<()> {
         policy_engine.rule_count(),
         &policy_fp.hash[..16]
     );
-    tracing::info!("🔐 JWT secret loaded (len={})", args.jwt_secret.len());
+    tracing::info!("🔐 JWT secret loaded (len={})", jwt_secret_raw.len());
 
     // Load OAuth config (Phase 1)
     let oauth_config = None;
 
     // Connect to NATS
     // WS-H4: Authenticate with nkey if seed is provided
-    let mut nats_options = if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-        async_nats::ConnectOptions::with_nkey(seed)
+    let mut nats_options = if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+        async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string())
     } else {
         async_nats::ConnectOptions::new()
     };
@@ -451,7 +459,7 @@ async fn main() -> Result<()> {
                                 panic!("HMAC grant signing is disabled in non-development environments. Fix Ed25519 key.");
                             }
                             tracing::warn!("⚠️ Falling back to HMAC grant signing (development only — SEC-1)");
-                            Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret))
+                            Arc::new(grant::HmacGrantIssuer::new(jwt_secret_raw))
                         }
                     }
                 }
@@ -463,7 +471,7 @@ async fn main() -> Result<()> {
                         panic!("HMAC grant signing is disabled in non-development environments. Fix Ed25519 key.");
                     }
                     tracing::warn!("⚠️ Falling back to HMAC grant signing (development only — SEC-1)");
-                    Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret))
+                    Arc::new(grant::HmacGrantIssuer::new(jwt_secret_raw))
                 }
             }
         } else {
@@ -476,7 +484,7 @@ async fn main() -> Result<()> {
                 );
             }
             tracing::warn!("⚠️ Using HMAC grant signing (development only — SEC-1 deprecation)");
-            Arc::new(grant::HmacGrantIssuer::new(&args.jwt_secret))
+            Arc::new(grant::HmacGrantIssuer::new(jwt_secret_raw))
         }
     };
 
@@ -578,7 +586,7 @@ async fn main() -> Result<()> {
         circuit_breakers,
         allowed_origins,
         oauth_config,
-        jwt_secret: args.jwt_secret.clone(),
+        jwt_secret: jwt_secret_raw.to_string(),
         // Phase 1 SSI Identity: Use SsiTokenValidator to handle VP tokens,
         // with automatic fallback to StandardJwtValidator for UI sessions.
         // NOTE: Reuses the same hardened reqwest::Client as the rest of the

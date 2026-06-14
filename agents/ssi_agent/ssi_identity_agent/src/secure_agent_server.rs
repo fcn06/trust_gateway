@@ -136,8 +136,8 @@ impl<T: Agent> SecureAgentServer<T> {
             
         if nats_dispatch_enabled {
             let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
-            let mut nats_options = if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-                async_nats::ConnectOptions::with_nkey(seed)
+            let mut nats_options = if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+                async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string())
             } else {
                 async_nats::ConnectOptions::new()
             };
@@ -274,6 +274,80 @@ impl<T: Agent> SecureAgentServer<T> {
                     .await
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             }
+            AuthConfig::OAuth2Jwt { secret, audience, issuer } => {
+                println!("🔐 Authentication: OAuth2 JWT Bearer Token validation");
+                let authenticator = OAuth2JwtAuthenticator::new(secret, audience.clone(), issuer.clone());
+                let server = HttpServer::with_auth(processor, agent_info, bind_address, authenticator);
+                server
+                    .start()
+                    .await
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            }
         }
+    }
+}
+
+/// Dynamic OAuth2 JWT authenticator wrapper for AXUM HTTP server
+#[derive(Clone)]
+pub struct OAuth2JwtAuthenticator {
+    verifier: Arc<identity_context::jwt::HmacAuthVerifier>,
+    scheme: a2a_rs::domain::core::agent::SecurityScheme,
+}
+
+impl OAuth2JwtAuthenticator {
+    pub fn new(secret: &str, audience: String, issuer: String) -> Self {
+        Self {
+            verifier: Arc::new(identity_context::jwt::HmacAuthVerifier::with_audience_and_issuer(
+                secret,
+                audience,
+                issuer,
+            )),
+            scheme: a2a_rs::domain::core::agent::SecurityScheme::Http {
+                scheme: "bearer".to_string(),
+                bearer_format: Some("JWT".to_string()),
+                description: Some("OAuth2 JWT Bearer Token".to_string()),
+            },
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl a2a_rs::port::authenticator::Authenticator for OAuth2JwtAuthenticator {
+    async fn authenticate(
+        &self,
+        context: &a2a_rs::port::authenticator::AuthContext,
+    ) -> Result<a2a_rs::port::authenticator::AuthPrincipal, a2a_rs::domain::A2AError> {
+        self.validate_context(context)?;
+
+        use identity_context::jwt::AuthVerifier;
+        match self.verifier.verify(&context.credential) {
+            Ok(verified) => {
+                Ok(a2a_rs::port::authenticator::AuthPrincipal::new(
+                    verified.tenant_id.clone(),
+                    "bearer".to_string(),
+                ))
+            }
+            Err(e) => Err(a2a_rs::domain::A2AError::Internal(format!(
+                "OAuth2 JWT verification failed: {}",
+                e
+            ))),
+        }
+    }
+
+    fn security_scheme(&self) -> &a2a_rs::domain::core::agent::SecurityScheme {
+        &self.scheme
+    }
+
+    fn validate_context(
+        &self,
+        context: &a2a_rs::port::authenticator::AuthContext,
+    ) -> Result<(), a2a_rs::domain::A2AError> {
+        if context.scheme_type != "bearer" {
+            return Err(a2a_rs::domain::A2AError::Internal(format!(
+                "Invalid authentication scheme: expected 'bearer', got '{}'",
+                context.scheme_type
+            )));
+        }
+        Ok(())
     }
 }

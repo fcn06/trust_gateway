@@ -65,16 +65,16 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("🌐 Public Gateway connecting to NATS at {}", nats_url);
     
     let mut nats_options = async_nats::ConnectOptions::new();
-    if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-        nats_options = async_nats::ConnectOptions::with_nkey(seed);
+    if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+        nats_options = async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string());
     }
     let nats = async_nats::connect_with_options(&nats_url, nats_options).await?;
     tracing::info!("✅ Connected to NATS");
 
     // Load or Generate Gateway Private Key
-    let key_var = std::env::var("GATEWAY_PRIVATE_KEY").unwrap_or_default();
-    let private_key = if !key_var.is_empty() {
-        let bytes = base64::engine::general_purpose::STANDARD.decode(key_var)
+    let key_var_wrapper = identity_context::load_secret("GATEWAY_PRIVATE_KEY");
+    let private_key = if let Some(ref key_var) = key_var_wrapper {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(key_var.expose_secret())
             .expect("Invalid GATEWAY_PRIVATE_KEY base64");
         let arr: [u8; 32] = bytes.try_into().expect("Invalid key length");
         StaticSecret::from(arr)

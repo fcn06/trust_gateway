@@ -12,6 +12,7 @@ llm_api = {git = "https://github.com/fcn06/swarm_commons.git", rev = "ac6bcf1154
 
 #mcp_runtime={git = "https://github.com/fcn06/swarm.git"}
 ssi_mcp_runtime={ workspace = true }
+identity_context = { path = "../../../execution_plane/shared_libs/identity_context" }
 
 
 # To be modified if you want to point out to other implementation of Memory, Evaluation, Discovery Services

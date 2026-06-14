@@ -68,6 +68,8 @@ reset:
 	@echo "✅ Infrastructure reset complete."
 
 clean:
+	../stop_dev.sh || true
+	pkill nats-server || true
 	cd agent_in_a_box && $(MAKE) clean || true
 	cd execution_plane && cargo clean || true
 	cd agents/ssi_agent && cargo clean || true
@@ -76,8 +78,14 @@ clean:
 	rm -rf portals/local_ssi_portal/dist || true
 	cd ../scripts/nkey_gen && cargo clean || true
 	cd agent_in_a_box/host/inspect_kv && cargo clean || true
+	rm -rf ../.keys || true
+	rm -rf ../.nats_data || true
 	rm -rf logs || true
 	rm -rf ./dist/ || true
+	@if [ -f portals/local_ssi_portal/config.json ]; then \
+		jq '.cloudflare_beacon_token = ""' portals/local_ssi_portal/config.json > tmp.json && mv tmp.json portals/local_ssi_portal/config.json || true; \
+	fi
+
 
 test:
 	cd execution_plane/trust_gateway && cargo test

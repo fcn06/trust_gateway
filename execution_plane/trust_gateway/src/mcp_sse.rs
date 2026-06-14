@@ -103,10 +103,24 @@ pub async fn sse_handler(
         );
         let mut response = status.into_response();
         if status == axum::http::StatusCode::UNAUTHORIZED {
-            response.headers_mut().insert(
-                axum::http::header::WWW_AUTHENTICATE,
-                axum::http::HeaderValue::from_static("Bearer realm=\"trust_gateway\""),
-            );
+            let scheme = headers
+                .get("X-Forwarded-Proto")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_else(|| {
+                    if host.contains("lianxi.io") || host.contains("localhost:3000") {
+                        "https"
+                    } else {
+                        "http"
+                    }
+                });
+            let metadata_url = format!("{}://{}/.well-known/oauth-protected-resource", scheme, host);
+            let header_value = format!("Bearer realm=\"trust_gateway\", resource_metadata=\"{}\"", metadata_url);
+            if let Ok(val) = axum::http::HeaderValue::from_str(&header_value) {
+                response.headers_mut().insert(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    val,
+                );
+            }
         }
         return response;
     }

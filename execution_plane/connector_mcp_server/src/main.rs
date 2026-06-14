@@ -63,8 +63,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("🔌 Connector MCP Server starting...");
 
     let mut nats_options = async_nats::ConnectOptions::new();
-    if let Ok(seed) = std::env::var("NATS_NKEY_SEED") {
-        nats_options = async_nats::ConnectOptions::with_nkey(seed);
+    if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+        nats_options = async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string());
     }
     let nats = async_nats::connect_with_options(&cli.nats_url, nats_options).await?;
     let js = jetstream::new(nats.clone());
@@ -111,24 +111,36 @@ async fn main() -> anyhow::Result<()> {
                 None
             }
         }
-    } else if let Ok(secret) = std::env::var("GRANT_SIGNING_SECRET") {
+    } else if let Some(secret) = identity_context::load_secret("GRANT_SIGNING_SECRET") {
         tracing::info!("✅ Grant validation: HMAC-HS256 (GRANT_SIGNING_SECRET)");
-        Some(tools::GrantValidator::from_hmac_secret(&secret))
-    } else if let Ok(secret) = std::env::var("JWT_SECRET") {
+        Some(tools::GrantValidator::from_hmac_secret(secret.expose_secret()))
+    } else if let Some(secret) = identity_context::load_secret("JWT_SECRET") {
         // Legacy fallback: shared JWT_SECRET used by trust_gateway for HMAC signing
         tracing::info!("✅ Grant validation: HMAC-HS256 (JWT_SECRET legacy fallback)");
-        Some(tools::GrantValidator::from_hmac_secret(&secret))
+        Some(tools::GrantValidator::from_hmac_secret(secret.expose_secret()))
     } else {
         tracing::warn!("⚠️ No grant signing key configured — ExecutionGrant validation disabled");
         None
+    };
+
+    let google_client_id_wrapper = if !cli.google_client_id.is_empty() {
+        identity_context::SecretString::new(cli.google_client_id)
+    } else {
+        identity_context::load_secret("GOOGLE_CLIENT_ID").unwrap_or_else(|| identity_context::SecretString::new(String::new()))
+    };
+
+    let google_client_secret_wrapper = if !cli.google_client_secret.is_empty() {
+        identity_context::SecretString::new(cli.google_client_secret)
+    } else {
+        identity_context::load_secret("GOOGLE_CLIENT_SECRET").unwrap_or_else(|| identity_context::SecretString::new(String::new()))
     };
 
     let state = Arc::new(AppState {
         js,
         nats,
         token_store,
-        google_client_id: cli.google_client_id,
-        google_client_secret: cli.google_client_secret,
+        google_client_id: google_client_id_wrapper.expose_secret().to_string(),
+        google_client_secret: google_client_secret_wrapper.expose_secret().to_string(),
         http_client,
         grant_validator,
     });

@@ -5,6 +5,7 @@ edition = "2021"
 description = "OAuth connector MCP server — tenant-scoped third-party integrations"
 
 [dependencies]
+identity_context = { path = "../shared_libs/identity_context" }
 # Domain types and grant validation
 trust_core = { path = "../shared_libs/trust_core" }
 tenant_context = { path = "../../platform/tenant_context" }

@@ -79,15 +79,16 @@ impl McpAgent {
         let model_id = agent_mcp_config.agent_mcp_model_id.clone();
         let system_message = agent_mcp_config.agent_mcp_system_prompt.clone();
 
-        let llm_mcp_api_key = if let Some(api_key) = mcp_runtime_api_key {
-            api_key
+        let llm_mcp_api_key_wrapper = if let Some(api_key) = mcp_runtime_api_key {
+            identity_context::SecretString::new(api_key)
         } else if let Some(env_var_name) = &agent_mcp_config.agent_mcp_llm_api_key_env_var {
-            env::var(env_var_name)
-                .context(format!("Environment variable '{}' for LLM API key must be set", env_var_name))?
+            identity_context::load_secret(env_var_name)
+                .context(format!("Secret '{}' for LLM API key must be set", env_var_name))?
         } else {
-            env::var("LLM_MCP_API_KEY")
-                .context("LLM_MCP_API_KEY environment variable must be set")?
+            identity_context::load_secret("LLM_MCP_API_KEY")
+                .context("LLM_MCP_API_KEY secret must be set")?
         };
+        let llm_mcp_api_key = llm_mcp_api_key_wrapper.expose_secret().to_string();
 
         let nats_url = env::var("NATS_URL")
             .ok()
@@ -102,8 +103,8 @@ impl McpAgent {
         let nats_client = if let Some(client) = nats_client {
             client
         } else {
-            let mut nats_options = if let Ok(seed) = env::var("NATS_NKEY_SEED") {
-                async_nats::ConnectOptions::with_nkey(seed)
+            let mut nats_options = if let Some(seed) = identity_context::load_secret("NATS_NKEY_SEED") {
+                async_nats::ConnectOptions::with_nkey(seed.expose_secret().to_string())
             } else {
                 async_nats::ConnectOptions::new()
             };
@@ -432,6 +433,21 @@ impl McpAgent {
 
                 match execute_tool_call_v2(self.nats_client.clone(), &self.dispatch_subject, tool_call.clone(), auth_data.clone()).await {
                     Ok(result) => {
+                        // Check if the result metadata indicates pending_approval or pending_proof
+                        let mut is_pending = false;
+                        let mut approval_id_opt = None;
+                        let mut escalation_opt = None;
+
+                        if let Some(ref meta) = result.meta {
+                            if let Some(status_val) = meta.get("status").and_then(|v| v.as_str()) {
+                                if status_val == "pending_approval" || status_val == "pending_proof" {
+                                    is_pending = true;
+                                    approval_id_opt = meta.get("approval_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                    escalation_opt = meta.get("escalation").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                }
+                            }
+                        }
+
                         // Parse the result content to extract just the raw text instead of a stringified JSON array
                         let mut parsed_texts = Vec::new();
                         if let Ok(json_arr) = serde_json::to_value(&result.content) {
@@ -540,6 +556,26 @@ impl McpAgent {
                             tool_call_id: Some(tool_call.id.clone()),
                             tool_calls: None,
                         });
+
+                        if is_pending {
+                            let approval_id = approval_id_opt.unwrap_or_else(|| "unknown".to_string());
+                            let escalation = escalation_opt.unwrap_or_else(|| "standard".to_string());
+                            
+                            let assistant_msg = Message {
+                                role: self.agent_mcp_config.agent_mcp_role_assistant.clone(),
+                                content: Some(format!(
+                                    "I have submitted the action '{}' for {} approval. Please approve it in the portal (Approval ID: {}).",
+                                    tool_name, escalation, approval_id
+                                )),
+                                tool_calls: None,
+                                tool_call_id: None,
+                            };
+                            
+                            self.messages.extend(tool_results);
+                            self.messages.push(assistant_msg);
+                            self.state = AgentState::Finished;
+                            return Ok(AgentState::Finished);
+                        }
 
                         // If the agent successfully switched context, its available tools have changed.
                         // We must fetch the new tool list immediately so the next thinking step has them.

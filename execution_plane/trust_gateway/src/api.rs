@@ -130,6 +130,14 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
             get(oauth_service_proxy_handler),
         )
         .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth_protected_resource_handler),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/*path",
+            get(oauth_protected_resource_handler),
+        )
+        .route(
             "/auth/authorize",
             get(oauth_service_proxy_handler),
         )
@@ -1232,4 +1240,41 @@ async fn action_live_sse_handler(
     };
 
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new())
+}
+
+/// GET /.well-known/oauth-protected-resource (RFC 9728)
+/// Advertises supported oauth authorization servers and scopes for this gateway.
+async fn oauth_protected_resource_handler(
+    headers: axum::http::HeaderMap,
+    axum::extract::Host(host): axum::extract::Host,
+) -> impl IntoResponse {
+    let scheme = headers
+        .get("X-Forwarded-Proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_else(|| {
+            if host.contains("lianxi.io") || host.contains("localhost:3000") {
+                "https"
+            } else {
+                "http"
+            }
+        });
+
+    let resource = format!("{}://{}", scheme, host);
+
+    let json = serde_json::json!({
+        "resource": resource,
+        "authorization_servers": [
+            resource
+        ],
+        "scopes_supported": [
+            "mcp:execute",
+            "tools:list",
+            "tools:call"
+        ],
+        "bearer_methods_supported": [
+            "header"
+        ]
+    });
+
+    axum::Json(json)
 }

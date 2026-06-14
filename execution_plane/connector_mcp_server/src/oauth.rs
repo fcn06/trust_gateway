@@ -30,13 +30,16 @@ pub async fn google_authorize(
         ));
     }
 
-    let redirect_uri = std::env::var("GOOGLE_REDIRECT_URI").unwrap_or_else(|_| {
-        format!(
-            "{}/oauth/google/callback",
-            std::env::var("CONNECTOR_MCP_URL")
-                .unwrap_or_else(|_| "http://localhost:3050".to_string())
-        )
-    });
+    let redirect_uri = identity_context::load_secret("GOOGLE_REDIRECT_URI")
+        .map(|s| s.expose_secret().to_string())
+        .unwrap_or_else(|| {
+            format!(
+                "{}/oauth/google/callback",
+                identity_context::load_secret("CONNECTOR_MCP_URL")
+                    .map(|s| s.expose_secret().to_string())
+                    .unwrap_or_else(|| "http://localhost:3050".to_string())
+            )
+        });
 
     let scopes = "https://www.googleapis.com/auth/calendar.events";
 
@@ -63,13 +66,16 @@ pub async fn google_callback(
     let tenant_id = params.state;
     tracing::info!("🔑 Google OAuth callback for tenant {}", tenant_id);
 
-    let redirect_uri = std::env::var("GOOGLE_REDIRECT_URI").unwrap_or_else(|_| {
-        format!(
-            "{}/oauth/google/callback",
-            std::env::var("CONNECTOR_MCP_URL")
-                .unwrap_or_else(|_| "http://localhost:3050".to_string())
-        )
-    });
+    let redirect_uri = identity_context::load_secret("GOOGLE_REDIRECT_URI")
+        .map(|s| s.expose_secret().to_string())
+        .unwrap_or_else(|| {
+            format!(
+                "{}/oauth/google/callback",
+                identity_context::load_secret("CONNECTOR_MCP_URL")
+                    .map(|s| s.expose_secret().to_string())
+                    .unwrap_or_else(|| "http://localhost:3050".to_string())
+            )
+        });
 
     // Exchange authorization code for tokens
     let client = state.http_client.clone();

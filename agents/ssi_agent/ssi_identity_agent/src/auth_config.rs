@@ -34,6 +34,15 @@ pub enum AuthConfig {
         #[serde(default = "default_api_key_name")]
         name: String,
     },
+    /// Dynamic OAuth2 JWT verification
+    OAuth2Jwt {
+        /// Secret key for HMAC signature validation
+        secret: String,
+        /// Expected audience claim
+        audience: String,
+        /// Expected issuer claim
+        issuer: String,
+    },
 }
 
 impl Default for AuthConfig {

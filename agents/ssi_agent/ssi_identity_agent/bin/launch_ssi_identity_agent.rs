@@ -47,7 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // load a2a config file and initialize appropriateruntime
     let identity_agent_config = AgentConfig::load_agent_config(&args.config_file).expect("Incorrect Identity Agent config file");
   
-    let agent_api_key = env::var("LLM_A2A_API_KEY").expect("LLM_A2A_API_KEY must be set");
+    let agent_api_key_wrapper = identity_context::load_secret("LLM_A2A_API_KEY")
+        .expect("LLM_A2A_API_KEY must be set");
+    let agent_api_key = agent_api_key_wrapper.expose_secret().to_string();
 
     let agent = SsiIdentityAgent::new(identity_agent_config.clone(),agent_api_key, None,None, None,None,None).await?;
 

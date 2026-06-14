@@ -213,7 +213,9 @@ async fn main() -> anyhow::Result<()> {
     // Register Telegram Webhook if enabled
     let telegram_enabled = std::env::var("TELEGRAM_BOT_ENABLED").map(|v| v == "true").unwrap_or(false);
     if telegram_enabled {
-        if let (Ok(token), Ok(url)) = (std::env::var("TELEGRAM_BOT_TOKEN"), std::env::var("TELEGRAM_WEBHOOK_URL")) {
+        let token_wrapper = identity_context::load_secret("TELEGRAM_BOT_TOKEN");
+        let token = token_wrapper.as_ref().map(|w| w.expose_secret().to_string()).unwrap_or_default();
+        if let Ok(url) = std::env::var("TELEGRAM_WEBHOOK_URL") {
             if !token.is_empty() && token != "YOUR_TELEGRAM_BOT_TOKEN" && token != "your_telegram_bot_token" {
                 let set_webhook_url = format!("https://api.telegram.org/bot{}/setWebhook", token);
                 let payload = serde_json::json!({

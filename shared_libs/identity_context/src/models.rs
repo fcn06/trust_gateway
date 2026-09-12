@@ -157,6 +157,10 @@ pub struct ProposedAction {
     /// Optional B2B negotiated interaction contract context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_context: Option<serde_json::Value>,
+
+    /// Optional Call-Chain context carried for loop & depth protection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_chain_context: Option<trust_core::CallChainContext>,
 }
 
 fn default_workspace_id() -> String {

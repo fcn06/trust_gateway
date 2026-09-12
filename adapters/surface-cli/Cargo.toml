@@ -1,0 +1,19 @@
+[package]
+name = "surface-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI Surface Adapter for dynamic tool projection and zero-trust PEP invocation"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive", "cargo", "string"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-nats = "0.38"
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+trust_core = { path = "../../shared_libs/trust_core" }
+trust-model = { path = "../../crates/trust-model" }
+trust-canonical = { path = "../../crates/trust-canonical" }

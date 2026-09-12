@@ -14,11 +14,38 @@ It separates reasoning intelligence from execution authority by requiring agents
 
 | Contract | Direction | Purpose |
 | :--- | :--- | :--- |
-| `ProposedAction` | Agent → Gateway | Intent proposal payload submitted for authorization |
+| `ProposedAction` | Agent → Gateway | Intent proposal payload submitted for authorization (carries optional `CallChainContext`) |
+| `CallChainContext` | Agent → Gateway | Multi-agent execution trace metadata: `depth`, `call_stack`, `invocation_counts`, `initiator_agent_id` |
 | `PolicyDecision` | Gateway → Internal | Evaluation outcome (`Allow`, `Deny`, `RequireApproval`) |
 | `ExecutionGrant` | Gateway → Executor / Agent | Ed25519-signed authorization token bound to exact input digest |
 | `GrantedAction` | Gateway → Executor Host | Dispatched execution envelope containing grant and parameters |
 | `ExecutionResult` | Executor → Gateway / Agent | Standardized execution outcome status and sanitized output |
+
+---
+
+## Layer 0: Call-Chain Governance
+
+To protect distributed multi-agent workflows from infinite recursion, cyclic delegation ping-pong, and plan runaway attacks, the protocol defines **Layer 0 Call-Chain Guard** evaluation prior to attribute rule processing:
+
+```json
+{
+  "call_chain_context": {
+    "depth": 2,
+    "call_stack": ["lead_orchestrator", "research_worker"],
+    "invocation_counts": {
+      "lead_orchestrator": 1,
+      "research_worker": 2
+    },
+    "initiator_agent_id": "did:key:z6Mku...lead"
+  }
+}
+```
+
+* **Depth Bounds**: Evaluated against configured maximum call depth (default: 10). Reaching `depth > max_depth` causes an immediate `Deny`.
+* **Cycle Detection**: Unless explicitly allowed, duplicate appearances of an agent or tool in the active `call_stack` are detected as execution loops and denied.
+* **Frequency Caps**: Invocations per tool are tracked within the trace session; exceeding `max_frequency_per_tool` (default: 3) triggers denial.
+* **Session Integrity Tracking**: Gateway maintains an authoritative session state keyed by `trace_id`. Inbound proposals whose reported stack or counts conflict with server-tracked history are rejected to prevent compromised agents from resetting their execution counters.
+
 
 ---
 

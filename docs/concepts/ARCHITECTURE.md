@@ -14,9 +14,11 @@ The Trust Gateway enforces the 3-pillar zero-trust value proposition:
 ---
 
 ### 🛡️ Pillar 2: Gateway Decides (Governance & Control)
+* **Layer 0 Call-Chain Guard**: Sits at the entrance of the decision pipeline (`crates/trust-policy/src/call_chain.rs`). Enforces call-chain depth bounds (`max_depth = 10`), cycle/recursion loop detection (`allow_cycles = false`), and per-tool frequency caps (`max_frequency_per_tool = 3`) while verifying call-stack integrity against server-tracked session state.
 * **Governance Plane**: The Trust Gateway evaluates request attributes against `policy.toml` (`crates/trust-policy`, `policy-sdk`). If required by policy rules, human approval is triggered via the approval daemon, backed by a durable pending-approvals store.
 * **Grant Minting Plane**: Upon approval, the Gateway mints a short-lived Ed25519-signed `ExecutionGrant` JWT (`crates/trust-grants`), cryptographically bound to the SHA-256 `input_hash` of canonical arguments (`crates/trust-canonical`).
 * **Trust Operations Plane (`trust_ops`)**: Key lifecycle management (JWKS rotation), executor posture attestation, and hash-chained audit log reconciliation (`crates/trust-audit`).
+* **CLI Policy Enforcement Point**: Command-line interface adapter (`adapters/surface-cli`) providing dynamic CLI introspection and execution of governed tools via `trustctl tool run`.
 
 ---
 
@@ -78,10 +80,11 @@ Proposal (arguments)
 | Pillar | Domain Crate | Responsibility |
 | :--- | :--- | :--- |
 | **Pillar 1** | [`crates/trust-model`](../../crates/trust-model) | Pure domain model definitions (`ProposedAction`, `ExecutionGrant`, `TransactionOutcomeState`). |
-| **Pillar 2** | [`crates/trust-policy`](../../crates/trust-policy) | Attribute-based policy evaluator engine. |
+| **Pillar 2** | [`crates/trust-policy`](../../crates/trust-policy) | Attribute-based policy evaluator engine and Layer 0 Call-Chain Guard (`call_chain`). |
 | **Pillar 2** | [`crates/trust-canonical`](../../crates/trust-canonical) | RFC 8785 JSON canonicalizer & SHA-256 `input_hash` digest calculation. |
 | **Pillar 2** | [`crates/trust-grants`](../../crates/trust-grants) | Ed25519 `ExecutionGrant` issuance and key management. |
 | **Pillar 2** | [`crates/trust-audit`](../../crates/trust-audit) | Hash-chained `AuditEvent` ledger and audit sinks. |
+| **Pillar 2** | [`adapters/surface-cli`](../../adapters/surface-cli) | Dynamic CLI Policy Enforcement Point (PEP) projecting tool JSON Schemas to typed CLI commands. |
 | **Pillar 3** | [`crates/trust-auth`](../../crates/trust-auth) | Strict JWT signature and claims contract verification. |
 | **Pillar 3** | [`crates/trust-executor-sdk`](../../crates/trust-executor-sdk) | Abstract Executor trait & outcome state reconciliation. |
 | **Pillar 3** | [`crates/trust-egress`](../../crates/trust-egress) | Regex & LLM-powered PII & secret egress scrubbing. |

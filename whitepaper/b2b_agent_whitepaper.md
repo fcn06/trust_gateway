@@ -9,7 +9,7 @@
 
 ## How to read this document
 
-This is a technical report about an architecture I've been building called the **Negotiated Interaction Contract Protocol (NICP)**, together with the **Trust Gateway** that enforces it. It grew out of a shorter dev.to article ("What If the Enterprise API of the Future Is an Agent?") and goes into the implementation detail that piece didn't have room for.
+This is a technical report about an architecture I've been building called the **Negotiated Interaction Contract Protocol (NICP)**, together with the **Trust Gateway** that enforces it. It grew out of a dev.to article (["The Agent Economy: Why Agents Must Negotiate Agreements, and How It Rewrites Integration"](https://dev.to/fcn06/the-agent-economy-needs-a-trust-layer-49c)) and goes into the implementation detail that piece didn't have room for.
 
 A few honesty notes up front, because an earlier draft of this document didn't have enough of them:
 
@@ -36,16 +36,23 @@ If you're the kind of reader who wants to poke holes in an architecture, this do
 7. [Threat Model and Design Invariants](#7-threat-model-and-design-invariants)
 8. [Operational Trace and Audit Receipts](#8-operational-trace-and-audit-receipts)
 9. [How This Relates to Other Work](#9-how-this-relates-to-other-work)
-10. [Where This Goes Next](#10-where-this-goes-next)
-11. [References](#11-references)
+10. [How This Rewrites Integration](#10-how-this-rewrites-integration)
+11. [Where This Goes Next](#11-where-this-goes-next)
+12. [References](#12-references)
 
 ---
 
 ## 1. The Problem
 
+A year ago, "agentic AI" meant an LLM with access to a terminal or a calculator. Today the conversation has shifted to the **agent economy** — autonomous agents from different companies discovering one another, negotiating terms, and settling transactions at machine speed. This paper addresses the architectural gap between that ambition and what's actually safe to build.
+
 ### 1.1 Point-to-point integration doesn't scale
 
 Connecting two enterprises today usually means custom API adapters, bespoke schemas, mutual auth, rate limits, webhooks, and SDKs, built and maintained per pair. With more counterparties, the number of bilateral integrations grows roughly with the square of the number of participants — everyone who has worked in enterprise integration has lived this. Global schema standards (EDIFACT, SWIFT, RosettaNet, FHIR) reduce the heterogeneity but take years to adopt and are expensive to implement.
+
+Even when both sides use standard formats like JSON or OpenAPI, their business semantics almost never match — does "cancel order" mean voiding the PO immediately, or submitting a cancellation request subject to supplier review?
+
+Agents change the equation because they can reason about intent. Instead of calling `POST /api/v3/orders` with twenty hardcoded parameters, Company A's agent can say: *"I need 500 industrial bearings delivered to our Lyon warehouse before next Friday. Target budget is under €15,000."* It's tempting to think this means LLMs simply replace APIs. That would be a catastrophe — two probabilistic models chatting freely across company boundaries can hallucinate prices, misinterpret delivery terms, or fall prey to prompt injection. A natural language chat is not a business contract.
 
 ### 1.2 Why I don't think agents should get direct execution access
 
@@ -55,6 +62,8 @@ LLM agent frameworks make it tempting to let an external agent talk to an intern
 2. **Cross-boundary prompt injection is real.** Content embedded in a partner's proposal, purchase order, or quote metadata can attempt to redirect the receiving agent's behavior.
 3. **Free-form negotiation isn't auditable.** Two agents talking in natural language don't produce a record either side can point to later and say "this is exactly what we agreed."
 4. **Confused deputy problems are easy to create.** An internal agent with broad system access, acting on behalf of an external, less-trusted counterparty, is a classic setup for that failure mode.
+
+The breakthrough isn't replacing APIs with LLM conversations. The breakthrough is **using agents to negotiate a machine-readable agreement at runtime**, while keeping the underlying APIs as the deterministic execution engine.
 
 ### 1.3 What's actually happening in the market right now
 
@@ -69,6 +78,8 @@ On September 2, 2026, Anthropic released **Claude Commerce Agents**, an open ref
 I read this as a useful, independent confirmation of the thesis I'd already been building toward: **merchants and enterprises want the agent to live on their own side of the boundary, not to cede transaction authority to it.** I want to be careful about how I frame this, though — Anthropic didn't design Claude Commerce Agents with a gap in mind for this project to fill, and I have no relationship with them around this work. What I think is true is narrower and more useful: their reference implementation demonstrates real market demand for exactly the kind of thing this project is trying to build — a way to give a merchant-embedded agent actual transactional authority, safely, once it's ready to go further than recommend-and-handoff. That's a complementary relationship I'm claiming, not an endorsed one.
 
 ### 1.4 The principle this project is built around
+
+The current debate around autonomous agents is stuck between two poles. On one side, full autonomy — hand the LLM an API key and let it roam (terrifying for any CISO or CFO). On the other, zero autonomy — keep a human in the loop for every action (which destroys the efficiency gains agents promise). Negotiated agreements backed by deterministic gateways offer a third path.
 
 The idea I keep coming back to:
 
@@ -96,6 +107,14 @@ Agents get full flexibility to negotiate, discover, and propose. They get none o
                 ▼
    Enterprise systems (ERP, payments, inventory, ...)
 ```
+
+### 1.5 Agents negotiate meaning, not authority
+
+This is the load-bearing architectural principle that makes the entire model work: **agents negotiate meaning and operational terms; they do NOT decide execution authority.**
+
+An LLM is well suited to reconciling differences. It can negotiate whether payment is in EUR or USD, map Company A's `shipping_address` to Company B's `destination_facility`, or agree on a cancellation window. That is **semantic negotiation** — reconciling meaning across organizational boundaries.
+
+But an agent should never have the power to approve its own authority. If Company A's agent and Company B's agent agree on a €50,000 transaction limit, but Company A's internal corporate policy says automated agents are capped at €10,000, enterprise policy must always win. Negotiation can only **shrink** the permitted operational space. It can never expand beyond what deterministic enterprise policy permits.
 
 ---
 
@@ -131,6 +150,23 @@ Given what happened with the centralized checkout gateways (§1.3), I think the 
 
 ## 3. The Interaction Contract
 
+At a high level, the negotiation flow looks like this:
+
+```text
+┌────────────────┐      Propose Capabilities & Terms       ┌────────────────┐
+│   Company A    │ ───────────────────────────────────────> │   Company B    │
+│   B2B Agent    │ <─────────────────────────────────────── │   B2B Agent    │
+└────────────────┘         Counter-Offer & Agreement        └────────────────┘
+                                    │
+                                    ▼
+                     ┌─────────────────────────────┐
+                     │    Interaction Contract     │
+                     │  (Signed, Hashed, Versioned)│
+                     └─────────────────────────────┘
+```
+
+Two agents discover each other's capabilities, propose and counter-propose terms, and converge on a shared contract. The detailed lifecycle and state machine are described in §3.4; the operational trace through the Trust Gateway is in §8.1.
+
 ### 3.1 What it actually is
 
 An Interaction Contract is a signed, versioned, machine-readable description of what two organizations have agreed their agents can do together: who the counterparties are, what capabilities are in scope, what constraints apply (money, geography, time), what data can move, what obligations exist, and how the agreement can end. Once signed by both sides it's frozen — a new version is a new contract, referencing the old one, not a silent edit.
@@ -153,15 +189,45 @@ pub struct InteractionContract {
     pub obligations: Vec<Obligation>,
     pub commercial_terms: Option<CommercialTerms>,
     pub validity: ContractValidity,
+    pub protocol: ProtocolBinding,
     pub evidence: ContractEvidence,
     pub parent_contract_id: Option<String>,
+    pub previous_contract_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 ```
 🟢 *This struct reflects the actual open-source data model.*
 
-To make this concrete, here is an example of what an agreed contract draft looks like when serialized:
+To make this concrete, here is what an agreed contract looks like from a human perspective — the kind of agreement two agents converge on:
+
+```yaml
+# Simplified human-readable view
+purpose: supplier_parts_procurement
+counterparties:
+  buyer: did:web:company-a.com:agent-procure
+  seller: did:web:company-b.com:agent-sales
+capabilities:
+  - quote
+  - create_order
+  - track_shipment
+  - cancel_order
+constraints:
+  max_order_value:
+    currency: EUR
+    amount: 15000
+  geography:
+    delivery_destination: EU
+cancellation:
+  allowed_until: dispatch
+  penalty: 0
+validity:
+  expires_at: "2026-10-01T00:00:00Z"
+```
+
+Notice what just happened: zero custom glue code was written in advance — the agents dynamically discovered each other's capabilities and negotiated mutually agreeable terms. The relationship is strictly bounded — Company A's agent cannot suddenly execute a €50,000 order or deliver to an unsupported jurisdiction. And it's a bilateral agreement, not a unilateral permission list — unlike a static API token or OAuth scope, an Interaction Contract binds both parties to shared constraints, settlement rules, and validity windows.
+
+And here is the same agreement in its canonical, technically precise serialization:
 
 ```yaml
 # Example minimal Interaction Contract draft (YAML representation)
@@ -173,6 +239,7 @@ counterparty:
   did: "did:web:supplier.logistics.example"
 purpose:
   code: "procure_freight_service"
+  description: "Cross-border freight and logistics procurement"
 capabilities:
   - capability_id: "io.company.orders@v1"
     operations: ["quote", "create", "status", "cancel"]
@@ -180,10 +247,12 @@ constraints:
   max_transaction_value:
     amount_minor: 2500000  # Stored as minor units: €25,000.00
     currency: "EUR"
-  geography: ["EU"]
+  allowed_geographies: ["EU"]
 validity:
-  not_before: "2026-10-01T00:00:00.000Z"
-  not_after: "2026-10-31T23:59:59.000Z"
+  valid_from: "2026-10-01T00:00:00.000Z"
+  valid_until: "2026-10-31T23:59:59.000Z"
+protocol:
+  protocol_version: "nicp/1.0"
 ```
 
 A fair objection here: isn't this just OAuth scopes plus a JSON Schema plus a policy engine? What I think makes it a different kind of object is that it binds several dimensions together — counterparties, purpose, capabilities, semantics, constraints, data policy, obligations, validity, and attestation — into one versioned, hashable, jointly-signed artifact, rather than leaving those as separately-managed pieces of infrastructure. Whether that's worth a new name or just a well-organized combination of existing primitives is a fair thing to disagree with me about.
@@ -217,7 +286,7 @@ I support three ways to cryptographically bind a contract, because different ent
 
 ### 3.4 Contract lifecycle
 
-A contract moves through a fixed set of states — draft, proposed, counter-proposed, accepted, attested, active, and then one of revoked, suspended, or expired. Once it reaches a terminal state it's immutable; changes require a new version referencing the old contract. Negotiations that stall (no mutual attestation within a configurable window, default one hour) automatically move to "abandoned" and get cleaned up rather than accumulating indefinitely. 🟢 *The state machine and timeout/pruning behavior are implemented.*
+A contract moves through a fixed set of states — draft, proposed, counter-proposed, accepted, attested, active, suspended, and terminal states: revoked, expired, or superseded. Once it reaches a terminal state it's immutable; changes require a new version referencing the old contract via `previous_contract_hash` and `parent_contract_id`. Active negotiations enforce bounded limits (`NegotiationLimits`: maximum 8 rounds, 120-second timeout, 64 KB payload cap); negotiations that exceed limits or are rejected transition to the terminal revoked state. 🟢 *The state machine, lifecycle transitions, and negotiation bounds are implemented.*
 
 ---
 
@@ -231,6 +300,20 @@ A plain per-request check isn't enough here. An agent with a legitimate €10,00
 effective_authority = min(contract_limit, enterprise_policy_limit, identity_delegation_limit)
 ```
 
+Visually, the intersection works like this:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                  EFFECTIVE AUTHORITY                   │
+│                           =                            │
+│   Negotiated Contract  ∩  Enterprise Policy  ∩  Identity │
+└────────────────────────────────────────────────────────┘
+```
+
+1. **Negotiated Contract (Bilateral):** What did both agents agree to? (e.g., max €15,000).
+2. **Enterprise Policy (Local & Deterministic):** What does your company allow right now? (e.g., max €10,000, EU hours only).
+3. **Agent Identity (Cryptographic):** Is the calling agent who it claims to be, backed by a verified `did:web` and active keys?
+
 If the contract allows up to €50,000 but enterprise policy caps autonomous agents at €10,000, the effective limit is €10,000. Straightforward, but worth stating explicitly because it's the thing that stops a negotiated agreement from ever becoming *more* permissive than what the enterprise actually allows.
 
 ### 4.2 Velocity and cumulative exposure
@@ -241,7 +324,15 @@ I track (a) total value moved in a sliding time window, (b) call frequency again
 
 High-value, novel-counterparty, or sensitive-data transactions get routed to a human approval step rather than an automatic grant, with a "the agent that proposed it can't be the one that approves it" rule and hardware-backed (WebAuthn/FIDO2) sign-off for anything above a configurable threshold. ⚪ Design goal — the escalation path exists in my implementation, but I haven't yet exercised the multi-party approval quorum logic in anything beyond a single test scenario.
 
-### 4.4 One thing I'm not fully solving yet: composition
+### 4.4 Call-Chain Guard: Recursion and Loop Bounds
+
+In multi-agent collaborative workflows, an autonomous agent can delegate to sub-agents or call partner tools that in turn invoke secondary tools, risking infinite recursion, cyclic delegation ping-pong, and plan runaway attacks. The Trust Gateway enforces **Layer 0 Call-Chain Guard** (`trust_policy::call_chain`, evaluated via `evaluate_and_advance` and `validate_context_integrity`) before evaluating individual attribute rules:
+- **Depth bounds**: Maximum call-chain depth (default: 10).
+- **Cycle detection**: Traverses the execution graph to detect loops (e.g. `Agent A → Tool X → Agent B → Tool X`); cycles are rejected immediately.
+- **Per-tool frequency caps**: Limits repeated invocations of any single tool within a trace (default: 3).
+- **Authoritative session integrity**: Because client agents cannot be trusted to self-report honest call stacks, the Gateway tracks session history by `trace_id`. Inbound proposals attempting to reset or forge their execution stack are rejected outright. 🟢 *Implemented and open source.*
+
+### 4.5 One thing I'm not fully solving yet: composition
 
 A person combining several individually-safe grants can still end up somewhere unsafe — read access to a catalog, permission to submit a purchasing recommendation, and permission to send an external message might each be fine alone and risky together. My current effective-authority formula evaluates one action against contract/policy/identity limits; it doesn't yet reason about combinations of actions across a longer transaction history, cumulative risk from unrelated capabilities, or separation-of-duties at that broader scale. I think this eventually pushes the Gateway toward genuinely stateful, history-aware authorization rather than the simpler per-action model I have now, and I don't have that built. ⚪
 
@@ -301,14 +392,14 @@ Here is the exact claim structure of an issued `ExecutionGrant` JWT payload:
   "jti": "grant_0191c7b5-22a4-7000-91c2-3e817c200042",
   "iat": 1790870400,
   "exp": 1790870460,
-  "tool_id": "io.company.orders.create@v1",
+  "tool_name": "io.company.orders.create@v1",
   "input_hash": "sha256:d59b207559e355c70752b047a0640df14541bfd6e3be4ff28e67a48d88e6de02",
   "contract_id": "ctr_0191c7a4-82a1-7000-84c1-6e792c300001",
   "contract_hash": "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
 }
 ```
 
-**One thing I want to be precise about, because it's easy to overstate:** a short TTL and a unique grant ID make replay much harder, but I'm not yet claiming airtight, verified single-use enforcement across every distributed executor topology. That would require me to show the replay cache is consistent and race-free across all deployment configurations, and I haven't done that verification work. Treat "short-lived and single-purpose" as accurate; treat "provably replay-proof in all conditions" as not yet earned.
+**One thing I want to be precise about, because it's easy to overstate:** a short TTL and a unique grant ID make replay much harder, and the executor host enforces single-use verification via a JetStream KV nonce store (`grant_nonces`), but I'm not yet claiming airtight, verified single-use enforcement across every distributed executor topology. That would require me to show the replay cache is consistent and race-free across all deployment configurations, and I haven't done that verification work. Treat "short-lived and single-purpose" as accurate; treat "provably replay-proof in all conditions" as not yet earned.
 
 ### 6.3 The executor
 
@@ -327,6 +418,7 @@ I'll use the STRIDE categories loosely rather than trying to make this exhaustiv
 | Silently modifying a stored contract after activation | Storage | The Gateway recomputes the stored contract's hash on every evaluation and compares it to the attested hash; any drift suspends the contract immediately |
 | Bypassing the Gateway and hitting the executor directly | Execution | Executors have no ambient credentials and only accept requests carrying a valid, signature-verified grant with a matching argument hash |
 | Many small transactions adding up to something large | Cumulative risk | Sliding-window velocity and cumulative-exposure limits, not just per-transaction limits (see §4.2) |
+| Agent runaway loops & recursion storms | Execution flow | Layer 0 Call-Chain Guard enforces execution depth bounds, cycle detection, per-tool frequency caps, and server-side session integrity tracking (§4.4) |
 
 ### 7.1 Design invariants I'm aiming to hold
 
@@ -344,6 +436,8 @@ I originally labeled these "formal, mathematically proven invariants." That was 
 10. Contracts that are revoked, suspended, or expired can't mint new grants.
 11. Schema transformations run through versioned, content-addressed compiled artifacts, not live inference, once frozen (§5.2).
 12. Failures return typed error codes without leaking internal state, prompts, or stack traces.
+13. Execution plans cannot exceed call-chain recursion depth, cycle, or frequency bounds, and client agents cannot forge or reset call-chain history.
+
 
 I'd genuinely like feedback from people who do adversarial security work on which of these are actually well-founded and which are wishful thinking.
 
@@ -422,6 +516,19 @@ The intended dispute-resolution story: if Company A claims a transaction was una
 
 A quick, honest comparison — this is my own understanding, not something I've verified with the teams involved, and it will likely be out of date by the time you read it.
 
+At a glance, the layers stack like this:
+
+| Layer | Protocol / Concept | Primary Role | Analogy |
+| :--- | :--- | :--- | :--- |
+| **Tool Interface** | **MCP** (Model Context Protocol) | How an agent talks to its internal tools and data sources | The USB port connecting a computer to peripherals |
+| **Communication** | **A2A** (Agent-to-Agent) | How two agents discover each other and exchange messages | The telephone line between two offices |
+| **Relationship** | **Interaction Contract** | The negotiated operational agreement defining what the two parties agreed to do | The signed business agreement between two companies |
+| **Enforcement** | **Trust Gateway** | The deterministic bouncer ensuring actions strictly match the contract and policy | Legal and compliance with the key to the vault |
+
+You don't have to choose between these — they solve completely different layers of the problem. A2A gives agents the wire protocol to talk. MCP gives them tools to execute. Interaction Contracts define what they are allowed to agree on. Trust Gateways guarantee neither side can break the rules.
+
+In more detail:
+
 - **MCP** is about an agent talking to tools and resources. It's not trying to solve what I'm describing here, and NICP could plausibly sit on top of an MCP-connected agent rather than replace anything about MCP.
 - **A2A** is about agent-to-agent discovery, capability exchange, and task handoff. I think of NICP as a layer above A2A: assume A2A handles how two agents talk to each other; NICP is about what relationship they're allowed to establish and what stops either side from acting outside it.
 - **Payment-network agent protocols** (Visa/Mastercard agent-payment initiatives) solve credential tokenization and payment authorization specifically — a narrower, adjacent problem to the broader capability-and-constraint negotiation this project is trying to address.
@@ -431,7 +538,48 @@ I'm not trying to compete with any of these, and I'd rather be wrong about how N
 
 ---
 
-## 10. Where This Goes Next
+## 10. How This Rewrites Integration
+
+Most of this document focuses on security, threat models, and cryptographic guarantees. But I think there's a broader consequence of this architecture that's worth stating explicitly, because it may end up mattering more than any individual protocol detail: **it fundamentally changes how companies integrate with each other.**
+
+### 10.1 The integration boundary moves up
+
+Today, connecting two enterprises means agreeing on endpoints, schemas, authentication scopes, webhooks, rate limits, and error codes — then writing bespoke glue code to bridge the differences. Every new counterparty means a new integration project. Every schema change means a coordinated migration. The cost grows roughly with the square of the number of participants.
+
+Negotiated Interaction Contracts change where the boundary sits:
+
+```text
+  TODAY                                              WITH INTERACTION CONTRACTS
+  ─────                                              ──────────────────────────
+  Company A ──[Custom Code]──> Company B API          Company A Agent ──[Negotiate]──> Company B Agent
+  (months of specs, mapping, testing)                 (runtime discovery, semantic mapping, signed contract)
+  (per-pair, per-version, per-endpoint)               (per-relationship, versioned, machine-enforced)
+```
+
+The underlying APIs don't disappear — your ERP, banking APIs, inventory systems remain deterministic, reliable, and auditable. What changes is that you no longer need to spend months standardizing every endpoint before two organizations can do business. The agent handles the semantic reconciliation; the contract locks down the terms; the gateway enforces the rules.
+
+### 10.2 What this means concretely
+
+1. **Onboarding new partners drops from months to hours.** Instead of a multi-month integration project per counterparty, two agents discover capabilities, negotiate constraints, verify identities, and activate a contract — all at machine speed. The human role shifts from writing glue code to reviewing and approving the negotiated terms.
+
+2. **Schema heterogeneity becomes a negotiation problem, not an engineering problem.** Company A calls it `shipping_address`; Company B calls it `destination_facility`. Today, a developer writes a mapping. In this model, agents propose and verify mappings at contract time, compile them to deterministic artifacts (§5.2), and neither side has to adopt the other's naming conventions.
+
+3. **The long tail of B2B relationships becomes viable.** The reason most small and mid-size enterprises are locked out of automated B2B integration is cost — building and maintaining a custom integration for a partner who sends three orders a month doesn't pencil out. When the integration cost drops to negotiating a contract, even low-volume relationships become automatable.
+
+4. **APIs become the execution engine, not the integration surface.** This is the shift I think matters most. APIs remain exactly what they're good at — deterministic, versioned, testable interfaces to internal systems. But the surface that two companies negotiate over is no longer the API itself; it's a higher-level agreement about capabilities, constraints, and obligations. The API is downstream of the contract, not the contract itself.
+
+### 10.3 What I'm not claiming
+
+I want to be precise about scope:
+
+- I'm not claiming this eliminates the need for well-designed APIs. It depends on them.
+- I'm not claiming agents can negotiate arbitrarily complex multi-party supply chain agreements today. The current model is bilateral.
+- I'm not claiming the semantic mapping pipeline (§5) is production-ready. It's the least mature piece.
+- I am claiming that the architectural pattern — negotiate meaning at the agent layer, enforce terms at the gateway layer, execute through existing APIs at the system layer — is a fundamentally different integration model than what exists today, and one that could reduce the cost and timeline of B2B integration by an order of magnitude for the relationships it applies to.
+
+---
+
+## 11. Where This Goes Next
 
 Concretely, and modestly:
 
@@ -444,7 +592,7 @@ I'd rather this document age well than sound impressive today.
 
 ---
 
-## 11. References
+## 12. References
 
 1. RFC 8785 — JSON Canonicalization Scheme (JCS)
 2. RFC 8949 — Concise Binary Object Representation (CBOR)
@@ -455,3 +603,4 @@ I'd rather this document age well than sound impressive today.
 7. RFC 8032 — EdDSA
 8. Anthropic, "Claude Commerce Agents" reference blueprint, released September 2, 2026
 9. Public reporting on OpenAI's ChatGPT Instant Checkout launch (September 2025) and retirement (March 2026) — CNBC, The Information, Forrester
+10. fcn06, ["The Agent Economy: Why Agents Must Negotiate Agreements, and How It Rewrites Integration"](https://dev.to/fcn06/the-agent-economy-needs-a-trust-layer-49c), dev.to, September 2026

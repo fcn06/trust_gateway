@@ -31,6 +31,17 @@
         }
       ]
     },
+    "call_chain_context": {
+      "description": "Optional Call-Chain context carried across multi-agent hops.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CallChainContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "contract_context": {
       "description": "Optional B2B negotiated interaction contract context."
     },
@@ -248,6 +259,34 @@
           ]
         }
       ]
+    },
+    "CallChainContext": {
+      "description": "Call-chain context carried across agent execution hops for loop and depth governance",
+      "type": "object",
+      "required": [
+        "trace_id"
+      ],
+      "properties": {
+        "call_stack": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "invocation_counts": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "trace_id": {
+          "type": "string"
+        }
+      }
     },
     "Money": {
       "description": "Monetary value with currency code (ISO 4217).",

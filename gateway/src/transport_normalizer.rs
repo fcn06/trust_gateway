@@ -39,6 +39,7 @@ pub fn normalize_http_propose(
         identity: result.identity,
         raw_meta: result.raw_meta,
         contract_context: None,
+        call_chain_context: None,
     })
 }
 
@@ -66,5 +67,6 @@ pub fn normalize_mcp_call(
         identity: result.identity,
         raw_meta: result.raw_meta,
         contract_context: None,
+        call_chain_context: None,
     })
 }

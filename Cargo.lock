@@ -566,6 +566,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "call-chain-guard-example"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "trust-model",
+ "trust-policy",
+]
+
+[[package]]
 name = "cc"
 version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1154,11 +1164,20 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
  "signature 2.2.0",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "egress-sanitization-example"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "trust_core",
 ]
 
 [[package]]
@@ -1464,6 +1483,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trust-contract",
+ "trust-policy",
  "trust_auth",
  "trust_core",
  "trust_policy",
@@ -2343,6 +2363,19 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nicp-contract-example"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ed25519-dalek",
+ "rand 0.8.8",
+ "serde_json",
+ "trust-contract",
+ "trust-grants",
+ "trust-model",
 ]
 
 [[package]]
@@ -4044,6 +4077,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "surface-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats 0.38.0",
+ "clap",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "trust-canonical",
+ "trust-model",
+ "trust_core",
+ "uuid",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4727,6 +4778,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "toml 0.8.23",
  "trust-model",
 ]
@@ -4839,10 +4891,17 @@ name = "trustctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats 0.38.0",
+ "clap",
  "policy_sdk",
+ "serde",
  "serde_json",
+ "surface-cli",
+ "tokio",
+ "trust_core",
  "trust_ops",
  "trust_verifier",
+ "uuid",
 ]
 
 [[package]]

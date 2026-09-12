@@ -46,6 +46,7 @@ pub use trust_egress as egress_crate;
 pub use trust_executor_sdk as executor_sdk;
 pub use trust_grants as grants;
 pub use trust_model as model;
+pub use trust_model::CallChainContext;
 
 // Re-export the most commonly used types at crate root for ergonomics.
 

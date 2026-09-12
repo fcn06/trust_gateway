@@ -124,6 +124,7 @@ async fn test_valid_contract_verification_and_grant_issuance() {
             contract_context: Some(contract_ctx),
         },
         contract_context: None,
+        call_chain_context: None,
     };
 
     let signed_grant = issuer

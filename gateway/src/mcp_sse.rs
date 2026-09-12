@@ -581,6 +581,7 @@ async fn handle_tools_call(
             identity: fallback_identity,
             raw_meta: None,
             contract_context: None,
+            call_chain_context: None,
         }
     });
 

@@ -766,7 +766,6 @@ async fn propose_action_handler(
                 },
             };
 
-            // Fallback for errors — uses verified claims, no raw decode
             identity_context::models::ProposedAction {
                 action_id: uuid::Uuid::new_v4().to_string(),
                 tool_name: req.action_name.clone(),
@@ -774,8 +773,11 @@ async fn propose_action_handler(
                 identity,
                 raw_meta: None,
                 contract_context: req.contract_context.clone(),
+                call_chain_context: req.call_chain_context.clone(),
             }
         });
+
+        proposed.call_chain_context = req.call_chain_context.clone();
 
         // Set the trace_id in source correlation_id
         proposed.identity.source.correlation_id = trace_id.clone();

@@ -13,6 +13,9 @@ members = [
     "crates/*",
     "adapters/*",
     "examples/quickstart_standalone",
+    "examples/call_chain_guard",
+    "examples/nicp_contract",
+    "examples/egress_sanitization",
     "platform/tenant_registry",
 
 

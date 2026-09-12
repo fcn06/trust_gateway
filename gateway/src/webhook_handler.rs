@@ -89,6 +89,7 @@ pub async fn webhook_post_handler(
             contract_context: None,
         },
         contract_context: None,
+        call_chain_context: None,
     };
 
     // 3. Evaluate Policy

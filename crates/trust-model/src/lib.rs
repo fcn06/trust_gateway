@@ -67,6 +67,28 @@ pub struct ProposedAction {
     pub timestamp: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_context: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_chain_context: Option<CallChainContext>,
+}
+
+/// Call-chain context carried across agent execution hops for loop and depth governance
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+pub struct CallChainContext {
+    pub trace_id: String,
+    #[serde(default)]
+    pub call_stack: Vec<String>,
+    #[serde(default)]
+    pub invocation_counts: std::collections::HashMap<String, u32>,
+}
+
+impl CallChainContext {
+    pub fn new(trace_id: impl Into<String>) -> Self {
+        Self {
+            trace_id: trace_id.into(),
+            call_stack: Vec::new(),
+            invocation_counts: std::collections::HashMap::new(),
+        }
+    }
 }
 
 /// Policy evaluation outcome

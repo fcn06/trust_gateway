@@ -8,5 +8,13 @@ description = "CLI tool for offline audit verification, policy replay, and grant
 trust_verifier = { path = "../verifier" }
 policy_sdk = { path = "../policy-sdk" }
 trust_ops = { path = "../trust_ops" }
+trust_core = { path = "../shared_libs/trust_core" }
+surface-cli = { path = "../adapters/surface-cli" }
+async-nats = "0.38"
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.6", features = ["derive", "string"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
 anyhow = "1.0"
+

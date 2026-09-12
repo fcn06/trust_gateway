@@ -37,6 +37,12 @@ Demonstrates live single-use grant/nonce rejection when an attacker attempts to 
 cargo run -p quickstart-standalone -- --replay
 ```
 
+### 4. Layer 0 Call-Chain Loop / Recursion Simulation (`--call-chain`)
+Demonstrates immediate denial at Layer 0 when an agent attempts recursive invocation or cyclic tool loops:
+```bash
+cargo run -p quickstart-standalone -- --call-chain
+```
+
 ## Expected Output
 
 ### Happy Path

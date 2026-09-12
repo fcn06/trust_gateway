@@ -29,6 +29,8 @@ pub struct NormalizedActionProposal {
     pub planning_context: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_context: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_chain_context: Option<trust_model::CallChainContext>,
 }
 ///
 /// Created when any proposer (ssi_agent, webhook, WhatsApp bridge, PicoClaw)
@@ -51,6 +53,9 @@ pub struct ActionRequest {
     /// Optional B2B negotiated interaction contract context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_context: Option<serde_json::Value>,
+    /// Optional Call-Chain context carried across multi-agent hops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_chain_context: Option<trust_model::CallChainContext>,
 }
 
 fn default_workspace_id() -> String {

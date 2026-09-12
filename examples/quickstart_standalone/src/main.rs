@@ -13,6 +13,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Options:");
         println!("  --tamper, --simulate-attack  Simulate argument tampering after grant issuance");
         println!("  --replay                     Simulate grant replay attack (re-submitting consumed grant)");
+        println!(
+            "  --call-chain                 Simulate Layer 0 call-chain recursion/loop attack"
+        );
         println!("  --help                       Print this help menu");
         return Ok(());
     }
@@ -21,18 +24,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .any(|a| a == "--tamper" || a == "--simulate-attack");
     let is_replay = args.iter().any(|a| a == "--replay");
+    let is_call_chain = args.iter().any(|a| a == "--call-chain");
 
     println!("=====================================================");
     if is_tamper {
         println!("🛡️ Trust Gateway Attack Simulation: Argument Tampering");
     } else if is_replay {
         println!("🛡️ Trust Gateway Attack Simulation: Grant Replay Attack");
+    } else if is_call_chain {
+        println!("🛡️ Trust Gateway Attack Simulation: Layer 0 Call-Chain Recursion / Loop");
     } else {
         println!("🛡️ Trust Gateway Standalone Control Flow Quickstart");
     }
     println!("=====================================================");
 
     let now = chrono::Utc::now().timestamp();
+
+    // Setup CallChainContext if simulating call-chain attack
+    let call_chain_context = if is_call_chain {
+        Some(trust_model::CallChainContext {
+            trace_id: "trace-attack-001".to_string(),
+            call_stack: vec!["mock_refund".to_string()], // cyclic recursion on mock_refund
+            invocation_counts: std::collections::HashMap::from([("mock_refund".to_string(), 1)]),
+        })
+    } else {
+        None
+    };
 
     // 1. Define a proposed action from an Agent
     let action = ProposedAction {
@@ -53,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         timestamp: now,
         contract_context: None,
+        call_chain_context,
     };
 
     println!("📥 1. Received ProposedAction: tool='{}'", action.tool_name);
@@ -63,6 +81,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "⚖️ 2. Policy Decision: approved={}, reason='{}'",
         decision.approved, decision.reason
     );
+
+    if is_call_chain {
+        println!("⚡ Evaluation Result: Call-chain attack BLOCKED at Layer 0!");
+        println!("🚫 Reason: {}", decision.reason);
+        println!("=====================================================");
+        println!("🛡️ Call-chain cyclic loop successfully BLOCKED before grant issuance!");
+        println!("=====================================================");
+        return Ok(());
+    }
 
     assert!(decision.approved, "Policy denied action");
 

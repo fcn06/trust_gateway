@@ -178,6 +178,7 @@ pub async fn simulate_handler(
             contract_context: None,
         },
         contract_context: None,
+        call_chain_context: None,
     };
 
     match state.security.policy_engine.evaluate(&action_req).await {

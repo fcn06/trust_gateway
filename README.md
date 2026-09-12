@@ -144,14 +144,32 @@ Run the standalone quickstart demo directly from source:
 # Prerequisites: Rust 1.89+, build-essential / xcode-select, libssl-dev
 cargo run -p quickstart-standalone
 ```
+
+### Governed CLI Invocation (`trustctl tool run`)
+
+Run governed tools directly from the command line using the dynamic CLI Policy Enforcement Point (`adapters/surface-cli`):
+
+```bash
+# 1. List registered governed tools
+cargo run -p trustctl -- tool list
+
+# 2. Dynamic schema introspection
+cargo run -p trustctl -- tool run claw_hello_world --help
+
+# 3. Execute with dynamic arguments
+cargo run -p trustctl -- tool run claw_hello_world --message "Hello from CLI"
+```
+
 ---
 
 ## 📜 Protocol Sketch vs. Implementation
 
 This project defines a working set of authorization contracts, independent in principle of any specific runtime:
-* **Normative Schemas**: `ProposedAction`, `PolicyDecision`, `ExecutionGrant`, `GrantedAction`, `ExecutionResult`.
+* **Normative Schemas**: `ProposedAction` (with optional `CallChainContext`), `PolicyDecision`, `ExecutionGrant`, `GrantedAction`, `ExecutionResult`.
+* **Layer 0 Call-Chain Guard**: Evaluated before attribute rules to defend against multi-agent runaway loops, infinite recursion, and frequency spikes (`max_depth = 10`, `allow_cycles = false`, `max_frequency_per_tool = 3`) with authoritative server-side session tracking.
 * **Canonicalization & Hashing**: Deterministic canonical JSON serialization with lexicographically sorted object keys followed by SHA-256 hashing (`input_hash`).
-* **Verification Rules**: Ed25519 public key signature verification, nonce (`jti`) tracking intended to make grant reuse hard, and strict TTL expiration. (Verified, race-free single-use enforcement across every distributed executor topology is a design goal, not yet a proven guarantee — see the whitepaper.)
+* **Verification Rules**: Ed25519 public key signature verification, nonce (`jti`) tracking intended to make grant reuse hard, and strict TTL expiration.
+* **CLI Surface Adapter**: Dynamic Policy Enforcement Point (`adapters/surface-cli`) projecting native tool JSON Schemas into typed CLI commands with POSIX exit codes (0, 1, 126, 127, 130).
 
 This repository is the only implementation right now — mine, in Rust — plus a Python SDK. "Protocol" here describes an internal design, not an externally reviewed or adopted specification.
 
@@ -202,6 +220,7 @@ Key topics covered in the whitepaper:
 | Goal | Resource / Guide |
 | :--- | :--- |
 | **B2B Agent Whitepaper** | [`whitepaper/b2b_agent_whitepaper.md`](whitepaper/b2b_agent_whitepaper.md) |
+| **Contributor & CLI Quickstart** | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) |
 | **Integrate via Python** | [`examples/python-agent/quickstart.py`](examples/python-agent/quickstart.py) |
 | **Integrate via MCP** | [`docs/tutorials/mcp-client.md`](docs/tutorials/mcp-client.md) |
 | **Integrate via REST** | [`docs/tutorials/rest-curl-agent.md`](docs/tutorials/rest-curl-agent.md) |

@@ -174,6 +174,7 @@ mod tests {
                 contract_context: None,
             },
             contract_context: None,
+            call_chain_context: None,
         }
     }
 

@@ -1,0 +1,11 @@
+[package]
+name = "call-chain-guard-example"
+version = "0.1.0"
+edition = "2021"
+description = "Demonstration of Layer 0 Call-Chain Guard for agent runaway and recursion prevention"
+
+[dependencies]
+trust-model = { path = "../../crates/trust-model" }
+trust-policy = { path = "../../crates/trust-policy" }
+serde_json = "1.0"
+chrono = "0.4"

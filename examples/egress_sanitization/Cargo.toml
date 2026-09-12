@@ -1,0 +1,9 @@
+[package]
+name = "egress-sanitization-example"
+version = "0.1.0"
+edition = "2021"
+description = "Demonstration of Egress PII scrubbing and structural data boundaries"
+
+[dependencies]
+trust_core = { path = "../../shared_libs/trust_core" }
+serde_json = "1.0"

@@ -142,6 +142,12 @@ Demonstrates live single-use grant/nonce rejection when an attacker attempts to 
 cargo run -p quickstart-standalone -- --replay
 ```
 
+### 4. Layer 0 Call-Chain Loop / Recursion Simulation (`--call-chain`)
+Demonstrates immediate denial at Layer 0 when an agent attempts recursive invocation or cyclic tool loops:
+```bash
+cargo run -p quickstart-standalone -- --call-chain
+```
+
 **What this demonstrates:**
 
 | Mode / Step | What Happened |
@@ -153,8 +159,112 @@ cargo run -p quickstart-standalone -- --replay
 | 🔒 Step 5 | PII (email addresses) was automatically redacted from the output |
 | ⚠️ `--tamper` | Parameter tampering post-approval is rejected by executor due to `input_hash` mismatch |
 | ⚠️ `--replay` | Re-submitting an already consumed grant is rejected by executor due to single-use nonce/JTI |
+| 🛑 `--call-chain` | Layer 0 call-chain guard detects cyclic loop and denies proposed action before grant issuance |
 
 ---
+
+## Governed Tool Execution via CLI (`trustctl`)
+
+The Trust Gateway CLI acts as a dynamic **Policy Enforcement Point (PEP)** via `adapters/surface-cli`, automatically projecting native tool JSON Schemas into typed CLI commands.
+
+### 1. Discover Registered Tools
+
+Inspect all governed tools available in the workspace tool directory:
+
+```bash
+cargo run -p trustctl -- tool list
+```
+
+Expected output:
+```text
+Available Governed Tools:
+  - claw_hello_world (v1.0.0): Echo a message with greeting
+  - inspect_schema (v1.0.0): Inspect tool schema definitions
+```
+
+### 2. Dynamic Schema Introspection
+
+Inspect command-line arguments generated dynamically from a tool's JSON Schema:
+
+```bash
+cargo run -p trustctl -- tool run claw_hello_world --help
+```
+
+Expected output:
+```text
+Echo a message with greeting
+
+Usage: trustctl tool run claw_hello_world [OPTIONS] --message <MESSAGE>
+
+Options:
+  --message <MESSAGE>  Message to display
+  -h, --help           Print help
+```
+
+### 3. Run Governed Tools
+
+Invoke a tool with dynamic arguments. In standalone/direct mode, `trustctl` computes the canonical RFC 8785 `input_hash`, requests authorization, and verifies execution output:
+
+```bash
+cargo run -p trustctl -- tool run claw_hello_world --message "Hello Sovereign Gateway"
+```
+
+Expected output:
+```json
+{
+  "greeting": "Hello, Hello Sovereign Gateway!"
+}
+```
+
+### 4. Standardized Exit Codes
+
+`trustctl tool run` adheres to POSIX/standardized security exit codes:
+
+| Exit Code | Condition | Example Scenario |
+|:---:|:---|:---|
+| **0** | **Success** | Tool executed and output returned successfully |
+| **1** | **Validation Error** | Missing required parameters: `trustctl tool run claw_hello_world` (missing `--message`) |
+| **126** | **Policy Denied** | Action rejected by Gateway Policy Decision Point (e.g., unauthorized scope or rate limit exceeded) |
+| **127** | **Tool Not Found** | Target tool does not exist in registry: `trustctl tool run unknown_tool` |
+| **130** | **Cancelled / Timed Out** | Human approval pending and timed out, or user cancelled operation |
+
+---
+
+## Call-Chain Guard (Layer 0 Execution Safety)
+
+In multi-agent collaborative workflows, autonomous agents can easily trigger infinite ping-pong loops, recursion storms, or runaway execution costs. The Trust Gateway deploys **Layer 0 Call-Chain Guard** (`crates/trust-policy/src/call_chain.rs`) before evaluating any attribute or financial rules.
+
+### How It Works
+
+Every proposed action carries an optional `CallChainContext`:
+- `depth`: Current invocation depth in the agent execution graph (default maximum: 10).
+- `call_stack`: Sequence of preceding tools called in this trace (e.g. `["agent_plan", "data_fetch", "agent_plan"]`).
+- `invocation_counts`: Per-tool invocation tally within the current session (default maximum: 3 per tool).
+- `initiator_agent_id`: The root agent responsible for starting the workflow.
+
+```text
+Incoming ActionProposal
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 0: Call-Chain Guard (crates/trust-policy/call_chain)  │
+│  - Depth Check: depth <= max_depth (10)                     │
+│  - Cycle Check: cycle_detected in call_stack?               │
+│  - Frequency Check: invocation_count <= max_frequency (3)   │
+│  - Gateway Session Integrity: tracked vs. submitted stack   │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+               Pass           ▼           Violation
+         ┌─────────────────────────┐   ┌──────────────────────────┐
+         │ Layer 1: Policy Rules   │   │ Immediate Deny (Exit 126)│
+         │ (policy.toml ABAC)      │   │ "Call-chain limit hit"   │
+         └─────────────────────────┘   └──────────────────────────┘
+```
+
+### Security Refinement: Authoritative Session Tracking
+
+If a malicious or compromised agent tampers with its `call_stack` or resets its `invocation_counts` to bypass limits, the Gateway detects it. The Trust Gateway maintains an authoritative session state indexed by `trace_id`. If an inbound proposal reports a call-chain state inconsistent with the recorded session history, the proposal is rejected immediately with `PolicyDecision::Deny`.
+
 
 ## Code Quality
 

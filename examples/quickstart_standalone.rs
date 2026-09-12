@@ -28,6 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             beneficiary: None,
         },
         timestamp: now,
+        contract_context: None,
+        call_chain_context: None,
     };
 
     println!("📥 1. Received ProposedAction: tool='{}'", action.tool_name);

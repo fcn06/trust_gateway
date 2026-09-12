@@ -87,6 +87,10 @@ pub struct GatewayState {
     pub policy_fingerprint: String,
     /// Observability: Background task supervisor statuses.
     pub task_statuses: std::sync::Arc<dashmap::DashMap<String, TaskStatus>>,
+    /// Layer 0: Active Call-Chain contexts tracked by trace_id
+    pub call_chain_sessions: std::sync::Arc<dashmap::DashMap<String, trust_core::CallChainContext>>,
+    /// Layer 0: Call-Chain Guard Policy
+    pub call_chain_policy: modular_policy::CallChainPolicy,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -119,6 +123,9 @@ pub struct ProposeActionRequest {
     /// Optional B2B negotiated interaction contract context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_context: Option<serde_json::Value>,
+    /// Optional Call-Chain context carried for loop & depth protection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_chain_context: Option<trust_core::CallChainContext>,
 }
 
 /// The response from the Trust Gateway.
@@ -339,6 +346,91 @@ async fn dispatch_pipeline(
             }
         }
     }
+
+    // ── Layer 0: Call-Chain Guard Evaluation ────────────────
+    let trace_id = if !action_req.actor.session_jti.is_empty() {
+        action_req.actor.session_jti.clone()
+    } else {
+        action_id.clone()
+    };
+
+    let tracked_entry = state.call_chain_sessions.get(&trace_id);
+    let tracked_context = tracked_entry.as_deref();
+
+    let mut current_context = match modular_policy::call_chain::validate_context_integrity(
+        action_req.call_chain_context.as_ref(),
+        tracked_context,
+    ) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            tracing::warn!(
+                "⛔ Call-Chain Integrity Violation for action '{}': {}",
+                action_name,
+                e
+            );
+            crate::audit_sink::emit_audit(
+                &*state.security.audit_sink,
+                &tenant_id,
+                AuditEventType::PolicyEvaluated,
+                "trust_gateway",
+                &action_id,
+                serde_json::json!({
+                    "decision": "denied",
+                    "error": e.to_string(),
+                    "agent_id": agent_id_for_audit,
+                }),
+            )
+            .await;
+            return Ok(GatewayResponse {
+                action_id,
+                status: "denied".to_string(),
+                result: None,
+                error: Some(format!("Call-Chain Guard Denied: {e}")),
+                approval_id: None,
+                escalation: None,
+            });
+        }
+    };
+
+    if current_context.trace_id.is_empty() {
+        current_context.trace_id = trace_id.clone();
+    }
+
+    if let Err(e) = modular_policy::call_chain::evaluate_and_advance(
+        &mut current_context,
+        &action_name,
+        &state.call_chain_policy,
+    ) {
+        tracing::warn!(
+            "⛔ Call-Chain Guard Rejection for action '{}': {}",
+            action_name,
+            e
+        );
+        crate::audit_sink::emit_audit(
+            &*state.security.audit_sink,
+            &tenant_id,
+            AuditEventType::PolicyEvaluated,
+            "trust_gateway",
+            &action_id,
+            serde_json::json!({
+                "decision": "denied",
+                "error": e.to_string(),
+                "agent_id": agent_id_for_audit,
+            }),
+        )
+        .await;
+        return Ok(GatewayResponse {
+            action_id,
+            status: "denied".to_string(),
+            result: None,
+            error: Some(format!("Call-Chain Guard Denied: {e}")),
+            approval_id: None,
+            escalation: None,
+        });
+    }
+
+    // Persist advanced call-chain context
+    state.call_chain_sessions.insert(trace_id, current_context);
 
     // 2. Evaluate policy
     let decision = state
@@ -872,6 +964,7 @@ pub fn build_action_request(
             contract_context: proposed.contract_context.clone(),
         },
         contract_context: proposed.contract_context,
+        call_chain_context: proposed.call_chain_context,
     })
 }
 
@@ -921,6 +1014,7 @@ pub async fn run_trust_v1_listener(nc: async_nats::Client, state: Arc<GatewaySta
                         source_type: Some(normalized.source_type),
                         ucan_token: None,
                         contract_context: normalized.contract_context,
+                        call_chain_context: normalized.call_chain_context,
                     }
                 }
                 Err(e) => {
@@ -1033,6 +1127,7 @@ pub async fn run_trust_v1_listener(nc: async_nats::Client, state: Arc<GatewaySta
                     identity,
                     raw_meta: None,
                     contract_context: req.contract_context,
+                    call_chain_context: req.call_chain_context,
                 };
 
                 tracing::debug!(

@@ -672,6 +672,8 @@ async fn main() -> Result<()> {
         tool_listing_overlay,
         policy_fingerprint: policy_fp.hash.clone(),
         task_statuses: std::sync::Arc::new(dashmap::DashMap::new()),
+        call_chain_sessions: std::sync::Arc::new(dashmap::DashMap::new()),
+        call_chain_policy: modular_policy::CallChainPolicy::default(),
     });
 
     let cancel_token = tokio_util::sync::CancellationToken::new();

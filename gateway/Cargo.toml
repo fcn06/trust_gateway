@@ -16,6 +16,7 @@ path = "src/lib.rs"
 # Domain types and policy engine from agent_in_a_box workspace
 trust_core = { path = "../shared_libs/trust_core" }
 trust_policy = { path = "../shared_libs/trust_policy" }
+modular_policy = { package = "trust-policy", path = "../crates/trust-policy" }
 identity_context = { path = "../shared_libs/identity_context" }
 trust_contract = { package = "trust-contract", path = "../crates/trust-contract" }
 configuration={git = "https://github.com/fcn06/swarm_commons.git", rev = "329c8ff3397fa843c83180ff12de2d6a9f9bd5f8"}

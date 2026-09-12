@@ -113,6 +113,7 @@ async fn dispatch_cron_action(
             contract_context: None,
         },
         contract_context: None,
+        call_chain_context: None,
     };
 
     match crate::gateway::process_action(state.clone(), action_req).await {

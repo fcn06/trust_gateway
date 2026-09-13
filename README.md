@@ -166,15 +166,6 @@ Execute the complete end-to-end cryptographic lifecycle in pure Rust without ext
 cargo run --bin agent_reputation_lifecycle
 ```
 
-### Live Autonomous LLM Multi-Turn A2A Dialogue (Bash Client)
-
-Run a realistic multi-turn Agent-to-Agent dialogue between an external Buyer Agent and a live `b2b_agent` powered by an LLM over HTTP JSON-RPC `tasks/send`:
-
-```bash
-# Requires local dev environment running (./start_dev.sh)
-./../secure-collaboration-fabric/b2b_agent/examples/real_world_reputation_lifecycle_a2a.sh
-```
-
 ---
 
 ## 📜 Protocol Sketch vs. Implementation

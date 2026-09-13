@@ -239,42 +239,6 @@ The **B2B Agent pattern** solves this by establishing a strict dual-plane separa
                                         returned to Buyer
 ```
 
-```mermaid
-flowchart TD
-    subgraph Semantic["1. Semantic Plane (Probabilistic Negotiation)"]
-        Buyer["External B2B Agent<br/>(did:web:buyer.com)"] <-->|"A2A Dialogue (/tasks/send)"| Supplier["Enterprise B2B Agent<br/>(Cognitive Reasoning LLM)"]
-    end
-
-    subgraph Control["2. Control Plane (Deterministic Enforcement)"]
-        Supplier -->|"4 MCP Lifecycle Tools<br/>(Inspect, Propose, Activate, Vault)"| TG["Trust Gateway<br/>(PEP Pipeline)"]
-        Contract[("Active Interaction Contract<br/>RFC 8785 Canonical JSON")] -.->|"Validated by"| TG
-        TG -->|"Evaluates policy.toml,<br/>velocity & call-chain"| PEP{"Policy Decision"}
-    end
-
-    subgraph Execution["3. Execution Plane (Verification & Side-Effects)"]
-        PEP -->|"ExecutionGrant JWT<br/>(contract_id + input_hash)"| Exec["Isolated Executor<br/>(Verification Only)"]
-        Exec -->|"Execute with downstream creds"| Tools[("Downstream APIs, ERP & SaaS")]
-    end
-
-    subgraph Evidence["4. Evidence & Reputation Plane"]
-        Exec -->|"1. Action Succeeded"| RepStore[("NATS KV: reputation_scores<br/>atomic increment")]
-        Exec -->|"2. Mint & Sign"| Receipt["ExecutionReceipt<br/>(Ed25519-Signed Proof)"]
-        Receipt -.->|"Verifiable Evidence"| Buyer
-    end
-
-    classDef agent fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    classDef gateway fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
-    classDef executor fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
-    classDef data fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
-
-    class Buyer,Supplier agent;
-    class TG,PEP gateway;
-    class Exec executor;
-    class Contract,RepStore,Receipt,Tools data;
-```
-
-
-
 ### 📄 Read the Whitepaper
 
 For the full architecture, threat model, and an honest accounting of what's implemented versus still a design goal, read the technical whitepaper:

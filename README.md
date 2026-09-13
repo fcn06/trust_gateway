@@ -20,36 +20,49 @@ Executors independently verify the grant and never rely on the agent's claim tha
 
 > **"Agents propose. Gateway decides. Executors verify."**
 
-> 📄 **New Reference Architecture (Sept 2026):** Read the whitepaper on [The Intelligent Enterprise Boundary & Negotiated Interaction Contracts (NICP)](whitepaper/b2b_agent_whitepaper.md).
+> 📄 **New Reference Architecture (Sept 2026):** Read the whitepaper on [Interaction Contracts & Autonomous Reputation Lifecycle for B2B Agents (NICP)](whitepaper/b2b_agent_whitepaper.md).
 
 ---
-
-
 
 ## Simplified Architecture
 
 ```text
-┌────────────┐       ProposedAction       ┌───────────────┐
-│  AI Agent  │ ─────────────────────────▶ │ Trust Gateway │
-└────────────┘                            └───────┬───────┘
-                                                │
-      No downstream credentials                 │ GrantedAction
-                                                │ + ExecutionGrant
-                                                ▼
-                                        ┌───────────────┐
-                                        │   Executor    │
-                                        │ owns API key  │
-                                        └───────┬───────┘
-                                                │
-                                                ▼
-                                               API
+┌─────────────────┐       1. Propose & Negotiate Terms       ┌─────────────────┐
+│ External Agent  │ ───────────────────────────────────────▶ │ B2B Agent (Host)│
+│ (e.g. did:web)  │ ◀─────────────────────────────────────── │ (Cognitive LLM) │
+└────────┬────────┘          Mutual Ed25519 Attestation      └────────┬────────┘
+         │                                                            │
+         │                                                4 MCP Tools │
+         │                                                (Inspect,   │
+         │                                                 Propose,   │
+         │                                                 Activate,  │
+         │                                                 Vault)     │
+         │                                                            ▼
+         │       ActionRequest (contract_id, contract_hash)   ┌─────────────────┐
+         └──────────────────────────────────────────────────▶ │  Trust Gateway  │
+                                                              │(ContractVerifier│
+                                                              │ & PEP Pipeline) │
+                                                              └───────┬─────────┘
+                                                                      │
+                                                        GrantedAction │
+                                                    + ExecutionGrant  │
+                                                                      ▼
+                                                              ┌─────────────────┐
+                                                              │Isolated Executor│
+                                                              │  owns API keys  │
+                                                              └───────┬─────────┘
+                                                                      │
+         4. Succeeded + Signed ExecutionReceipt                       │ 3. Execute
+         ◀────────────────────────────────────────────────────────────┼─── API / ERP
+                                                                      │
+                                                2. Increment Count in │
+                                                   reputation_scores  │
+                                                                      ▼
+                                                                NATS Stores
 ```
 
-The agent never receives the downstream credential. It submits a
-`ProposedAction` to Trust Gateway. If policy permits the action, the gateway
-issues an `ExecutionGrant` bound to that exact tool and parameter set.
-The executor verifies the grant before using its own credential to perform
-the action.
+The agent never receives downstream credentials. It negotiates terms under the **Negotiated Interaction Contract Protocol (NICP)**, which are canonicalized (RFC 8785) and attested by both parties. The **Trust Gateway** enforces contract limits deterministically before issuing a short-lived `ExecutionGrant`. Upon successful execution, the gateway increments the counterparty's track record in `reputation_scores` and mints an Ed25519-signed **`ExecutionReceipt`** returned directly to the caller as verifiable proof of good execution.
+
 
 ---
 ## 🚀 Quickstart (Python SDK in \< 2 minutes)
@@ -160,13 +173,35 @@ cargo run -p trustctl -- tool run claw_hello_world --help
 cargo run -p trustctl -- tool run claw_hello_world --message "Hello from CLI"
 ```
 
+### Autonomous Reputation & Contract Lifecycle Test (Pure Rust)
+
+Execute the complete end-to-end cryptographic lifecycle in pure Rust without external network dependencies:
+
+```bash
+# Runs discovery, cold-start inspection, peer proof validation, proposal amendment,
+# 9-step activation ceremony, grant dispatch, and ExecutionReceipt minting:
+cargo run --bin agent_reputation_lifecycle
+```
+
+### Live Autonomous LLM Multi-Turn A2A Dialogue (Bash Client)
+
+Run a realistic multi-turn Agent-to-Agent dialogue between an external Buyer Agent and a live `b2b_agent` powered by an LLM over HTTP JSON-RPC `tasks/send`:
+
+```bash
+# Requires local dev environment running (./start_dev.sh)
+./../secure-collaboration-fabric/b2b_agent/examples/real_world_reputation_lifecycle_a2a.sh
+```
+
 ---
 
 ## 📜 Protocol Sketch vs. Implementation
 
 This project defines a working set of authorization contracts, independent in principle of any specific runtime:
-* **Normative Schemas**: `ProposedAction` (with optional `CallChainContext`), `PolicyDecision`, `ExecutionGrant`, `GrantedAction`, `ExecutionResult`.
+* **Normative Schemas**: `ProposedAction` (with optional `CallChainContext`), `PolicyDecision`, `ExecutionGrant`, `GrantedAction`, `ExecutionResult`, `ExecutionReceipt`.
 * **Layer 0 Call-Chain Guard**: Evaluated before attribute rules to defend against multi-agent runaway loops, infinite recursion, and frequency spikes (`max_depth = 10`, `allow_cycles = false`, `max_frequency_per_tool = 3`) with authoritative server-side session tracking.
+* **Deterministic Contract Kernel (`trust-contract`)**: Pure aggregate enforcing RFC 8785 canonical JSON, SHA-256 fingerprinting, 10-state FSM, and a 9-step activation ceremony over mutual Ed25519 signatures.
+* **Autonomous Reputation & Evidence Lifecycle**: Cold-start containment via local NATS KV `reputation_scores`, peer attestation verification against `trusted_peer_roots` anchors, and portable, signed `ExecutionReceipt` proofs returned upon `ActionSucceeded`.
+* **Cognitive-to-Cryptographic MCP Tools**: 4 specialized lifecycle tools (`reputation_inspect_counterparty`, `contract_propose_or_amend`, `contract_verify_and_activate`, `receipt_present_and_store`) bridging semantic reasoning to control plane enforcement.
 * **Canonicalization & Hashing**: Deterministic canonical JSON serialization with lexicographically sorted object keys followed by SHA-256 hashing (`input_hash`).
 * **Verification Rules**: Ed25519 public key signature verification, nonce (`jti`) tracking intended to make grant reuse hard, and strict TTL expiration.
 * **CLI Surface Adapter**: Dynamic Policy Enforcement Point (`adapters/surface-cli`) projecting native tool JSON Schemas into typed CLI commands with POSIX exit codes (0, 1, 126, 127, 130).
@@ -199,6 +234,9 @@ External B2B Agent  <── negotiation ──>  Enterprise B2B Agent
                                                  │ (ExecutionGrant)
                                                  ▼
                                          Isolated Executor  ──►  Internal Systems (ERP/APIs)
+                                                 │
+                                                 ▼ (ExecutionReceipt)
+                                         Proof of Good Execution
 ```
 
 ### 📄 Read the Whitepaper
@@ -209,10 +247,12 @@ For the full architecture, threat model, and an honest accounting of what's impl
 
 Key topics covered in the whitepaper:
 - **Negotiated Interaction Contracts (NICP)**: Canonicalization (RFC 8785 JCS), contract lifecycle, and mutual cryptographic attestation.
+- **Autonomous Reputation & Evidence Lifecycle**: Cold-start containment, atomic local reputation ledgers (`reputation_scores`), peer attestation proofs, and portable `ExecutionReceipt` evidence (§8.3).
+- **The Cognitive-to-Cryptographic Bridge**: The 4 MCP tools bridging reasoning LLMs to deterministic gateway primitives (§8.4).
 - **The Effective Authority Invariant**: `effective_authority = contract ∩ enterprise_policy ∩ identity_delegation`.
 - **Stateful Authorization & Cumulative Risk**: Sliding-window velocity limits and multi-request exposure guards.
-- **Semantic Verification Pipeline (design goal — partially prototyped)**: the target is compiling and freezing schema mappings into content-addressed, sandboxed WebAssembly bytecode rather than relying on live LLM translation at transaction time.
-- **Audit Trails & Dispute Resolution**: Append-only sealed receipts linking grants, contracts, input/output digests, and signatures — intended to support non-repudiation and dispute resolution, though this hasn't yet been exercised against a real disputed-transaction scenario.
+- **Implementation Status Matrix**: Transparent status across all subsystems (§11.1).
+- **Audit Trails & Dispute Resolution**: Append-only sealed receipts linking grants, contracts, input/output digests, and signatures.
 
 ---
 ## 📖 Explore the Documentation
@@ -220,6 +260,8 @@ Key topics covered in the whitepaper:
 | Goal | Resource / Guide |
 | :--- | :--- |
 | **B2B Agent Whitepaper** | [`whitepaper/b2b_agent_whitepaper.md`](whitepaper/b2b_agent_whitepaper.md) |
+| **Reputation Lifecycle Example** | [`examples/agent_reputation_lifecycle/README.md`](examples/agent_reputation_lifecycle/README.md) |
+| **Real-World A2A Script Guide** | [`../secure-collaboration-fabric/b2b_agent/examples/README.md`](../secure-collaboration-fabric/b2b_agent/examples/README.md) |
 | **Contributor & CLI Quickstart** | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) |
 | **Integrate via Python** | [`examples/python-agent/quickstart.py`](examples/python-agent/quickstart.py) |
 | **Integrate via MCP** | [`docs/tutorials/mcp-client.md`](docs/tutorials/mcp-client.md) |
@@ -230,6 +272,7 @@ Key topics covered in the whitepaper:
 | **What Trust Gateway is Not** | [`docs/concepts/LIMITATIONS.md`](docs/concepts/LIMITATIONS.md) |
 | **Why Trust Gateway** | [`docs/concepts/VISUAL_GUIDE.md`](docs/concepts/VISUAL_GUIDE.md) |
 | **Threat Model** | [`threat-model/THREAT_MODEL.md`](threat-model/THREAT_MODEL.md) |
+
 
 ---
 ## 🧰 Development

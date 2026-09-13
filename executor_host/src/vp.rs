@@ -615,16 +615,22 @@ impl VpExecutor {
     }
 
     async fn load_or_create_host_key(&self) -> Result<ed25519_dalek::SigningKey, TrustError> {
+        if let Ok(path) = std::env::var("B2B_SIGNING_KEY_PATH") {
+            if let Ok(bytes) = std::fs::read(path) {
+                if let Ok(arr) = bytes.as_slice().try_into() {
+                    return Ok(ed25519_dalek::SigningKey::from_bytes(&arr));
+                }
+            }
+        }
+
         let search_paths = [
             "configuration/b2b_signing.key",
-            "../secure-collaboration-fabric/b2b_agent/configuration/b2b_signing.key",
             "/opt/lianxi.io/secrets/b2b_signing.key",
         ];
 
         for path in search_paths {
             if let Ok(bytes) = std::fs::read(path) {
-                if bytes.len() == 32 {
-                    let arr: [u8; 32] = bytes.as_slice().try_into().unwrap();
+                if let Ok(arr) = bytes.as_slice().try_into() {
                     return Ok(ed25519_dalek::SigningKey::from_bytes(&arr));
                 }
             }

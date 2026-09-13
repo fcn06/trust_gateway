@@ -582,13 +582,12 @@ All four tools are classified under `OperationKind::Read` and governed under `me
 
 The entire lifecycle described in this section is implemented and verified by two complementary test suites:
 
-1. **Deterministic Pure-Rust Integration Suite** (`trust-gateway/examples/agent_reputation_lifecycle/src/main.rs`):
+1. **Deterministic Pure-Rust Integration Suite** (`examples/agent_reputation_lifecycle/src/main.rs`):
    - Executes the complete lifecycle end-to-end without external network calls or LLMs: keypair generation, cold-start detection, peer receipt validation, contract amendment chaining, mutual attestation, 9-step activation ceremony, execution grant dispatch, and receipt minting.
-   - Run command: `cargo run --bin agent_reputation_lifecycle`. 🟢
+   - Run command: `cargo run --bin agent-reputation-lifecycle-example`. 🟢
 
-2. **Autonomous Live LLM A2A Multi-Turn Dialogue** (`secure-collaboration-fabric/b2b_agent/examples/real_world_reputation_lifecycle_a2a.sh`):
-   - Runs a realistic client script acting as an external Buyer Agent with its own Ed25519 keypair, interacting over HTTP JSON-RPC (`tasks/send`) with the live `b2b_agent` powered by a real LLM.
-   - Validates multi-turn autonomous reasoning, cognitive steering, dynamic role binding, rate-limit retry backoffs, and cryptographic signature exchanges. 🟢
+2. **Autonomous Live LLM A2A Multi-Turn Dialogue** (Private Enterprise Runtime):
+   - Validates multi-turn autonomous reasoning, cognitive steering, dynamic role binding, rate-limit retry backoffs, and cryptographic signature exchanges with a live LLM agent host interacting over HTTP JSON-RPC (`tasks/send`). 🟡
 
 
 ---
@@ -668,14 +667,14 @@ To maintain the honesty and transparency promised in the introduction, here is w
 
 | Subsystem / Feature | Section | Status | Implementation Details & Artifacts |
 | :--- | :--- | :--- | :--- |
-| **Deterministic Contract Kernel** | §3 | 🟢 Open Source | Pure domain aggregate in `trust-gateway/crates/trust-contract/`, RFC 8785 canonical JSON, SHA-256 fingerprinting, 10-state finite state machine, and 9-step activation ceremony. |
+| **Deterministic Contract Kernel** | §3 | 🟢 Open Source | Pure domain aggregate in `crates/trust-contract/`, RFC 8785 canonical JSON, SHA-256 fingerprinting, 10-state finite state machine, and 9-step activation ceremony. |
 | **Execution Grant Binding** | §6 | 🟢 Open Source | Single-use JWT grants with `input_hash` locking, short TTL (30s), stamped `contract_id` and `contract_hash`, and JetStream KV `grant_nonces` anti-replay. |
-| **Layer 0 Call-Chain Guard** | §4.4 | 🟢 Open Source | Pure guard in `trust-gateway/crates/trust-policy/src/call_chain.rs` enforcing recursion depth (<= 10), cycle prevention, and frequency bounds. |
+| **Layer 0 Call-Chain Guard** | §4.4 | 🟢 Open Source | Pure guard in `crates/trust-policy/src/call_chain.rs` enforcing recursion depth (<= 10), cycle prevention, and frequency bounds. |
 | **Autonomous Reputation & Cold-Start** | §8.3 | 🟢 Open Source | Atomic local JetStream KV counter store (`reputation_scores`), cold-start safe tier clipping, and Sybil resistance via `trusted_peer_roots` anchors. |
 | **Cognitive-to-Cryptographic Bridge** | §8.4 | 🟢 Open Source | 4 specialized MCP lifecycle tools (`reputation_inspect_counterparty`, `contract_propose_or_amend`, `contract_verify_and_activate`, `receipt_present_and_store`) in `executor_host/src/vp.rs`. |
-| **Autonomous B2B Agent Steering** | §8.1 | 🟢 Open Source | Dynamic system prompt injection in `secure-collaboration-fabric/b2b_agent/src/b2b_agent.rs` with `sender_did` role binding and NICP output discipline. |
+| **Autonomous B2B Agent Steering** | §8.1 | 🟡 In Private Build | Dynamic system prompt injection with `sender_did` role binding and NICP output discipline in the agent runtime host. |
 | **Sealed Proof of Good Execution** | §8.2 | 🟢 Open Source | Ed25519-signed `ExecutionReceipt` minted by Trust Gateway upon `ActionSucceeded`, returned directly in `ExecutionResult` payload and vaulted in `execution_receipts` KV. |
-| **Reference Integration Test Suites** | §8.5 | 🟢 Open Source | Pure-Rust deterministic suite (`trust-gateway/examples/agent_reputation_lifecycle/src/main.rs`) and live LLM multi-turn A2A script (`real_world_reputation_lifecycle_a2a.sh`). |
+| **Reference Integration Test Suites** | §8.5 | 🟢 Open Source | Pure-Rust deterministic suite (`examples/agent_reputation_lifecycle/src/main.rs`) validating the full cryptographic lifecycle. |
 | **Sandboxed OpenMLS Execution** | §2.1 | 🟡 In Private Build | OpenMLS group messaging running inside `wasm32-wasip1` software guest sandboxes. |
 | **Automated Schema Fuzzing Pipeline** | §5.2 | ⚪ Design Goal | Automated property-based fuzzing and round-trip verification pipeline compiling mappings to content-hashed Wasm bytecode. |
 

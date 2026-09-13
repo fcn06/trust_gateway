@@ -163,7 +163,7 @@ Execute the complete end-to-end cryptographic lifecycle in pure Rust without ext
 ```bash
 # Runs discovery, cold-start inspection, peer proof validation, proposal amendment,
 # 9-step activation ceremony, grant dispatch, and ExecutionReceipt minting:
-cargo run --bin agent_reputation_lifecycle
+cargo run --bin agent-reputation-lifecycle-example
 ```
 
 ---
@@ -252,7 +252,6 @@ Key topics covered in the whitepaper:
 | :--- | :--- |
 | **B2B Agent Whitepaper** | [`whitepaper/b2b_agent_whitepaper.md`](whitepaper/b2b_agent_whitepaper.md) |
 | **Reputation Lifecycle Example** | [`examples/agent_reputation_lifecycle/README.md`](examples/agent_reputation_lifecycle/README.md) |
-| **Real-World A2A Script Guide** | [`../secure-collaboration-fabric/b2b_agent/examples/README.md`](../secure-collaboration-fabric/b2b_agent/examples/README.md) |
 | **Contributor & CLI Quickstart** | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) |
 | **Integrate via Python** | [`examples/python-agent/quickstart.py`](examples/python-agent/quickstart.py) |
 | **Integrate via MCP** | [`docs/tutorials/mcp-client.md`](docs/tutorials/mcp-client.md) |

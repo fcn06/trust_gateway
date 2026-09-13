@@ -1,0 +1,20 @@
+[package]
+name = "agent-reputation-lifecycle-example"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end demonstration of B2B agent discovery, reputation checking, contract negotiation, policy gating, execution, and receipt proof issuance"
+
+[dependencies]
+trust-contract = { path = "../../crates/trust-contract" }
+trust-model = { path = "../../crates/trust-model" }
+trust-grants = { path = "../../crates/trust-grants" }
+trust-canonical = { path = "../../crates/trust-canonical" }
+policy_sdk = { path = "../../policy-sdk" }
+gateway = { path = "../../gateway" }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std", "rand_core"] }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4"] }

@@ -10,6 +10,7 @@ pub mod model;
 pub mod negotiation;
 pub mod negotiation_service;
 pub mod protocol_msg;
+pub mod receipt;
 pub mod state_machine;
 pub mod store;
 pub mod validation;
@@ -25,12 +26,13 @@ pub use hash::{compute_contract_hash, verify_contract_hash};
 pub use model::{
     AuthorityReference, CapabilityBinding, CommercialTerms, ContractAttestation,
     ContractCapability, ContractConstraints, ContractContext, ContractEvidence, ContractMoney,
-    ContractValidity, DataPolicy, InteractionContract, Obligation, PartyIdentity, ProtocolBinding,
-    Purpose, SignableContractPayload,
+    ContractValidity, DataPolicy, ExecutionReceipt, InteractionContract, Obligation, PartyIdentity,
+    ProtocolBinding, Purpose, SignableContractPayload, SignableReceiptPayload,
 };
 pub use negotiation::{ContractProposal, NegotiationLimits};
 pub use negotiation_service::ContractNegotiationService;
 pub use protocol_msg::NicpMessage;
+pub use receipt::{compute_receipt_hash, sign_execution_receipt, verify_execution_receipt};
 pub use state_machine::ContractState;
 pub use store::{format_contract_key, ContractStore, InMemoryContractStore};
 pub use validation::{

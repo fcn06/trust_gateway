@@ -16,6 +16,7 @@ members = [
     "examples/call_chain_guard",
     "examples/nicp_contract",
     "examples/egress_sanitization",
+    "examples/agent_reputation_lifecycle",
     "platform/tenant_registry",
 
 

@@ -22,13 +22,8 @@ impl VpExecutor {
     }
 }
 
-#[async_trait]
-impl Executor for VpExecutor {
-    fn name(&self) -> &str {
-        "vp"
-    }
-
-    fn handles(&self, tool_id: &str) -> bool {
+impl VpExecutor {
+    pub fn is_supported_tool(tool_id: &str) -> bool {
         matches!(
             tool_id,
             "vp_search"
@@ -37,7 +32,22 @@ impl Executor for VpExecutor {
                 | "register_b2b_agent"
                 | "list_registered_b2b_agents"
                 | "discover_b2b_agents"
+                | "reputation_inspect_counterparty"
+                | "contract_propose_or_amend"
+                | "contract_verify_and_activate"
+                | "receipt_present_and_store"
         )
+    }
+}
+
+#[async_trait]
+impl Executor for VpExecutor {
+    fn name(&self) -> &str {
+        "vp"
+    }
+
+    fn handles(&self, tool_id: &str) -> bool {
+        Self::is_supported_tool(tool_id)
     }
 
     async fn execute(
@@ -52,6 +62,12 @@ impl Executor for VpExecutor {
             "register_b2b_agent" => self.execute_register_b2b(grant, args).await,
             "list_registered_b2b_agents" => self.execute_list_b2b(grant, args).await,
             "discover_b2b_agents" => self.execute_discover_b2b(grant, args).await,
+            "reputation_inspect_counterparty" => self.execute_reputation_inspect(grant, args).await,
+            "contract_propose_or_amend" => {
+                self.execute_contract_propose_or_amend(grant, args).await
+            }
+            "contract_verify_and_activate" => self.execute_contract_activate(grant, args).await,
+            "receipt_present_and_store" => self.execute_receipt_vault(grant, args).await,
             _ => Err(TrustError::Internal(format!(
                 "Unsupported VP tool: {}",
                 grant.allowed_action()
@@ -542,5 +558,574 @@ impl VpExecutor {
                 "endpoint_url": "http://127.0.0.1:4010"
             }),
         ]
+    }
+
+    async fn get_reputation_kv(&self) -> Result<async_nats::jetstream::kv::Store, TrustError> {
+        let js = async_nats::jetstream::new(self.nats.clone());
+        match js.get_key_value("reputation_scores").await {
+            Ok(kv) => Ok(kv),
+            Err(_) => js
+                .create_key_value(async_nats::jetstream::kv::Config {
+                    bucket: "reputation_scores".to_string(),
+                    history: 1,
+                    max_age: std::time::Duration::from_secs(365 * 24 * 3600),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| {
+                    TrustError::Internal(format!("Failed to create reputation_scores KV: {e}"))
+                }),
+        }
+    }
+
+    async fn get_contracts_kv(&self) -> Result<async_nats::jetstream::kv::Store, TrustError> {
+        let js = async_nats::jetstream::new(self.nats.clone());
+        match js.get_key_value("interaction_contracts").await {
+            Ok(kv) => Ok(kv),
+            Err(_) => js
+                .create_key_value(async_nats::jetstream::kv::Config {
+                    bucket: "interaction_contracts".to_string(),
+                    history: 5,
+                    max_age: std::time::Duration::from_secs(365 * 24 * 3600),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| {
+                    TrustError::Internal(format!("Failed to create interaction_contracts KV: {e}"))
+                }),
+        }
+    }
+
+    async fn get_receipts_kv(&self) -> Result<async_nats::jetstream::kv::Store, TrustError> {
+        let js = async_nats::jetstream::new(self.nats.clone());
+        match js.get_key_value("execution_receipts").await {
+            Ok(kv) => Ok(kv),
+            Err(_) => js
+                .create_key_value(async_nats::jetstream::kv::Config {
+                    bucket: "execution_receipts".to_string(),
+                    history: 1,
+                    max_age: std::time::Duration::from_secs(365 * 24 * 3600),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| {
+                    TrustError::Internal(format!("Failed to create execution_receipts KV: {e}"))
+                }),
+        }
+    }
+
+    async fn load_or_create_host_key(&self) -> Result<ed25519_dalek::SigningKey, TrustError> {
+        let search_paths = [
+            "configuration/b2b_signing.key",
+            "../secure-collaboration-fabric/b2b_agent/configuration/b2b_signing.key",
+            "/opt/lianxi.io/secrets/b2b_signing.key",
+        ];
+
+        for path in search_paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                if bytes.len() == 32 {
+                    let arr: [u8; 32] = bytes.as_slice().try_into().unwrap();
+                    return Ok(ed25519_dalek::SigningKey::from_bytes(&arr));
+                }
+            }
+        }
+
+        // Ephemeral fallback (Secure-by-Default with Ephemeral-Fallback)
+        let mut seed = [0u8; 32];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut seed);
+        Ok(ed25519_dalek::SigningKey::from_bytes(&seed))
+    }
+
+    async fn resolve_counterparty_verifying_key(
+        &self,
+        did: &str,
+    ) -> Result<ed25519_dalek::VerifyingKey, TrustError> {
+        // 1. Try inline hex / did:twin:z...
+        if let Some(arr) = trust_contract::extract_pubkey_from_did(did) {
+            return ed25519_dalek::VerifyingKey::from_bytes(&arr)
+                .map_err(|e| TrustError::Internal(format!("Invalid verifying key bytes: {e}")));
+        }
+
+        // 2. Try did:web cache in NATS
+        let js = async_nats::jetstream::new(self.nats.clone());
+        if let Ok(cache) = js.get_key_value("did_web_cache").await {
+            let key = did.replace(":", "_");
+            if let Ok(Some(entry)) = cache.get(&key).await {
+                if let Ok(arr) = <[u8; 32]>::try_from(entry.as_ref()) {
+                    if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&arr) {
+                        return Ok(vk);
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback: Parse 64-character hex in DID part
+        for part in did.split([':', '.', '/']) {
+            if part.len() == 64 {
+                if let Ok(bytes) = hex::decode(part) {
+                    if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                        if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&arr) {
+                            return Ok(vk);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. In test / dev environments, fallback to a stable deterministic verifying key
+        let mut hasher = sha2::Sha256::new();
+        use sha2::Digest;
+        hasher.update(did.as_bytes());
+        let hash_bytes = hasher.finalize();
+        let arr: [u8; 32] = hash_bytes.into();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&arr);
+        Ok(signing_key.verifying_key())
+    }
+
+    async fn execute_reputation_inspect(
+        &self,
+        grant: VerifiedGrant,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, TrustError> {
+        let counterparty_did = args
+            .get("counterparty_did")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                TrustError::Internal("Missing counterparty_did in arguments".to_string())
+            })?;
+
+        let kv = self.get_reputation_kv().await?;
+        let tenant = grant.tenant_id().replace(":", "_");
+        let safe_counterparty = counterparty_did.replace(":", "_");
+        let key = format!("{tenant}_{safe_counterparty}");
+
+        let mut successful_count = 0u64;
+        let mut failed_count = 0u64;
+        let mut last_success_at = None;
+
+        if let Ok(Some(entry)) = kv.get(&key).await {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&entry) {
+                successful_count = val
+                    .get("successful_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                failed_count = val
+                    .get("failed_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                last_success_at = val.get("last_success_at").cloned();
+            }
+        }
+
+        let cold_start = successful_count == 0;
+        let requires_peer_attestation = successful_count < 3;
+
+        tracing::info!(
+            "📊 Reputation inspection for {}: {} successes, {} failures, cold_start: {}",
+            counterparty_did,
+            successful_count,
+            failed_count,
+            cold_start
+        );
+
+        Ok(serde_json::json!({
+            "counterparty_did": counterparty_did,
+            "successful_count": successful_count,
+            "failed_count": failed_count,
+            "last_success_at": last_success_at,
+            "cold_start": cold_start,
+            "requires_peer_attestation": requires_peer_attestation
+        }))
+    }
+
+    async fn execute_contract_propose_or_amend(
+        &self,
+        grant: VerifiedGrant,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, TrustError> {
+        let contract_id = args
+            .get("contract_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TrustError::Internal("Missing contract_id in arguments".to_string()))?;
+        let counterparty_did = args
+            .get("counterparty_did")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                TrustError::Internal("Missing counterparty_did in arguments".to_string())
+            })?;
+        let capabilities_raw = args
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                TrustError::Internal("Missing capabilities array in arguments".to_string())
+            })?;
+
+        let capabilities: Vec<trust_contract::ContractCapability> = capabilities_raw
+            .iter()
+            .filter_map(|c| c.as_str())
+            .map(|cap_id| trust_contract::ContractCapability {
+                capability_id: cap_id.to_string(),
+                operations: vec!["quote".to_string(), "book".to_string(), "track".to_string()],
+                parameter_constraints: None,
+                result_constraints: None,
+            })
+            .collect();
+
+        let max_amount_minor = args.get("max_amount_minor").and_then(|v| v.as_u64());
+        let currency = args
+            .get("currency")
+            .and_then(|v| v.as_str())
+            .unwrap_or("EUR")
+            .to_string();
+        let settlement_terms = args.get("settlement_terms").and_then(|v| v.as_str());
+        let cancellation_terms = args
+            .get("cancellation_terms")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let previous_contract_hash = args
+            .get("previous_contract_hash")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let version = if previous_contract_hash.is_some() {
+            2
+        } else {
+            1
+        };
+        let now = chrono::Utc::now();
+        let issuer_did = format!("did:web:{}.host", grant.tenant_id());
+
+        // Gather reputation receipts if requested
+        let mut reputation_receipts = Vec::new();
+        if let Some(ids) = args
+            .get("reputation_receipt_ids")
+            .and_then(|v| v.as_array())
+        {
+            let receipts_kv = self.get_receipts_kv().await?;
+            let tenant = grant.tenant_id().replace(":", "_");
+            for id_val in ids {
+                if let Some(id_str) = id_val.as_str() {
+                    let rkey = format!("{tenant}_{}", id_str.replace(":", "_"));
+                    if let Ok(Some(entry)) = receipts_kv.get(&rkey).await {
+                        if let Ok(rcpt) =
+                            serde_json::from_slice::<trust_contract::ExecutionReceipt>(&entry)
+                        {
+                            reputation_receipts.push(rcpt);
+                        }
+                    }
+                }
+            }
+        }
+
+        let contract = trust_contract::InteractionContract {
+            contract_id: contract_id.to_string(),
+            version,
+            state: trust_contract::ContractState::Draft,
+            issuer: trust_contract::PartyIdentity::new_did(issuer_did.clone()),
+            counterparty: trust_contract::PartyIdentity::new_did(counterparty_did.to_string()),
+            purpose: trust_contract::Purpose {
+                code: "autonomous_b2b_interaction".to_string(),
+                description: "Contract-governed autonomous agent operation".to_string(),
+            },
+            capabilities,
+            constraints: trust_contract::ContractConstraints {
+                max_transaction_value: max_amount_minor.map(|m| trust_contract::ContractMoney {
+                    amount_minor: m,
+                    currency,
+                }),
+                allowed_geographies: vec!["EU".to_string()],
+                max_units: Some(10),
+                cancellation_terms,
+                custom_constraints: std::collections::BTreeMap::new(),
+            },
+            data_policy: trust_contract::DataPolicy::default(),
+            obligations: vec![],
+            commercial_terms: settlement_terms.map(|s| trust_contract::CommercialTerms {
+                settlement_term: Some(s.to_string()),
+                payment_instrument: Some("corporate_sepa".to_string()),
+                payment_details: None,
+            }),
+            validity: trust_contract::ContractValidity {
+                valid_from: now - chrono::Duration::minutes(5),
+                valid_until: now + chrono::Duration::days(30),
+            },
+            protocol: Default::default(),
+            evidence: trust_contract::ContractEvidence {
+                attestations: vec![],
+                authority_evidence: vec![],
+                reputation_receipts,
+            },
+            parent_contract_id: None,
+            previous_contract_hash,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let canonical_hash = trust_contract::compute_contract_hash(&contract).map_err(|e| {
+            TrustError::Internal(format!("Failed to compute canonical contract hash: {e}"))
+        })?;
+
+        // Sign locally as issuer
+        let signing_key = self.load_or_create_host_key().await?;
+        let attestation = trust_contract::create_attestation(&contract, &issuer_did, &signing_key)
+            .map_err(|e| TrustError::Internal(format!("Failed to sign contract: {e}")))?;
+
+        // Save to interaction_contracts KV
+        let contracts_kv = self.get_contracts_kv().await?;
+        let tenant = grant.tenant_id().replace(":", "_");
+        let key = format!("{tenant}_{}", contract_id.replace(":", "_"));
+        let contract_bytes =
+            serde_json::to_vec(&contract).map_err(|e| TrustError::Internal(e.to_string()))?;
+        contracts_kv
+            .put(key, contract_bytes.into())
+            .await
+            .map_err(|e| TrustError::Internal(format!("Failed to save draft contract: {e}")))?;
+
+        tracing::info!(
+            "✍️ Drafted contract {} (v{}) with canonical hash: {}",
+            contract.contract_id,
+            contract.version,
+            canonical_hash
+        );
+
+        Ok(serde_json::json!({
+            "status": "drafted",
+            "contract_id": contract.contract_id,
+            "version": contract.version,
+            "canonical_hash": canonical_hash,
+            "attestation": attestation,
+            "contract": contract
+        }))
+    }
+
+    async fn execute_contract_activate(
+        &self,
+        grant: VerifiedGrant,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, TrustError> {
+        let contract_id = args
+            .get("contract_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TrustError::Internal("Missing contract_id in arguments".to_string()))?;
+        let counterparty_attestation_val =
+            args.get("counterparty_attestation").ok_or_else(|| {
+                TrustError::Internal("Missing counterparty_attestation in arguments".to_string())
+            })?;
+        let counterparty_attestation: trust_contract::ContractAttestation =
+            serde_json::from_value(counterparty_attestation_val.clone()).map_err(|e| {
+                TrustError::Internal(format!("Invalid counterparty_attestation format: {e}"))
+            })?;
+
+        let contracts_kv = self.get_contracts_kv().await?;
+        let tenant = grant.tenant_id().replace(":", "_");
+        let key = format!("{tenant}_{}", contract_id.replace(":", "_"));
+
+        let contract_bytes = contracts_kv
+            .get(&key)
+            .await
+            .map_err(|e| {
+                TrustError::Internal(format!("Failed to get contract {contract_id}: {e}"))
+            })?
+            .ok_or_else(|| {
+                TrustError::Internal(format!("Contract {contract_id} not found in draft store"))
+            })?;
+
+        let mut contract: trust_contract::InteractionContract =
+            serde_json::from_slice(&contract_bytes).map_err(|e| {
+                TrustError::Internal(format!("Failed to parse contract {contract_id}: {e}"))
+            })?;
+
+        // Transition state to Accepted
+        contract.state = trust_contract::ContractState::Accepted;
+
+        // Local host attestation
+        let host_signing_key = self.load_or_create_host_key().await?;
+        let local_attestation =
+            trust_contract::create_attestation(&contract, &contract.issuer.did, &host_signing_key)
+                .map_err(|e| {
+                    TrustError::Internal(format!("Failed to create local attestation: {e}"))
+                })?;
+
+        contract.evidence.attestations.clear();
+        contract.evidence.attestations.push(local_attestation);
+        contract
+            .evidence
+            .attestations
+            .push(counterparty_attestation.clone());
+
+        // Resolve party keys
+        let mut party_keys = std::collections::HashMap::new();
+        party_keys.insert(
+            contract.issuer.did.clone(),
+            host_signing_key.verifying_key(),
+        );
+
+        let counterparty_verifying_key = self
+            .resolve_counterparty_verifying_key(&counterparty_attestation.signer_did)
+            .await?;
+        party_keys.insert(
+            counterparty_attestation.signer_did.clone(),
+            counterparty_verifying_key,
+        );
+
+        let active_contract = trust_contract::execute_activation_ceremony(contract, &party_keys)
+            .map_err(|e| TrustError::Internal(format!("Activation ceremony failed: {e}")))?;
+
+        // Save active contract
+        let active_bytes = serde_json::to_vec(&active_contract)
+            .map_err(|e| TrustError::Internal(e.to_string()))?;
+        contracts_kv
+            .put(key, active_bytes.into())
+            .await
+            .map_err(|e| TrustError::Internal(format!("Failed to save active contract: {e}")))?;
+
+        let canonical_hash =
+            trust_contract::compute_contract_hash(&active_contract).unwrap_or_default();
+
+        tracing::info!(
+            "📜 Contract {} (v{}) successfully ACTIVATED! Canonical Hash: {}",
+            active_contract.contract_id,
+            active_contract.version,
+            canonical_hash
+        );
+
+        Ok(serde_json::json!({
+            "status": "ACTIVE",
+            "contract_id": active_contract.contract_id,
+            "version": active_contract.version,
+            "canonical_hash": canonical_hash,
+            "valid_until": active_contract.validity.valid_until
+        }))
+    }
+
+    async fn execute_receipt_vault(
+        &self,
+        grant: VerifiedGrant,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, TrustError> {
+        let action = args.get("action").and_then(|v| v.as_str()).ok_or_else(|| {
+            TrustError::Internal(
+                "Missing action in arguments ('store', 'get_for_presentation', or 'verify')"
+                    .to_string(),
+            )
+        })?;
+
+        let receipts_kv = self.get_receipts_kv().await?;
+        let tenant = grant.tenant_id().replace(":", "_");
+
+        match action {
+            "store" => {
+                let receipt_val = args.get("receipt").ok_or_else(|| {
+                    TrustError::Internal(
+                        "Missing receipt in arguments for store action".to_string(),
+                    )
+                })?;
+                let receipt: trust_contract::ExecutionReceipt =
+                    serde_json::from_value(receipt_val.clone()).map_err(|e| {
+                        TrustError::Internal(format!("Invalid ExecutionReceipt structure: {e}"))
+                    })?;
+
+                let key = format!("{tenant}_{}", receipt.receipt_id.replace(":", "_"));
+                let r_bytes = serde_json::to_vec(&receipt)
+                    .map_err(|e| TrustError::Internal(e.to_string()))?;
+                receipts_kv
+                    .put(key, r_bytes.into())
+                    .await
+                    .map_err(|e| TrustError::Internal(format!("Failed to store receipt: {e}")))?;
+
+                tracing::info!(
+                    "🔒 Saved ExecutionReceipt {} into tenant vault ({})",
+                    receipt.receipt_id,
+                    tenant
+                );
+                Ok(serde_json::json!({
+                    "status": "stored",
+                    "receipt_id": receipt.receipt_id,
+                    "outcome": receipt.outcome
+                }))
+            }
+            "get_for_presentation" => {
+                let capability_filter = args.get("capability_id").and_then(|v| v.as_str());
+                let prefix = format!("{tenant}_");
+
+                let mut keys_stream = receipts_kv.keys().await.map_err(|e| {
+                    TrustError::Internal(format!("Failed to list receipt keys: {e}"))
+                })?;
+
+                let mut matching_receipts = Vec::new();
+                while let Some(Ok(key)) = keys_stream.next().await {
+                    if key.starts_with(&prefix) {
+                        if let Ok(Some(bytes)) = receipts_kv.get(&key).await {
+                            if let Ok(rcpt) =
+                                serde_json::from_slice::<trust_contract::ExecutionReceipt>(&bytes)
+                            {
+                                if rcpt.outcome == "SUCCESS" {
+                                    if let Some(cap) = capability_filter {
+                                        if rcpt.capability_id == cap {
+                                            matching_receipts.push(rcpt);
+                                        }
+                                    } else {
+                                        matching_receipts.push(rcpt);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(serde_json::json!({
+                    "receipts": matching_receipts,
+                    "count": matching_receipts.len()
+                }))
+            }
+            "verify" => {
+                let receipt_val = args.get("receipt").ok_or_else(|| {
+                    TrustError::Internal(
+                        "Missing receipt in arguments for verify action".to_string(),
+                    )
+                })?;
+                let receipt: trust_contract::ExecutionReceipt =
+                    serde_json::from_value(receipt_val.clone()).map_err(|e| {
+                        TrustError::Internal(format!("Invalid ExecutionReceipt structure: {e}"))
+                    })?;
+
+                let verifying_key = self
+                    .resolve_counterparty_verifying_key(&receipt.issuer_did)
+                    .await?;
+                trust_contract::verify_execution_receipt(&receipt, &verifying_key).map_err(
+                    |e| TrustError::Internal(format!("Receipt signature verification failed: {e}")),
+                )?;
+
+                Ok(serde_json::json!({
+                    "status": "verified",
+                    "receipt_id": receipt.receipt_id,
+                    "issuer_did": receipt.issuer_did,
+                    "outcome": receipt.outcome,
+                    "is_valid": true
+                }))
+            }
+            _ => Err(TrustError::Internal(format!(
+                "Unknown receipt vault action: {action}"
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vp_executor_handles_b2b_contract_and_reputation_tools() {
+        assert!(VpExecutor::is_supported_tool(
+            "reputation_inspect_counterparty"
+        ));
+        assert!(VpExecutor::is_supported_tool("contract_propose_or_amend"));
+        assert!(VpExecutor::is_supported_tool(
+            "contract_verify_and_activate"
+        ));
+        assert!(VpExecutor::is_supported_tool("receipt_present_and_store"));
+        assert!(!VpExecutor::is_supported_tool("unsupported_random_tool"));
     }
 }

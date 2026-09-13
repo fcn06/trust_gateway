@@ -112,4 +112,122 @@ impl PolicyEvaluator {
 
         self.evaluate(tenant_id, agent_id, tool_name, amount_usd)
     }
+
+    /// Evaluates an action with contextual counterparty reputation evidence.
+    ///
+    /// If `min_reputation_successful_executions` is configured on the organization policy:
+    /// - The counterparty must meet or exceed the required local successful executions, OR
+    /// - Provide a verified attestation/receipt issued by one of the `trusted_peer_roots`.
+    pub fn evaluate_with_reputation(
+        &self,
+        tenant_id: &str,
+        agent_id: &str,
+        tool_name: &str,
+        amount_usd: Option<u64>,
+        local_successful_count: u64,
+        has_trusted_peer_attestation: bool,
+    ) -> PolicyOutcome {
+        // Evaluate base policy layers first
+        let base_outcome = self.evaluate(tenant_id, agent_id, tool_name, amount_usd);
+        if base_outcome != PolicyOutcome::Allow {
+            return base_outcome;
+        }
+
+        // Evaluate reputation requirement
+        if let Some(required_count) = self
+            .policy
+            .organization
+            .min_reputation_successful_executions
+        {
+            if local_successful_count < required_count && !has_trusted_peer_attestation {
+                return PolicyOutcome::Deny {
+                    reason: format!(
+                        "Organization Policy: Insufficient reputation (requires {} successful executions or a trusted peer attestation, found {})",
+                        required_count, local_successful_count
+                    ),
+                };
+            }
+        }
+
+        PolicyOutcome::Allow
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layers::*;
+
+    fn create_test_policy() -> HierarchicalPolicy {
+        HierarchicalPolicy {
+            platform: PlatformPolicy {
+                enforce_tenant_isolation: true,
+                ..Default::default()
+            },
+            organization: OrganizationPolicy {
+                max_financial_limit_usd: 10_000,
+                min_reputation_successful_executions: Some(5),
+                trusted_peer_roots: vec!["did:web:trusted-partner.example".to_string()],
+                ..Default::default()
+            },
+            agent: AgentPolicy::default(),
+            transaction: TransactionPolicy::default(),
+        }
+    }
+
+    #[test]
+    fn test_reputation_denied_when_below_threshold() {
+        let policy = create_test_policy();
+        let evaluator = PolicyEvaluator::new(policy);
+
+        let outcome = evaluator.evaluate_with_reputation(
+            "tenant_1",
+            "agent_1",
+            "orders.create",
+            Some(500),
+            2,     // Only 2 successful executions, requires 5
+            false, // No trusted peer attestation
+        );
+
+        match outcome {
+            PolicyOutcome::Deny { reason } => {
+                assert!(reason.contains("Insufficient reputation"));
+            }
+            _ => panic!("Expected Deny, got {:?}", outcome),
+        }
+    }
+
+    #[test]
+    fn test_reputation_allowed_when_local_history_sufficient() {
+        let policy = create_test_policy();
+        let evaluator = PolicyEvaluator::new(policy);
+
+        let outcome = evaluator.evaluate_with_reputation(
+            "tenant_1",
+            "agent_1",
+            "orders.create",
+            Some(500),
+            5, // Meets threshold of 5
+            false,
+        );
+
+        assert_eq!(outcome, PolicyOutcome::Allow);
+    }
+
+    #[test]
+    fn test_reputation_allowed_with_trusted_peer_attestation() {
+        let policy = create_test_policy();
+        let evaluator = PolicyEvaluator::new(policy);
+
+        let outcome = evaluator.evaluate_with_reputation(
+            "tenant_1",
+            "agent_1",
+            "orders.create",
+            Some(500),
+            0,    // Cold start (0 local history)
+            true, // Verified peer attestation presented
+        );
+
+        assert_eq!(outcome, PolicyOutcome::Allow);
+    }
 }

@@ -34,6 +34,7 @@ pub mod app_registry;
 pub mod auth;
 pub mod contract_verifier;
 pub mod gateway;
+pub mod reputation_store;
 pub mod ucan_api;
 
 // Internal modules — not exposed as public API

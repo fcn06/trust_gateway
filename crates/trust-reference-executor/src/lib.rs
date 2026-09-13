@@ -104,6 +104,7 @@ impl Executor for ReferenceExecutor {
             reconciled: false,
             output: sanitized_output,
             duration_ms: start.elapsed().as_millis() as u64,
+            receipt: None,
         })
     }
 }

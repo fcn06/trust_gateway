@@ -23,6 +23,10 @@ pub struct OrganizationPolicy {
     pub allowed_regions: Vec<String>,
     pub max_financial_limit_usd: u64,
     pub blacklisted_tools: Vec<String>,
+    #[serde(default)]
+    pub min_reputation_successful_executions: Option<u64>,
+    #[serde(default)]
+    pub trusted_peer_roots: Vec<String>,
 }
 
 /// 3. Agent Policy — Capabilities assigned to an agent.

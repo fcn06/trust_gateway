@@ -58,6 +58,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-reputation-lifecycle-example"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ed25519-dalek",
+ "gateway",
+ "policy_sdk",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "tokio",
+ "trust-canonical",
+ "trust-contract",
+ "trust-grants",
+ "trust-model",
+ "uuid",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1245,16 +1264,22 @@ dependencies = [
  "chrono",
  "clap",
  "dotenvy",
+ "ed25519-dalek",
  "futures",
+ "hex",
  "identity_context",
  "nix",
+ "rand 0.8.8",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "trust-canonical",
+ "trust-contract",
  "trust_auth",
  "trust_core",
  "urlencoding",

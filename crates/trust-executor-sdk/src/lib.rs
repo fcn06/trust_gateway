@@ -36,5 +36,6 @@ pub fn reconcile_timeout(action_id: &str, connector: &str) -> ExecutionResult {
             "reconciliation_required": true
         }),
         duration_ms: 0,
+        receipt: None,
     }
 }

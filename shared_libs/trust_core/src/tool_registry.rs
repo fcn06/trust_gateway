@@ -509,6 +509,117 @@ pub fn builtin_descriptors() -> Vec<ToolDescriptor> {
             app_id: None,
             operation_attributes: Default::default(),
         },
+        ToolDescriptor {
+            tool_id: "io.lianxi.reputation.inspect@v1".into(),
+            display_name: "Inspect Counterparty Reputation".into(),
+            description: "Queries the local ledger and counterparty history to assess past transaction success count, failure count, and whether cold-start peer attestation is required.".into(),
+            mcp_name: "reputation_inspect_counterparty".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "counterparty_did": { "type": "string", "description": "DID of the counterparty agent (e.g. 'did:web:supplier.example.com')" }
+                },
+                "required": ["counterparty_did"]
+            }),
+            output_schema: serde_json::json!({"type": "object"}),
+            risk_tier: RiskTier::ReadOnly,
+            executor_profile: ExecutorProfile::Vp,
+            required_scopes: Vec::new(),
+            egress_class: EgressClass::Internal,
+            bundle_membership: vec!["default_tools".into(), "core".into(), "discovery".into()],
+            version: "1.0.0".into(),
+            deprecation: None,
+            cron: None,
+            app_id: None,
+            operation_attributes: Default::default(),
+        },
+        ToolDescriptor {
+            tool_id: "io.lianxi.contract.propose_or_amend@v1".into(),
+            display_name: "Propose or Amend Interaction Contract".into(),
+            description: "Drafts or amends an Interaction Contract (NICP) with agreed business terms, computes the RFC 8785 canonical digest, pre-signs it with local host key, and links previous contract hash if amending.".into(),
+            mcp_name: "contract_propose_or_amend".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "contract_id": { "type": "string", "description": "Unique identifier for the contract" },
+                    "counterparty_did": { "type": "string", "description": "DID of the counterparty agent" },
+                    "capabilities": { "type": "array", "items": { "type": "string" }, "description": "Target capabilities bound to the contract (e.g. ['io.logistics.freight@v1'])" },
+                    "max_amount_minor": { "type": "integer", "description": "Maximum financial ceiling in minor units (e.g. 1500000 for 15,000.00 EUR)" },
+                    "currency": { "type": "string", "description": "Currency code (default 'EUR')" },
+                    "settlement_terms": { "type": "string", "description": "Commercial settlement terms (e.g. 'Net-15')" },
+                    "cancellation_terms": { "type": "string", "description": "Cancellation policy (e.g. '24h notice')" },
+                    "previous_contract_hash": { "type": "string", "description": "Optional canonical hash of parent version if amending" },
+                    "reputation_receipt_ids": { "type": "array", "items": { "type": "string" }, "description": "Optional receipt IDs from local vault to attach as reputation evidence" }
+                },
+                "required": ["contract_id", "counterparty_did", "capabilities"]
+            }),
+            output_schema: serde_json::json!({"type": "object"}),
+            risk_tier: RiskTier::ReadOnly,
+            executor_profile: ExecutorProfile::Vp,
+            required_scopes: Vec::new(),
+            egress_class: EgressClass::Internal,
+            bundle_membership: vec!["default_tools".into(), "core".into(), "discovery".into()],
+            version: "1.0.0".into(),
+            deprecation: None,
+            cron: None,
+            app_id: None,
+            operation_attributes: Default::default(),
+        },
+        ToolDescriptor {
+            tool_id: "io.lianxi.contract.activate@v1".into(),
+            display_name: "Verify and Activate Contract".into(),
+            description: "Verifies counterparty Ed25519 signature, structural validity, and canonical hash, then executes the deterministic 9-step activation ceremony transitioning contract to Active state.".into(),
+            mcp_name: "contract_verify_and_activate".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "contract_id": { "type": "string", "description": "ID of the contract draft to activate" },
+                    "counterparty_attestation": {
+                        "type": "object",
+                        "description": "Counterparty signature attestation object with contract_hash, signer_did, and signature",
+                        "required": ["contract_hash", "signer_did", "signature"]
+                    }
+                },
+                "required": ["contract_id", "counterparty_attestation"]
+            }),
+            output_schema: serde_json::json!({"type": "object"}),
+            risk_tier: RiskTier::Write,
+            executor_profile: ExecutorProfile::Vp,
+            required_scopes: Vec::new(),
+            egress_class: EgressClass::Internal,
+            bundle_membership: vec!["default_tools".into(), "core".into(), "discovery".into()],
+            version: "1.0.0".into(),
+            deprecation: None,
+            cron: None,
+            app_id: None,
+            operation_attributes: Default::default(),
+        },
+        ToolDescriptor {
+            tool_id: "io.lianxi.receipt.vault@v1".into(),
+            display_name: "Receipt Vault and Verification".into(),
+            description: "Manages the agent's proof of good execution vault: saves new receipts, retrieves relevant receipts to present to counterparties, or verifies counterparty-presented receipts.".into(),
+            mcp_name: "receipt_present_and_store".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["store", "get_for_presentation", "verify"], "description": "Action to perform in the receipt vault" },
+                    "receipt": { "type": "object", "description": "ExecutionReceipt object (required for 'store' and 'verify')" },
+                    "capability_id": { "type": "string", "description": "Optional capability filter for 'get_for_presentation'" }
+                },
+                "required": ["action"]
+            }),
+            output_schema: serde_json::json!({"type": "object"}),
+            risk_tier: RiskTier::ReadOnly,
+            executor_profile: ExecutorProfile::Vp,
+            required_scopes: Vec::new(),
+            egress_class: EgressClass::Internal,
+            bundle_membership: vec!["default_tools".into(), "core".into(), "discovery".into()],
+            version: "1.0.0".into(),
+            deprecation: None,
+            cron: None,
+            app_id: None,
+            operation_attributes: Default::default(),
+        },
 
         // ── Sandboxed Native Skills & Tools ────────────────
         ToolDescriptor {

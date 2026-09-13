@@ -34,6 +34,7 @@ mod meta_identity;
 pub mod oauth;
 mod policy_api;
 mod policy_fingerprint;
+pub mod reputation_store;
 mod source_registry;
 mod standalone_registry;
 pub mod transport;
@@ -107,7 +108,7 @@ struct Args {
     #[arg(
         long,
         env = "DEFAULT_TOOLS",
-        default_value = "search_skills,switch_context,list_bundles,vp_search,claw_weather,claw_extract_content_from_url,claw_hello_world,inspect_schema,compute_statistics,detect_anomalies,generate_markdown,join_datasets,sample_rows,discover_agent_services,call_b2b_agent,register_b2b_agent,list_registered_b2b_agents,discover_b2b_agents"
+        default_value = "search_skills,switch_context,list_bundles,vp_search,claw_weather,claw_extract_content_from_url,claw_hello_world,inspect_schema,compute_statistics,detect_anomalies,generate_markdown,join_datasets,sample_rows,discover_agent_services,call_b2b_agent,register_b2b_agent,list_registered_b2b_agents,discover_b2b_agents,reputation_inspect_counterparty,contract_propose_or_amend,contract_verify_and_activate,receipt_present_and_store"
     )]
     default_tools: String,
 }
@@ -625,6 +626,9 @@ async fn main() -> Result<()> {
             grant_issuer,
             audit_sink,
             contract_verifier: Some(contract_verifier),
+            reputation_store: Some(Arc::new(
+                crate::reputation_store::JetStreamReputationStore::new(js.clone()),
+            )),
         },
         connectors: gateway::ConnectorConfig {
             connector_mcp_url: args.connector_mcp_url.clone(),

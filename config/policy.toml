@@ -15,6 +15,16 @@ operation_kinds = ["read"]
 effect = "allow"
 
 [[rules]]
+id = "meta-tools-auto-allow"
+priority = 11
+action_names = [
+    "switch_context", "list_bundles", "discover_agent_services", "call_b2b_agent", "register_b2b_agent", "list_registered_b2b_agents", "discover_b2b_agents",
+    "reputation_inspect_counterparty", "contract_propose_or_amend", "contract_verify_and_activate", "receipt_present_and_store",
+    "io.lianxi.reputation.inspect@v1", "io.lianxi.contract.propose_or_amend@v1", "io.lianxi.contract.activate@v1", "io.lianxi.receipt.vault@v1"
+]
+effect = "allow"
+
+[[rules]]
 id = "claw-native-tools-allow"
 priority = 15
 action_names = ["claw_hello_world", "claw_weather", "read_skill", "claw_extract_content_from_url"]

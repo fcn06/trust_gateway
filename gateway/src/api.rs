@@ -708,6 +708,7 @@ async fn propose_action_handler(
                         result: None,
                         approval_id: None,
                         escalation: None,
+                        receipt: None,
                     }),
                 )
                     .into_response();
@@ -794,6 +795,7 @@ async fn propose_action_handler(
                     error: Some(format!("Validation error: {e}")),
                     approval_id: None,
                     escalation: None,
+                    receipt: None,
                 })
                 .into_response();
             }
@@ -809,6 +811,7 @@ async fn propose_action_handler(
                 error: Some(format!("{e}")),
                 approval_id: None,
                 escalation: None,
+                receipt: None,
             })
             .into_response(),
         }

@@ -186,6 +186,9 @@ pub fn infer_operation(name: &str) -> OperationKind {
         || lower.contains("read")
         || lower.contains("search")
         || lower.contains("fetch")
+        || lower.contains("inspect")
+        || lower.contains("check")
+        || lower.contains("query")
     {
         OperationKind::Read
     } else if lower.contains("create")

@@ -170,13 +170,66 @@ pub struct ContractAttestation {
     pub signed_at: DateTime<Utc>,
 }
 
-/// Attestation and authority evidence container.
+/// Sealed cryptographic receipt emitted after successful contract-governed execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExecutionReceipt {
+    pub receipt_id: String,
+    pub grant_jti: String,
+    pub contract_id: String,
+    pub contract_hash: String,
+    pub capability_id: String,
+    pub input_hash: String,
+    pub output_hash: String,
+    pub issuer_did: String,
+    pub counterparty_did: String,
+    pub outcome: String,
+    pub executed_at: DateTime<Utc>,
+    pub signature: String,
+}
+
+/// Signable representation of an ExecutionReceipt for deterministic hashing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignableReceiptPayload {
+    pub receipt_id: String,
+    pub grant_jti: String,
+    pub contract_id: String,
+    pub contract_hash: String,
+    pub capability_id: String,
+    pub input_hash: String,
+    pub output_hash: String,
+    pub issuer_did: String,
+    pub counterparty_did: String,
+    pub outcome: String,
+    pub executed_at: DateTime<Utc>,
+}
+
+impl From<&ExecutionReceipt> for SignableReceiptPayload {
+    fn from(r: &ExecutionReceipt) -> Self {
+        Self {
+            receipt_id: r.receipt_id.clone(),
+            grant_jti: r.grant_jti.clone(),
+            contract_id: r.contract_id.clone(),
+            contract_hash: r.contract_hash.clone(),
+            capability_id: r.capability_id.clone(),
+            input_hash: r.input_hash.clone(),
+            output_hash: r.output_hash.clone(),
+            issuer_did: r.issuer_did.clone(),
+            counterparty_did: r.counterparty_did.clone(),
+            outcome: r.outcome.clone(),
+            executed_at: r.executed_at,
+        }
+    }
+}
+
+/// Attestation, authority, and reputation evidence container.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContractEvidence {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attestations: Vec<ContractAttestation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authority_evidence: Vec<AuthorityReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reputation_receipts: Vec<ExecutionReceipt>,
 }
 
 /// Mapping from semantic operation to concrete tool registry identifier.

@@ -36,6 +36,7 @@ pub struct SecurityState {
     pub grant_issuer: Arc<dyn GrantIssuer>,
     pub audit_sink: Arc<dyn AuditSink>,
     pub contract_verifier: Option<Arc<dyn crate::contract_verifier::ContractVerifier>>,
+    pub reputation_store: Option<Arc<dyn crate::reputation_store::ReputationStore>>,
 }
 
 pub struct GatewayState {
@@ -141,6 +142,8 @@ pub struct GatewayResponse {
     pub approval_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub escalation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<serde_json::Value>,
 }
 
 /// Core governance logic: validate → policy check → branch on decision.
@@ -251,6 +254,7 @@ async fn dispatch_pipeline(
                 )),
                 approval_id: None,
                 escalation: None,
+                receipt: None,
             });
         }
 
@@ -273,6 +277,7 @@ async fn dispatch_pipeline(
                     )),
                     approval_id: None,
                     escalation: None,
+                    receipt: None,
                 });
             }
             trust_core::agent::AgentStatus::Paused => {
@@ -289,6 +294,7 @@ async fn dispatch_pipeline(
                     error: Some(format!("Agent '{}' is currently paused", agent.name)),
                     approval_id: None,
                     escalation: None,
+                    receipt: None,
                 });
             }
             trust_core::agent::AgentStatus::Active => {
@@ -342,6 +348,7 @@ async fn dispatch_pipeline(
                     error: Some(format!("B2B Contract Verification Denied: {e}")),
                     approval_id: None,
                     escalation: None,
+                    receipt: None,
                 });
             }
         }
@@ -388,6 +395,7 @@ async fn dispatch_pipeline(
                 error: Some(format!("Call-Chain Guard Denied: {e}")),
                 approval_id: None,
                 escalation: None,
+                receipt: None,
             });
         }
     };
@@ -426,6 +434,7 @@ async fn dispatch_pipeline(
             error: Some(format!("Call-Chain Guard Denied: {e}")),
             approval_id: None,
             escalation: None,
+            receipt: None,
         });
     }
 
@@ -550,6 +559,7 @@ async fn dispatch_pipeline(
                                     )),
                                     approval_id: None,
                                     escalation: None,
+                                    receipt: None,
                                 });
                             }
                         }
@@ -571,6 +581,50 @@ async fn dispatch_pipeline(
                         )
                         .await;
 
+                        // ── Agent Reputation & Signed Execution Receipt ──
+                        let receipt_value = if let (Some(contract_id), Some(contract_hash)) =
+                            (&grant.claims.contract_id, &grant.claims.contract_hash)
+                        {
+                            let receipt_id = format!("rcpt_{}", uuid::Uuid::new_v4());
+                            let output_hash =
+                                trust_core::canonical_json::canonical_hash(&action_result.output);
+                            let issuer_did = format!("did:web:{}:trust-gateway", tenant_id);
+                            let counterparty_did = action_req.actor.requester_did.clone();
+
+                            let key_bytes: [u8; 32] = [42u8; 32];
+                            let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+
+                            let payload = trust_contract::SignableReceiptPayload {
+                                receipt_id,
+                                grant_jti: grant.claims.grant_id.clone(),
+                                contract_id: contract_id.clone(),
+                                contract_hash: contract_hash.clone(),
+                                capability_id: action_name.clone(),
+                                input_hash: grant.claims.input_hash.clone(),
+                                output_hash,
+                                issuer_did,
+                                counterparty_did,
+                                outcome: "SUCCESS".to_string(),
+                                executed_at: chrono::Utc::now(),
+                            };
+
+                            if let Ok(signed_receipt) =
+                                trust_contract::sign_execution_receipt(payload, &signing_key)
+                            {
+                                serde_json::to_value(&signed_receipt).ok()
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        if let Some(rep_store) = &state.security.reputation_store {
+                            let _ = rep_store
+                                .record_execution(&tenant_id, &action_req.actor.requester_did, true)
+                                .await;
+                        }
+
                         Ok(GatewayResponse {
                             action_id,
                             status: "succeeded".to_string(),
@@ -578,6 +632,7 @@ async fn dispatch_pipeline(
                             error: None,
                             approval_id: None,
                             escalation: None,
+                            receipt: receipt_value,
                         })
                     } else {
                         crate::audit_sink::emit_audit(
@@ -604,6 +659,16 @@ async fn dispatch_pipeline(
                             "Action execution failed".to_string()
                         };
 
+                        if let Some(rep_store) = &state.security.reputation_store {
+                            let _ = rep_store
+                                .record_execution(
+                                    &tenant_id,
+                                    &action_req.actor.requester_did,
+                                    false,
+                                )
+                                .await;
+                        }
+
                         Ok(GatewayResponse {
                             action_id,
                             status: "failed".to_string(),
@@ -611,6 +676,7 @@ async fn dispatch_pipeline(
                             error: Some(error_str),
                             approval_id: None,
                             escalation: None,
+                            receipt: None,
                         })
                     }
                 }
@@ -637,6 +703,7 @@ async fn dispatch_pipeline(
                         error: Some(format!("{e}")),
                         approval_id: None,
                         escalation: None,
+                        receipt: None,
                     })
                 }
             }
@@ -656,6 +723,7 @@ async fn dispatch_pipeline(
                 error: Some(reason.clone()),
                 approval_id: None,
                 escalation: None,
+                receipt: None,
             })
         }
 
@@ -776,6 +844,7 @@ async fn dispatch_pipeline(
                 error: None,
                 approval_id: Some(approval_id),
                 escalation: Some(format!("{tier}")),
+                receipt: None,
             })
         }
 
@@ -891,6 +960,7 @@ async fn dispatch_pipeline(
                 error: None,
                 approval_id: Some(approval_id),
                 escalation: Some("pending_proof".to_string()),
+                receipt: None,
             })
         }
     }

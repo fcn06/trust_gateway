@@ -155,6 +155,8 @@ pub struct ExecutionResult {
     pub reconciled: bool,
     pub output: serde_json::Value,
     pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<serde_json::Value>,
 }
 
 /// Generic envelope wrapper

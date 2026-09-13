@@ -27,41 +27,24 @@ Executors independently verify the grant and never rely on the agent's claim tha
 ## Simplified Architecture
 
 ```text
-┌─────────────────┐       1. Propose & Negotiate Terms       ┌─────────────────┐
-│ External Agent  │ ───────────────────────────────────────▶ │ B2B Agent (Host)│
-│ (e.g. did:web)  │ ◀─────────────────────────────────────── │ (Cognitive LLM) │
-└────────┬────────┘          Mutual Ed25519 Attestation      └────────┬────────┘
-         │                                                            │
-         │                                                4 MCP Tools │
-         │                                                (Inspect,   │
-         │                                                 Propose,   │
-         │                                                 Activate,  │
-         │                                                 Vault)     │
-         │                                                            ▼
-         │       ActionRequest (contract_id, contract_hash)   ┌─────────────────┐
-         └──────────────────────────────────────────────────▶ │  Trust Gateway  │
-                                                              │(ContractVerifier│
-                                                              │ & PEP Pipeline) │
-                                                              └───────┬─────────┘
-                                                                      │
-                                                        GrantedAction │
-                                                    + ExecutionGrant  │
-                                                                      ▼
-                                                              ┌─────────────────┐
-                                                              │Isolated Executor│
-                                                              │  owns API keys  │
-                                                              └───────┬─────────┘
-                                                                      │
-         4. Succeeded + Signed ExecutionReceipt                       │ 3. Execute
-         ◀────────────────────────────────────────────────────────────┼─── API / ERP
-                                                                      │
-                                                2. Increment Count in │
-                                                   reputation_scores  │
-                                                                      ▼
-                                                                NATS Stores
+┌────────────┐       ProposedAction       ┌───────────────┐
+│  AI Agent  │ ─────────────────────────▶ │ Trust Gateway │
+└────────────┘                            └───────┬───────┘
+                                                │
+      No downstream credentials                 │ GrantedAction
+                                                │ + ExecutionGrant
+                                                ▼
+                                        ┌───────────────┐
+                                        │   Executor    │
+                                        │ owns API keys │
+                                        └───────┬───────┘
+                                                │
+                                                ▼
+                                           Tools / Systems
 ```
 
-The agent never receives downstream credentials. It negotiates terms under the **Negotiated Interaction Contract Protocol (NICP)**, which are canonicalized (RFC 8785) and attested by both parties. The **Trust Gateway** enforces contract limits deterministically before issuing a short-lived `ExecutionGrant`. Upon successful execution, the gateway increments the counterparty's track record in `reputation_scores` and mints an Ed25519-signed **`ExecutionReceipt`** returned directly to the caller as verifiable proof of good execution.
+The agent never receives the downstream credential. It submits a `ProposedAction` to Trust Gateway. If policy permits the action, the gateway issues an `ExecutionGrant` cryptographically bound to that exact tool and parameter set. The executor verifies the grant before using its own credential to perform the action.
+
 
 
 ---
@@ -221,23 +204,76 @@ The **B2B Agent pattern** solves this by establishing a strict dual-plane separa
 2. **Control Plane (Deterministic)**: The **Trust Gateway** is designed to be the sole path to execution — it holds all downstream credentials and evaluates every proposed action against machine-enforceable **Interaction Contracts** and enterprise policy.
 
 ```text
-External B2B Agent  <── negotiation ──>  Enterprise B2B Agent
-                                                 │
-                                                 │ (mutual signing)
-                                                 ▼
-                                        Interaction Contract
-                                                 │
-                                                 ▼
-                                         ┌───────────────┐
-                                         │ Trust Gateway │
-                                         └───────┬───────┘
-                                                 │ (ExecutionGrant)
-                                                 ▼
-                                         Isolated Executor  ──►  Internal Systems (ERP/APIs)
-                                                 │
-                                                 ▼ (ExecutionReceipt)
-                                         Proof of Good Execution
+┌────────────────────┐   A2A Protocol   ┌────────────────────┐
+│ External B2B Agent │ ◀──────────────▶ │Enterprise B2B Agent│
+│ (did:web:buyer...) │                  │  (Cognitive LLM)   │
+└────────────────────┘                  └─────────┬──────────┘
+                                                  │ 4 MCP Tools
+                                                  │ (Inspect, Propose,
+                                                  │  Activate, Vault)
+                                                  ▼
+                                        ┌────────────────────┐
+                                        │   Trust Gateway    │
+                                        │  (PEP & Contracts) │
+                                        └─────────┬──────────┘
+                                                  │
+                ┌─────────────────────────────────┴──────────────────┐
+                │ • Checks RFC 8785 Canonical Interaction Contract   │
+                │ • Evaluates policy.toml & Layer 0 Call-Chain Guard │
+                │ • Mints short-lived ExecutionGrant JWT             │
+                └─────────────────────────────────┬──────────────────┘
+                                                  │
+                                                  ▼
+                                        ┌────────────────────┐
+                                        │ Isolated Executor  │ ──▶ APIs / ERP
+                                        │ (Verifies Grants)  │
+                                        └─────────┬──────────┘
+                                                  │
+                      ┌───────────────────────────┴────────────────┐
+                      │ 1. Atomic count increment in reputation_KV │
+                      │ 2. Mint & sign portable ExecutionReceipt   │
+                      └───────────────────────────┬────────────────┘
+                                                  │
+                                                  ▼
+                                        Verifiable Proof
+                                        returned to Buyer
 ```
+
+```mermaid
+flowchart TD
+    subgraph Semantic["1. Semantic Plane (Probabilistic Negotiation)"]
+        Buyer["External B2B Agent<br/>(did:web:buyer.com)"] <-->|"A2A Dialogue (/tasks/send)"| Supplier["Enterprise B2B Agent<br/>(Cognitive Reasoning LLM)"]
+    end
+
+    subgraph Control["2. Control Plane (Deterministic Enforcement)"]
+        Supplier -->|"4 MCP Lifecycle Tools<br/>(Inspect, Propose, Activate, Vault)"| TG["Trust Gateway<br/>(PEP Pipeline)"]
+        Contract[("Active Interaction Contract<br/>RFC 8785 Canonical JSON")] -.->|"Validated by"| TG
+        TG -->|"Evaluates policy.toml,<br/>velocity & call-chain"| PEP{"Policy Decision"}
+    end
+
+    subgraph Execution["3. Execution Plane (Verification & Side-Effects)"]
+        PEP -->|"ExecutionGrant JWT<br/>(contract_id + input_hash)"| Exec["Isolated Executor<br/>(Verification Only)"]
+        Exec -->|"Execute with downstream creds"| Tools[("Downstream APIs, ERP & SaaS")]
+    end
+
+    subgraph Evidence["4. Evidence & Reputation Plane"]
+        Exec -->|"1. Action Succeeded"| RepStore[("NATS KV: reputation_scores<br/>atomic increment")]
+        Exec -->|"2. Mint & Sign"| Receipt["ExecutionReceipt<br/>(Ed25519-Signed Proof)"]
+        Receipt -.->|"Verifiable Evidence"| Buyer
+    end
+
+    classDef agent fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef gateway fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef executor fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef data fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+
+    class Buyer,Supplier agent;
+    class TG,PEP gateway;
+    class Exec executor;
+    class Contract,RepStore,Receipt,Tools data;
+```
+
+
 
 ### 📄 Read the Whitepaper
 

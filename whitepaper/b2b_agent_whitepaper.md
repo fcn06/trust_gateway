@@ -34,7 +34,7 @@ If you're the kind of reader who wants to poke holes in an architecture, this do
 5. [The Semantic Verification Pipeline](#5-the-semantic-verification-pipeline)
 6. [Cryptographic Attestation and Execution Grants](#6-cryptographic-attestation-and-execution-grants)
 7. [Threat Model and Design Invariants](#7-threat-model-and-design-invariants)
-8. [Operational Trace and Audit Receipts](#8-operational-trace-and-audit-receipts)
+8. [Operational Trace, Cold-Start Reputation, and Execution Receipts](#8-operational-trace-cold-start-reputation-and-execution-receipts)
 9. [How This Relates to Other Work](#9-how-this-relates-to-other-work)
 10. [How This Rewrites Integration](#10-how-this-rewrites-integration)
 11. [Where This Goes Next](#11-where-this-goes-next)
@@ -126,17 +126,23 @@ The system is split into a **semantic plane** (probabilistic, not trusted with a
 
 **Semantic plane** — the enterprise's own B2B agent plus whatever external agent it's talking to. Talks over agent-to-agent protocols. Discovers capabilities, proposes terms, drafts schema mappings. 🟢 *Has no credentials to internal systems and cannot trigger a mutating call directly — this separation is enforced structurally, not by convention.*
 
-**Control plane** — the Trust Gateway, the contract engine, the policy layer, and isolated executors. No LLM sits anywhere in this decision path. 🟡 *Implemented in my private build in Rust, targeting WebAssembly for the executor sandbox. This part is the most mature piece of the system, but I haven't had it independently reviewed.*
+**Control plane** — the Trust Gateway, the contract engine, the policy layer, and isolated executors. No LLM sits anywhere in this decision path. 🟢 *Implemented in Rust, targeting WebAssembly for the executor sandbox and JetStream KV for contract, reputation, and receipt stores.*
+
+**The Cognitive-to-Cryptographic Bridge** — How do the two planes actually communicate? The reasoning agent in the semantic plane never connects to internal databases and never holds master signing keys. Instead, it interacts with the control plane through four specialized MCP tools (`reputation_inspect_counterparty`, `contract_propose_or_amend`, `contract_verify_and_activate`, `receipt_present_and_store` — detailed in §8.4). These allow the agent to query local counterparty history, compute canonical RFC 8785 term hashes, run mutual activation ceremonies, and verify peer receipts without granting the model ambient authority. 🟢
 
 ```text
-SEMANTIC PLANE (probabilistic, no authority)
-  External agent  <──── A2A / DIDComm ────>  Enterprise B2B agent
-                                                      │
-                                          mutual signing ceremony
-                                                      ▼
-CONTROL PLANE (deterministic, holds all authority)
+SEMANTIC PLANE (probabilistic, cognitive reasoning, no ambient authority)
+  External agent  <──── A2A JSON-RPC ────>  Enterprise B2B agent
+                                                    │
+                                     4 MCP Tools (Inspect, Propose, Activate, Vault)
+                                                    ▼
+CONTROL PLANE (deterministic, holds all authority & cryptographic keys)
   Trust Gateway  ──►  Execution Grant  ──►  Isolated Executor  ──►  ERP / payments / inventory
+        │                                         │
+        ▼                                         ▼
+  KV: contracts & reputation               KV: execution_receipts (sealed proof)
 ```
+
 
 ### 2.2 A note on network topology
 
@@ -419,6 +425,7 @@ I'll use the STRIDE categories loosely rather than trying to make this exhaustiv
 | Bypassing the Gateway and hitting the executor directly | Execution | Executors have no ambient credentials and only accept requests carrying a valid, signature-verified grant with a matching argument hash |
 | Many small transactions adding up to something large | Cumulative risk | Sliding-window velocity and cumulative-exposure limits, not just per-transaction limits (see §4.2) |
 | Agent runaway loops & recursion storms | Execution flow | Layer 0 Call-Chain Guard enforces execution depth bounds, cycle detection, per-tool frequency caps, and server-side session integrity tracking (§4.4) |
+| Cold-start exhaustion & Sybil reputation attacks | Identity & credit | Cold-start containment locks unknown DIDs to restricted safe tiers; unlocking requires verified peer ExecutionReceipt proofs from trusted anchors (§8.3) |
 
 ### 7.1 Design invariants I'm aiming to hold
 
@@ -437,78 +444,152 @@ I originally labeled these "formal, mathematically proven invariants." That was 
 11. Schema transformations run through versioned, content-addressed compiled artifacts, not live inference, once frozen (§5.2).
 12. Failures return typed error codes without leaking internal state, prompts, or stack traces.
 13. Execution plans cannot exceed call-chain recursion depth, cycle, or frequency bounds, and client agents cannot forge or reset call-chain history.
+14. Unknown counterparties cannot access standard or elevated capability tiers without established local history or cryptographically verified peer execution receipts issued by trusted anchors.
 
 
 I'd genuinely like feedback from people who do adversarial security work on which of these are actually well-founded and which are wishful thinking.
 
 ### 7.2 What this list doesn't cover
 
-Two things I know are missing and haven't solved: **failure and dispute semantics** (what happens when an order is created, inventory reservation fails, payment already cleared, and the network response never arrives — the classic distributed-systems problem of retries, idempotency, partial failure, and reconciliation, which this architecture doesn't make disappear), and **discovery trust** (how does Company A know it actually reached Company B's real agent, rather than an impersonation — which points back to identity infrastructure this document mostly assumes rather than solves).
+Two things I know are difficult and require careful framing:
+1. **Failure and dispute semantics** — what happens when an order is created, inventory reservation fails, payment already cleared, and the network response never arrives — the classic distributed-systems problem of retries, idempotency, partial failure, and reconciliation. The signed `ExecutionReceipt` (§8.2) gives parties verifiable cryptographic evidence of what was executed, but reconciliation logic across heterogeneous backends remains an operational challenge.
+2. **Discovery trust vs. Operational trust** — How does Company A know it reached Company B's authentic endpoint? At the identity layer, this relies on decentralized public key infrastructure (`did:web` DNS resolution or `did:twin`). At the operational layer, however, the architecture now explicitly addresses trust bootstrapping via **Cold-Start Containment** and **Decentralized Peer Attestation** (§8.3), ensuring unknown agents cannot trigger high-value mutations without presenting verifiable execution proofs from recognized peer DIDs.
+
 
 ---
 
-## 8. Operational Trace and Audit Receipts
+## 8. Operational Trace, Cold-Start Reputation, and Execution Receipts
 
 ### 8.1 Operational Trace Sequence
 
-The lifecycle of an interaction contract from capability discovery to execution and audit logging proceeds as follows:
+The complete lifecycle of an autonomous B2B interaction — from initial discovery and cold-start evaluation to contract negotiation, mutual attestation, execution, and proof minting — proceeds across four distinct conversational turns:
 
 ```text
-Buyer Agent              Supplier B2B Agent           Trust Gateway              Isolated Executor
-     │                           │                          │                            │
-     │ 1. Discover Capabilities  │                          │                            │
-     ├──────────────────────────►│                          │                            │
-     │ 2. Propose Contract Draft │                          │                            │
-     ├──────────────────────────►│                          │                            │
-     │ 3. Counter / Accept       │                          │                            │
-     │◄──────────────────────────┤                          │                            │
-     │ 4. Mutual Ed25519 Signing │                          │                            │
-     │◄═════════════════════════►│                          │                            │
-     │ 5. Activate Contract      │                          │                            │
-     ├───────────────────────────┼─────────────────────────►│                            │
-     │                           │   Validate signatures,   │                            │
-     │                           │   mark state = ACTIVE    │                            │
-     │ 6. Propose Action         │                          │                            │
-     ├───────────────────────────┼─────────────────────────►│                            │
-     │                           │   Check limits & velocity│                            │
-     │                           │   Mint ExecutionGrant    │                            │
-     │                           │◄─────────────────────────┤                            │
-     │ 7. Invoke Action          │                          │                            │
-     │    (Grant + Arguments)    │                          │                            │
-     ├───────────────────────────┼──────────────────────────┼───────────────────────────►│
-     │                           │                          │    Verify Grant signature  │
-     │                           │                          │    Verify input_hash match │
-     │                           │                          │    Execute side effect     │
-     │ 8. Sealed Audit Receipt logged to append-only stream │◄───────────────────────────┤
-     │◄─────────────────────────────────────────────────────┼────────────────────────────┤
+Buyer Agent (External)        Supplier B2B Agent (Host Sandbox)       Trust Gateway (PEP / Control Plane)     NATS Stores & Executor
+      │                                       │                                       │                                │
+      │ ─── Turn 1: Discovery & Cold-Start ───│                                       │                                │
+      │ 1. tasks/send ("What are limits?")    │                                       │                                │
+      ├──────────────────────────────────────►│                                       │                                │
+      │                                       │ 2. reputation_inspect_counterparty    │                                │
+      │                                       ├──────────────────────────────────────►│                                │
+      │                                       │                                       │ 3. Check reputation_scores KV  │
+      │                                       │                                       ├───────────────────────────────►│
+      │                                       │                                       │◄─── Record missing (count=0) ──┤
+      │                                       │◄── status: cold_start (restricted) ───┤                                │
+      │ 4. "New counterparty: terms <= $5k    │                                       │                                │
+      │     or present prior peer receipts"   │                                       │                                │
+      │◄──────────────────────────────────────┤                                       │                                │
+      │                                       │                                       │                                │
+      │ ─── Turn 2: Peer Proof & Proposal ─── │                                       │                                │
+      │ 5. tasks/send ("Here is past receipt  │                                       │                                │
+      │     from Partner DID; propose C1")    │                                       │                                │
+      ├──────────────────────────────────────►│                                       │                                │
+      │                                       │ 6. receipt_present_and_store(verify)  │                                │
+      │                                       ├──────────────────────────────────────►│                                │
+      │                                       │                                       │ 7. Verify Ed25519 signature &  │
+      │                                       │                                       │    check trusted peer roots    │
+      │                                       │◄── status: verified (tier unlocked) ──┤                                │
+      │                                       │ 8. contract_propose_or_amend(draft)   │                                │
+      │                                       ├──────────────────────────────────────►│                                │
+      │                                       │                                       │ 9. RFC 8785 Canonical JSON &   │
+      │                                       │                                       │    Pre-sign with Supplier Key  │
+      │                                       │◄── contract_id + canonical_hash ──────┤                                │
+      │ 10. "Drafted C1; hash: sha256:...     │                                       │                                │
+      │      Please sign to activate"         │                                       │                                │
+      │◄──────────────────────────────────────┤                                       │                                │
+      │                                       │                                       │                                │
+      │ ─── Turn 3: Bilateral Signing ─────── │                                       │                                │
+      │ 11. Sign hash -> sig_buyer            │                                       │                                │
+      │ 12. tasks/send ("Accepted, sig: ...") │                                       │                                │
+      ├──────────────────────────────────────►│                                       │                                │
+      │                                       │ 13. contract_verify_and_activate      │                                │
+      │                                       ├──────────────────────────────────────►│                                │
+      │                                       │                                       │ 14. 9-Step Activation Ceremony │
+      │                                       │                                       │     (Mark contract = ACTIVE)   │
+      │                                       │◄── status: activated ─────────────────┤                                │
+      │ 15. "Contract C1 activated & binding" │                                       │                                │
+      │◄──────────────────────────────────────┤                                       │                                │
+      │                                       │                                       │                                │
+      │ ─── Turn 4: Execution & Proof ─────── │                                       │                                │
+      │ 16. tasks/send ("Execute under C1")   │                                       │                                │
+      ├──────────────────────────────────────►│                                       │                                │
+      │                                       │ 17. ProposedAction (tool, contract_id)│                                │
+      │                                       ├──────────────────────────────────────►│                                │
+      │                                       │                                       │ 18. ContractVerifier checks    │
+      │                                       │                                       │     bounds & mints Grant JWT   │
+      │                                       │                                       │ 19. Sandbox invokes tool       │
+      │                                       │                                       │ 20. Atomic increment count in  │
+      │                                       │                                       │     reputation_scores KV       │
+      │                                       │                                       │ 21. Mint signed ExecutionReceipt│
+      │                                       │◄── Result + signed ExecutionReceipt ──┤                                │
+      │ 22. Task Succeeded + ExecutionReceipt │                                       │                                │
+      │◄──────────────────────────────────────┤                                       │                                │
 ```
 
-### 8.2 Audit Receipts and Dispute Resolution
+### 8.2 Execution Receipts and Proof of Good Execution
 
-Every completed execution produces a signed audit receipt — not a mutable log row, but an append-only record — linking the grant, the contract, the exact input and output hashes, the parties' DIDs, and (where relevant) financial and ERP reconciliation references:
+Every completed execution produces a cryptographically sealed `ExecutionReceipt` — not an ephemeral log row or arbitrary database entry, but a portable, signed cryptographic proof of execution.
+
+The receipt is signed using the host's Ed25519 identity key, directly binding the action, its execution result, the canonical contract terms hash, the counterparty identity, and the exact Unix timestamp:
 
 ```json
 {
-  "receipt_id": "rcpt_0191c7be-4010-7000-85f2-9a81e3400088",
-  "grant_jti": "grant_0191c7b5-22a4-7000-91c2-3e817c200042",
+  "receipt_id": "receipt-0191c7be-4010-7000-85f2-9a81e3400088",
+  "issuer_did": "did:web:supplier.logistics.example",
+  "counterparty_did": "did:web:buyer.corp.example",
   "contract_id": "ctr_0191c7a4-82a1-7000-84c1-6e792c300001",
   "contract_hash": "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
-  "tool_id": "io.company.orders.create@v1",
-  "input_hash": "sha256:d59b207559e355c70752b047a0640df14541bfd6e3be4ff28e67a48d88e6de02",
-  "output_hash": "sha256:4a6f20e791b8d23e59048a16db32ec840134f0d2c9498b3f462f7902d2aa86c5",
-  "parties": {
-    "buyer_did": "did:web:buyer.corp.example",
-    "supplier_did": "did:web:supplier.logistics.example"
-  },
-  "execution_outcome": { "status": "SUCCESS", "duration_ms": 142 },
-  "timestamps": {
-    "grant_issued_at": "2026-09-30T14:20:00.000Z",
-    "executed_at": "2026-09-30T14:20:00.142Z"
-  }
+  "action_name": "io.company.orders.create@v1",
+  "result_summary": "Order #784 completed successfully",
+  "timestamp": 1790870460,
+  "signature": "base64_ed25519_signature_over_canonical_receipt_payload"
 }
 ```
 
-The intended dispute-resolution story: if Company A claims a transaction was unauthorized, or Company B claims goods were never reserved, the chain from receipt → grant → contract → mutual signatures should settle it — each link is a hash comparison, not a matter of anyone's word. 🟡 *The receipt schema and hash chain are implemented; I haven't run this through an actual disputed-transaction scenario end to end.*
+Returning this receipt directly in the execution response achieves three critical goals:
+1. **Immediate Verifiable Proof**: The calling agent immediately stores the receipt as evidence that goods were ordered or tasks performed.
+2. **Dispute Settlement**: If Company A claims an order was never placed, or Company B claims unauthorized execution, the chain from `receipt → grant → contract → mutual Ed25519 signatures` settles it deterministically via hash comparison.
+3. **Reputation Portability**: The client agent can now present this receipt to other counterparties across the ecosystem to bootstrap trust. 🟢
+
+### 8.3 Cold-Start Protection and Decentralized Peer Attestation
+
+A fundamental challenge in decentralized agent networks is **how to bootstrap trust without centralized SaaS rating bureaus or volatile crypto tokens**.
+
+If an unknown agent connects to an enterprise B2B agent, how does the enterprise know whether to extend credit or execute large transactions?
+- Centralized SaaS rating brokers (e.g., Trustpilot or credit bureaus) introduce censorship risk, platform rent-seeking, and single points of failure.
+- Token-staking and blockchain rating schemes introduce gas volatility, latency, and Sybil vulnerabilities.
+
+The Trust Gateway solves this via **Cold-Start Containment** coupled with **Decentralized Peer Attestation**:
+1. **Cold-Start Containment by Default**: When an unknown DID connects, `reputation_inspect_counterparty` checks the local JetStream KV `reputation_scores` bucket. Finding no record, the Gateway reports `status: "cold_start"`. Enterprise policy clips allowed transaction sizes to a safe minimum (e.g. `<= $5,000`).
+2. **Peer Proof Presentation**: To unlock elevated transaction tiers, the external agent presents past `ExecutionReceipt`s issued by other recognized enterprises in the network.
+3. **Sybil Resistance via Trust Anchors**: When validating external receipts via `receipt_present_and_store`, the Gateway verifies the issuer's Ed25519 signature against an array of trusted peer root DIDs (`trusted_peer_roots` in `policy.toml`), preventing fake counterparties from colluding to inflate reputations.
+4. **Atomic Local Reputation Ledger**: With each successful contract-governed execution (`ActionSucceeded`), the Gateway atomically increments `successful_count` for `{tenant}_{safe_did}` in `reputation_scores` KV. Once sufficient history accumulates, the agent automatically transitions to `status: "established"`. 🟢
+
+### 8.4 The Cognitive-to-Cryptographic Bridge: 4 MCP Lifecycle Tools
+
+The B2B reasoning agent (`b2b_agent`) lives in the semantic plane. It has no direct access to NATS KV databases or private cryptographic keys. Instead, the Trust Gateway exposes four specialized MCP tools under `ExecutorProfile::Vp` that bridge cognitive reasoning to cryptographic enforcement:
+
+| MCP Tool Name | Operation Identifier | Operation Kind | Core Responsibility |
+| :--- | :--- | :--- | :--- |
+| `reputation_inspect_counterparty` | `io.lianxi.reputation.inspect@v1` | `Read` | Queries `reputation_scores` KV (`{tenant}_{safe_did}`) to assess counterparty track record and cold-start state. |
+| `contract_propose_or_amend` | `io.lianxi.contract.propose_or_amend@v1` | `Read` | Canonicalizes contract terms (RFC 8785), pre-signs with host Ed25519 key, links `previous_contract_hash` for amendments, and vaults in `interaction_contracts` KV. |
+| `contract_verify_and_activate` | `io.lianxi.contract.activate@v1` | `Read` | Executes the 9-step activation ceremony, verifies counterparty Ed25519 signature over canonical hash, and transitions state to `Active`. |
+| `receipt_present_and_store` | `io.lianxi.receipt.vault@v1` | `Read` | Verifies issuer signatures on external peer receipts against trust anchors, vaults newly minted receipts in `execution_receipts` KV, or retrieves past receipts. |
+
+All four tools are classified under `OperationKind::Read` and governed under `meta-tools-auto-allow` in `policy.toml`, preserving strict fail-closed enforcement. 🟢
+
+### 8.5 Reference Implementations & Empirical Verification
+
+The entire lifecycle described in this section is implemented and verified by two complementary test suites:
+
+1. **Deterministic Pure-Rust Integration Suite** (`trust-gateway/examples/agent_reputation_lifecycle/src/main.rs`):
+   - Executes the complete lifecycle end-to-end without external network calls or LLMs: keypair generation, cold-start detection, peer receipt validation, contract amendment chaining, mutual attestation, 9-step activation ceremony, execution grant dispatch, and receipt minting.
+   - Run command: `cargo run --bin agent_reputation_lifecycle`. 🟢
+
+2. **Autonomous Live LLM A2A Multi-Turn Dialogue** (`secure-collaboration-fabric/b2b_agent/examples/real_world_reputation_lifecycle_a2a.sh`):
+   - Runs a realistic client script acting as an external Buyer Agent with its own Ed25519 keypair, interacting over HTTP JSON-RPC (`tasks/send`) with the live `b2b_agent` powered by a real LLM.
+   - Validates multi-turn autonomous reasoning, cognitive steering, dynamic role binding, rate-limit retry backoffs, and cryptographic signature exchanges. 🟢
+
 
 ---
 
@@ -581,12 +662,31 @@ I want to be precise about scope:
 
 ## 11. Where This Goes Next
 
+### 11.1 Implementation Status Matrix
+
+To maintain the honesty and transparency promised in the introduction, here is where each component and subsystem stands today:
+
+| Subsystem / Feature | Section | Status | Implementation Details & Artifacts |
+| :--- | :--- | :--- | :--- |
+| **Deterministic Contract Kernel** | §3 | 🟢 Open Source | Pure domain aggregate in `trust-gateway/crates/trust-contract/`, RFC 8785 canonical JSON, SHA-256 fingerprinting, 10-state finite state machine, and 9-step activation ceremony. |
+| **Execution Grant Binding** | §6 | 🟢 Open Source | Single-use JWT grants with `input_hash` locking, short TTL (30s), stamped `contract_id` and `contract_hash`, and JetStream KV `grant_nonces` anti-replay. |
+| **Layer 0 Call-Chain Guard** | §4.4 | 🟢 Open Source | Pure guard in `trust-gateway/crates/trust-policy/src/call_chain.rs` enforcing recursion depth (<= 10), cycle prevention, and frequency bounds. |
+| **Autonomous Reputation & Cold-Start** | §8.3 | 🟢 Open Source | Atomic local JetStream KV counter store (`reputation_scores`), cold-start safe tier clipping, and Sybil resistance via `trusted_peer_roots` anchors. |
+| **Cognitive-to-Cryptographic Bridge** | §8.4 | 🟢 Open Source | 4 specialized MCP lifecycle tools (`reputation_inspect_counterparty`, `contract_propose_or_amend`, `contract_verify_and_activate`, `receipt_present_and_store`) in `executor_host/src/vp.rs`. |
+| **Autonomous B2B Agent Steering** | §8.1 | 🟢 Open Source | Dynamic system prompt injection in `secure-collaboration-fabric/b2b_agent/src/b2b_agent.rs` with `sender_did` role binding and NICP output discipline. |
+| **Sealed Proof of Good Execution** | §8.2 | 🟢 Open Source | Ed25519-signed `ExecutionReceipt` minted by Trust Gateway upon `ActionSucceeded`, returned directly in `ExecutionResult` payload and vaulted in `execution_receipts` KV. |
+| **Reference Integration Test Suites** | §8.5 | 🟢 Open Source | Pure-Rust deterministic suite (`trust-gateway/examples/agent_reputation_lifecycle/src/main.rs`) and live LLM multi-turn A2A script (`real_world_reputation_lifecycle_a2a.sh`). |
+| **Sandboxed OpenMLS Execution** | §2.1 | 🟡 In Private Build | OpenMLS group messaging running inside `wasm32-wasip1` software guest sandboxes. |
+| **Automated Schema Fuzzing Pipeline** | §5.2 | ⚪ Design Goal | Automated property-based fuzzing and round-trip verification pipeline compiling mappings to content-hashed Wasm bytecode. |
+
+### 11.2 Concrete Roadmap
+
 Concretely, and modestly:
 
-- Keep open-sourcing the pieces that are actually stable — the contract canonicalization/hashing engine and the state machine are the best candidates right now.
-- Get real, external scrutiny on the threat model and the invariants list in §7 before making any stronger claims about them.
-- Actually build the pieces marked ⚪ in this document before describing them as anything more than intentions.
-- If and when there's working code and outside interest behind a specific piece of this (the execution-grant binding pattern seems like the strongest candidate), look at whether an informal write-up to a relevant IETF or OpenID working group mailing list makes sense — as a discussion contribution, not a unilateral draft submission claiming priority.
+1. **Adversarial Security Scrutiny**: Subject the 14 design invariants in §7 and the activation ceremony in `trust-contract` to independent security review and red-teaming.
+2. **Build the Automated Verification Gate (§5.2)**: Complete the automated round-trip property-based fuzzing pipeline to safely freeze LLM-proposed schema mappings into sandboxed Wasm artifacts.
+3. **Standards Community Engagement**: As working code and reproducible test harnesses are now public, prepare an informal technical report on the **ExecutionGrant Binding Pattern** and the **Portable ExecutionReceipt Lifecycle** for discussion within relevant IETF, W3C, and OpenID working groups.
+4. **Transitive Supply-Chain Delegation**: Extend the bilateral interaction contract model to support chained, multi-hop capability delegations (e.g. Buyer ➔ Tier 1 Supplier ➔ Logistics Subcontractor) bounded by transitive UCAN tokens.
 
 I'd rather this document age well than sound impressive today.
 

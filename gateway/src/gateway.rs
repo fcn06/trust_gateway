@@ -361,12 +361,11 @@ async fn dispatch_pipeline(
         action_id.clone()
     };
 
-    let tracked_entry = state.call_chain_sessions.get(&trace_id);
-    let tracked_context = tracked_entry.as_deref();
+    let tracked_context = state.call_chain_sessions.get(&trace_id).as_deref().cloned();
 
     let mut current_context = match modular_policy::call_chain::validate_context_integrity(
         action_req.call_chain_context.as_ref(),
-        tracked_context,
+        tracked_context.as_ref(),
     ) {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -653,6 +652,7 @@ async fn dispatch_pipeline(
                             arr.first()
                                 .and_then(|v| v.get("text"))
                                 .and_then(|v| v.as_str())
+                                .filter(|s| *s != "null" && !s.is_empty())
                                 .unwrap_or("Action execution failed")
                                 .to_string()
                         } else {

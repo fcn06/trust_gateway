@@ -14,7 +14,8 @@ impl VpExecutor {
     pub fn new(nats: async_nats::Client) -> Result<Self, TrustError> {
         Ok(Self {
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(15))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
                 .build()
                 .map_err(|e| TrustError::Internal(format!("Failed to build http client: {e}")))?,
             nats,
@@ -93,24 +94,64 @@ impl VpExecutor {
             return Ok(serde_json::json!({ "error": "Search query is empty" }));
         }
 
+        // 1. Try DuckDuckGo first (with 5s timeout)
+        let ddg_result = self.search_duckduckgo(query).await;
+        if let Some(text) = ddg_result {
+            if !text.trim().is_empty() {
+                tracing::info!("✅ [VP Search] DuckDuckGo returned {} chars", text.len());
+                return Ok(serde_json::Value::String(text));
+            }
+        }
+
+        // 2. Fallback to Wikipedia API
+        tracing::info!(
+            "🔍 [VP Search] DuckDuckGo unavailable or empty, falling back to Wikipedia for '{}'",
+            query
+        );
+        if let Some(wiki_text) = self.search_wikipedia(query).await {
+            tracing::info!(
+                "✅ [VP Search] Wikipedia returned {} chars",
+                wiki_text.len()
+            );
+            return Ok(serde_json::Value::String(wiki_text));
+        }
+
+        // 3. Graceful fallback: return a clean result rather than crashing with Internal error
+        tracing::warn!(
+            "⚠️ [VP Search] No search results found for '{}' from any provider",
+            query
+        );
+        Ok(serde_json::Value::String(format!(
+            "No specific information found for '{query}' from search providers."
+        )))
+    }
+
+    async fn search_duckduckgo(&self, query: &str) -> Option<String> {
         let url = format!(
             "https://api.duckduckgo.com/?q={}&format=json",
             urlencoding::encode(query)
         );
 
-        let response = self
+        let response = match self
             .http_client
             .get(&url)
+            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .map_err(|e| TrustError::Internal(format!("Search request failed: {e}")))?;
+        {
+            Ok(resp) if resp.status().is_success() => resp,
+            Ok(resp) => {
+                tracing::warn!("⚠️ [VP Search] DuckDuckGo HTTP status: {}", resp.status());
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ [VP Search] DuckDuckGo request failed: {}", e);
+                return None;
+            }
+        };
 
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| TrustError::Internal(format!("Failed to parse search response: {e}")))?;
+        let body: serde_json::Value = response.json().await.ok()?;
 
-        // Extract multiple fields for a richer result
         let abstract_text = body
             .get("AbstractText")
             .and_then(|v| v.as_str())
@@ -142,17 +183,61 @@ impl VpExecutor {
                     }
                     if i >= 5 {
                         break;
-                    } // Limit to top 6 related topics
+                    }
                 }
             }
         }
 
         if result_text.trim().is_empty() {
-            result_text = format!("No specific information found for '{query}' on DuckDuckGo.");
+            None
+        } else {
+            Some(result_text)
+        }
+    }
+
+    async fn search_wikipedia(&self, query: &str) -> Option<String> {
+        let url = format!(
+            "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&utf8=&format=json",
+            urlencoding::encode(query)
+        );
+
+        let response = match self
+            .http_client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => resp,
+            Ok(resp) => {
+                tracing::warn!("⚠️ [VP Search] Wikipedia HTTP status: {}", resp.status());
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ [VP Search] Wikipedia request failed: {}", e);
+                return None;
+            }
+        };
+
+        let body: serde_json::Value = response.json().await.ok()?;
+        let items = body.get("query")?.get("search")?.as_array()?;
+        if items.is_empty() {
+            return None;
         }
 
-        tracing::info!("✅ [VP Search] Returning {} chars", result_text.len());
-        Ok(serde_json::Value::String(result_text))
+        let mut out = format!("## Wikipedia Search Results for '{query}':\n\n");
+        for (i, item) in items.iter().take(5).enumerate() {
+            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let snippet = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
+            let clean_snippet = snippet
+                .replace("<span class=\"searchmatch\">", "")
+                .replace("</span>", "")
+                .replace("&quot;", "\"")
+                .replace("&#039;", "'")
+                .replace("&amp;", "&");
+            out.push_str(&format!("{}. **{}**: {}\n", i + 1, title, clean_snippet));
+        }
+        Some(out)
     }
 
     async fn execute_discover(

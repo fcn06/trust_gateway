@@ -263,6 +263,7 @@ impl Runtime {
                 }
             }
             Err(e) => {
+                tracing::error!("❌ [{}] Tool execution failed: {}", action_id, e);
                 self.create_error_envelope(&envelope, format!("Execution failed: {e}"), profile)
             }
         };

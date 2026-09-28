@@ -75,7 +75,17 @@ fn event_label(event_type: &str, details: &serde_json::Value) -> &'static str {
 fn projected_status(event_type: &str, details: &serde_json::Value) -> String {
     match event_type {
         "action_proposed" => "pending".to_string(),
-        "policy_evaluated" => "pending".to_string(),
+        "policy_evaluated" => {
+            let decision = details
+                .get("decision")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if decision == "denied" || decision.starts_with("Deny") {
+                "denied".to_string()
+            } else {
+                "pending".to_string()
+            }
+        }
         "approval_requested" => "waiting_approval".to_string(),
         "proof_requested" => "waiting_proof".to_string(),
         "approval_approved" => "approved".to_string(),
@@ -446,6 +456,20 @@ mod tests {
     fn test_projected_status() {
         assert_eq!(
             projected_status("action_proposed", &serde_json::json!({})),
+            "pending"
+        );
+        assert_eq!(
+            projected_status(
+                "policy_evaluated",
+                &serde_json::json!({"decision": "denied"})
+            ),
+            "denied"
+        );
+        assert_eq!(
+            projected_status(
+                "policy_evaluated",
+                &serde_json::json!({"decision": "Allow { policy_id: \"test\" }"})
+            ),
             "pending"
         );
         assert_eq!(

@@ -268,7 +268,12 @@ impl ToolRegistry {
         // We still fetch from the Host because it may define dynamic local skills
         let url = format!("{host_url}/.well-known/skills.json");
         let mut host_failed = false;
-        let skills = match client.get(&url).send().await {
+        let skills = match client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 resp.json::<serde_json::Value>().await.unwrap_or_default()
             }
@@ -829,6 +834,26 @@ async fn dispatch_to_nats_executor(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
+            let final_output = if let Some(ref err_msg) = error {
+                if !output.is_null() {
+                    if output.is_array() {
+                        output
+                    } else if let Some(s) = output.as_str() {
+                        serde_json::json!([{ "type": "text", "text": s }])
+                    } else {
+                        serde_json::json!([{ "type": "text", "text": serde_json::to_string_pretty(&output).unwrap_or_default() }])
+                    }
+                } else {
+                    serde_json::json!([{ "type": "text", "text": err_msg.clone() }])
+                }
+            } else if output.is_array() {
+                output
+            } else if let Some(s) = output.as_str() {
+                serde_json::json!([{ "type": "text", "text": s }])
+            } else {
+                serde_json::json!([{ "type": "text", "text": serde_json::to_string_pretty(&output).unwrap_or_default() }])
+            };
+
             Ok(ActionResult {
                 action_id: req.action_id.clone(),
                 status: if error.is_none() {
@@ -838,11 +863,7 @@ async fn dispatch_to_nats_executor(
                 },
                 connector: format!("executor_host:{profile}"),
                 external_reference: None,
-                output: if output.is_array() {
-                    output
-                } else {
-                    serde_json::json!([{ "type": "text", "text": if output.is_string() { output.as_str().unwrap().to_string() } else { serde_json::to_string_pretty(&output).unwrap_or_default() } }])
-                },
+                output: final_output,
             })
         }
         Ok(None) => Err(anyhow::anyhow!("Executor disconnected before replying")),

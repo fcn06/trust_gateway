@@ -184,60 +184,107 @@ This repository is the only implementation right now — mine, in Rust — plus 
 
 ---
 
-## 🌐 The Bigger Picture: The "B2B Agent" Architecture
+## 🌐 The Bigger Picture: Agent-to-Business (A2B) Commerce
 
-Trust Gateway was designed as the core enforcement engine of a broader architectural paradigm: **Autonomous B2B Agents**.
+> *"The future of commerce isn't just about showing screens to humans; it is about exposing secure endpoints to their agentic representatives."*
 
-As enterprises deploy autonomous agents that interact across corporate boundaries (such as procurement, logistics, dynamic partner integrations, and automated commerce), giving LLM agents direct API credentials or ambient execution authority creates severe prompt-injection, confused-deputy, and liability risks.
+Trust Gateway was designed as the deterministic enforcement engine for an emerging architectural pattern: the **Autonomous Business Envoy (ABE)** and **Agent-to-Business (A2B) commerce**.
 
-The **B2B Agent pattern** solves this by establishing a strict dual-plane separation:
-1. **Semantic Plane (Probabilistic)**: External and internal agents communicate over agent protocols (such as A2A, MCP, or DIDComm) to discover capabilities and negotiate mutual terms.
-2. **Control Plane (Deterministic)**: The **Trust Gateway** is designed to be the sole path to execution — it holds all downstream credentials and evaluates every proposed action against machine-enforceable **Interaction Contracts** and enterprise policy.
+### A Possible Shift in the E-Commerce Paradigm
+
+For over three decades, digital commerce has been engineered almost entirely around human attention: visual storefronts, catalogue browsing, shopping carts, and OAuth login popups. 
+
+As users and organizations increasingly rely on personal AI assistants and localized agents to research, procure, book, and reconcile orders, that familiar paradigm may quietly shift:
+* **The collapsing marketing funnel**: Buyers may rarely visit individual web portals or click through multi-step shopping carts. Instead, customer-side agents will discover suppliers, compare availability across dynamic parameters, and negotiate directly.
+* **The limits of raw P2P delegation**: Allowing an unverified personal agent to talk directly to another user's agent introduces credential sprawl, ephemeral downtime, and ambiguous legal authority.
+* **The Autonomous Business Envoy (ABE)**: Rather than exposing raw internal APIs to the public internet, merchants deploy dedicated, policy-guided agent enclaves—business envoys—equipped with verifiable corporate identities (`did:web`) that can negotiate catalog specs, volume pricing curves, and delivery SLAs with client agents in real time.
+
+We view this shift not as an overnight replacement, but as an exploratory evolution toward an **agentic economy** where autonomous agents represent companies and individuals in commercial transactions.
+
+### The Paradox of the Bundled Agent
+
+Most initial agent integrations make a fundamental design compromise: they bundle **probabilistic reasoning** and **deterministic execution** into a single loop. An LLM prompt context is handed raw API keys, database credentials, or shell access.
+
+This creates an uncomfortable trade-off:
+* **Over-restrict the prompt**, and the agent becomes brittle, sluggish, and incapable of flexible multi-turn negotiation.
+* **Grant ambient execution authority**, and the enterprise faces stochastic hallucinations, runaway loops, indirect prompt injections, and confused-deputy vulnerabilities.
+
+Probabilistic models are extraordinary cognitive planners, but production commerce—payments, inventory allocation, and database writes—demands binary certainty.
+
+### Decoupling Intelligence from Authority
+
+The **Autonomous Business Envoy pattern** resolves this dilemma with a foundational principle:
+
+$$\text{Agents propose.} \quad \mathbf{\longrightarrow} \quad \text{Gateway decides.} \quad \mathbf{\longrightarrow} \quad \text{Executors verify.}$$
+
+By splitting operations across two decoupled planes, agents are freed to reason at peak cognitive velocity while the enterprise retains total, deterministic execution control:
+
+1. **Semantic Plane (Probabilistic)**: Counterparty agents communicate over open protocols (A2A, MCP, DIDComm) to discover capabilities, exchange cryptographically signed **Verifiable Presentations (VPs)**, and negotiate bilateral terms.
+2. **Control Plane (Deterministic)**: The **Trust Gateway** acts as the sole gatekeeper to state-changing operations. It evaluates proposed actions against machine-enforceable **Interaction Contracts (NICP)**, velocity constraints, and local enterprise policy—holding all downstream credentials so the LLM never touches them.
 
 ```text
-┌────────────────────┐   A2A Protocol   ┌────────────────────┐
-│ External B2B Agent │ ◀──────────────▶ │Enterprise B2B Agent│
-│ (did:web:buyer...) │                  │  (Cognitive LLM)   │
-└────────────────────┘                  └─────────┬──────────┘
-                                                  │ 4 MCP Tools
-                                                  │ (Inspect, Propose,
-                                                  │  Activate, Vault)
-                                                  ▼
-                                        ┌────────────────────┐
-                                        │   Trust Gateway    │
-                                        │  (PEP & Contracts) │
-                                        └─────────┬──────────┘
-                                                  │
-                ┌─────────────────────────────────┴──────────────────┐
-                │ • Checks RFC 8785 Canonical Interaction Contract   │
-                │ • Evaluates policy.toml & Layer 0 Call-Chain Guard │
-                │ • Mints short-lived ExecutionGrant JWT             │
-                └─────────────────────────────────┬──────────────────┘
-                                                  │
-                                                  ▼
-                                        ┌────────────────────┐
-                                        │ Isolated Executor  │ ──▶ APIs / ERP
-                                        │ (Verifies Grants)  │
-                                        └─────────┬──────────┘
-                                                  │
-                      ┌───────────────────────────┴────────────────┐
-                      │ 1. Atomic count increment in reputation_KV │
-                      │ 2. Mint & sign portable ExecutionReceipt   │
-                      └───────────────────────────┬────────────────┘
-                                                  │
-                                                  ▼
-                                        Verifiable Proof
-                                        returned to Buyer
+┌────────────────────┐   A2A Protocol   ┌──────────────────────────┐
+│ Customer Agent     │ ◀──────────────▶ │ Merchant Commerce Envoy  │
+│ (did:web:buyer...) │  (Negotiation +  │ (Probabilistic LLM)      │
+└────────────────────┘   VP Credential) └────────────┬─────────────┘
+                                                     │ Proposes Action
+                                                     │ (4 MCP Tools)
+                                                     ▼
+                                        ┌──────────────────────────┐
+                                        │      Trust Gateway       │
+                                        │  (Deterministic PEP/PDP) │
+                                        └────────────┬─────────────┘
+                                                     │
+                 ┌───────────────────────────────────┴────────────────────┐
+                 │ • Checks RFC 8785 Canonical Interaction Contract       │
+                 │ • Layer 0 Call-Chain Guard (depth, cycle, frequency)   │
+                 │ • Evaluates policy.toml & tenant boundary invariants   │
+                 │ • Mints short-lived (30s) ExecutionGrant JWT (Ed25519) │
+                 └───────────────────────────────────┬────────────────────┘
+                                                     │
+                                                     ▼
+                                        ┌──────────────────────────┐
+                                        │ Isolated Executor Host   │ ──▶ ERP / Ledger
+                                        │ (Cryptographic Verifier) │
+                                        └────────────┬─────────────┘
+                                                     │
+                        ┌────────────────────────────┴─────────────────┐
+                        │ 1. Asserts grant signature & input_hash match│
+                        │ 2. Increments atomic reputation ledger (KV)  │
+                        │ 3. Issues sealed, portable ExecutionReceipt  │
+                        └────────────────────────────┬─────────────────┘
+                                                     │
+                                                     ▼
+                                           Verifiable Audit Proof
+                                             returned to Buyer
 ```
+
+### The 4-Stage Governance Pipeline
+
+When an autonomous transaction occurs, intent travels through four strictly isolated stages:
+
+1. **Commercial Negotiation (`Customer Agent ↔ Commerce Envoy`)**: The customer's agent presents its `did:web` identity and verifiable credential passport. The two agents negotiate volume tiers, customized terms, or even pooled demand (such as self-organizing "agentic group buying") across probabilistic natural language.
+2. **Governed Action Proposal (`Commerce Envoy → Trust Gateway`)**: The envoy formulates a structured `ProposedAction` containing canonical arguments. Guided by principle, the envoy holds zero downstream credentials and cannot execute directly.
+3. **Policy Decision & Grant Minting (`Trust Gateway`)**: The Gateway deterministically validates the proposal against bilateral contracts, tenant scopes, spending ceilings, and Layer 0 call-chain guards. If approved, it mints a short-lived (30s TTL) `ExecutionGrant` bound cryptographically to the SHA-256 digest (`input_hash`) of the canonical arguments.
+4. **Verified Execution & Audit Receipt (`Secure Executor`)**: The sandboxed executor verifies that the grant is authentic, unexpired, and strictly bound to the exact payload before invoking production services. Upon completion, it returns a non-repudiable `ExecutionReceipt`.
+
+### A Grounded, Humble Perspective
+
+We do not claim that autonomous B2B commerce is fully solved or that web browsers will disappear tomorrow. Complex edge cases remain active engineering and research questions:
+* *Multi-hop dispute resolution* when upstream models misunderstand nuanced contractual terms.
+* *Decentralized reputation cold-start* when agents encounter counterparties without established histories.
+* *Legal enforceability* of machine-negotiated interaction contracts across differing jurisdictional regimes.
+
+Trust Gateway is our pragmatic, open-source attempt to build the missing enforcement layer: providing the cryptographic guardrails and deterministic isolation required before organizations can responsibly experiment with the next paradigm of digital trade.
 
 ### 📄 Read the Whitepaper
 
-For the full architecture, threat model, and an honest accounting of what's implemented versus still a design goal, read the technical whitepaper:
+For the comprehensive architecture, formal state machines, threat model, and an honest accounting of what is verified in code versus what remains an active design target, read the technical whitepaper:
 
 👉 **[Interaction Contracts for Autonomous B2B Agents: Architecture, Threat Model, and Open Questions](whitepaper/b2b_agent_whitepaper.md)**
 
 Key topics covered in the whitepaper:
-- **Negotiated Interaction Contracts (NICP)**: Canonicalization (RFC 8785 JCS), contract lifecycle, and mutual cryptographic attestation.
+- **Negotiated Interaction Contracts (NICP)**: Canonicalization (RFC 8785 JCS), 10-state contract lifecycle FSM, and mutual cryptographic attestation.
 - **Autonomous Reputation & Evidence Lifecycle**: Cold-start containment, atomic local reputation ledgers (`reputation_scores`), peer attestation proofs, and portable `ExecutionReceipt` evidence (§8.3).
 - **The Cognitive-to-Cryptographic Bridge**: The 4 MCP tools bridging reasoning LLMs to deterministic gateway primitives (§8.4).
 - **The Effective Authority Invariant**: `effective_authority = contract ∩ enterprise_policy ∩ identity_delegation`.

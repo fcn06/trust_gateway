@@ -1,4 +1,4 @@
-# 🛡️ Trust Gateway: A Potential Enabler for Agent-to-Agent (A2A) Commerce
+# 🛡️ Trust Gateway: The Execution Firewall for AI Agents
 
 <p align="center">
   <img src="docs/illustrations/Trust_Gateway_Overall_1.png" alt="Trust Gateway Overall" width="80%">
@@ -10,17 +10,15 @@
 [![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20Streamable-purple)](https://modelcontextprotocol.io)
 [![Whitepaper](https://img.shields.io/badge/Whitepaper-NICP%20Architecture-teal?logo=read-the-docs&logoColor=white)](whitepaper/b2b_agent_whitepaper.md)
 
-> **Stop giving AI agents raw API keys. Trust Gateway is an Execution Firewall and Human-in-the-Loop gateway for AI tools.**
+> **Stop giving AI agents raw API keys. Trust Gateway enforces deterministic policy, human-in-the-loop approvals, and cryptographic execution grants for autonomous tools — a potential enabler for Agent-to-Agent (A2A) commerce.**
 
-AI agents should be able to propose actions without automatically possessing the authority to execute them.
+AI agents must be able to **propose** actions without possessing the authority to **execute** them.
 
-**Trust Gateway** sits between AI agents and the tools they want to call. Agents can request actions, but they never receive the credentials needed to execute them directly. The gateway evaluates each request against policy and, when allowed, issues a short-lived cryptographic grant that the executor verifies before performing the action.
-
-Executors independently verify the grant and never rely on the agent's claim that an action was authorized.
+Trust Gateway sits between reasoning agents and real-world tools. Agents never receive downstream API credentials. Instead, the gateway verifies intent against machine-readable contracts and policies, issuing short-lived cryptographic grants (`ExecutionGrant`) that isolated executors verify before touching external state.
 
 > **"Agents propose. Gateway decides. Executors verify."**
 
-> 📄 **New Reference Architecture (Sept 2026):** Read the whitepaper on [Interaction Contracts & Autonomous Reputation Lifecycle for B2B Agents (NICP)](whitepaper/b2b_agent_whitepaper.md).
+> 📄 **Reference Architecture (Sept 2026):** Read the technical whitepaper on [Interaction Contracts & Autonomous Reputation Lifecycle for B2B Agents (NICP)](whitepaper/b2b_agent_whitepaper.md).
 
 ---
 

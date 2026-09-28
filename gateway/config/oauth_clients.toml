@@ -26,6 +26,7 @@ authorization_code_ttl_secs = 600
 client_id = "0aae9cb2-cb05-4528-8913-752e350cf903"
 # The actual secret is read from this environment variable
 client_secret_env = "OAUTH_SECRET_CLAUDE_DESKTOP"
+tenant_id = "a6e41196-583e-4a74-a03a-68dc87ab747b"
 redirect_uris = ["http://localhost:3000/callback", "http://127.0.0.1/callback"]
 allowed_scopes = ["mcp:execute", "tools:list", "tools:call"]
 # Optional: human-readable name shown on consent screen
@@ -33,7 +34,8 @@ display_name = "Claude Desktop"
 
 [[clients]]
 client_id = "ebfbdbc7-6149-421e-93be-1a220d9064fe"
-client_secret_env = "OAUTH_SECRET_CLAUDE_WEB"
+client_secret_env = ""
+tenant_id = "a6e41196-583e-4a74-a03a-68dc87ab747b"
 redirect_uris = ["https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]
 allowed_scopes = ["mcp:execute", "tools:list", "tools:call"]
 display_name = "Claude.ai"

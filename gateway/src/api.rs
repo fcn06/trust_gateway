@@ -161,6 +161,8 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/authorize/consent", post(oauth_service_proxy_handler))
         .route("/auth/token", post(oauth_service_proxy_handler))
         .route("/token", post(oauth_service_proxy_handler))
+        .route("/.well-known/jwks.json", get(oauth_service_proxy_handler))
+        .route("/jwks.json", get(oauth_service_proxy_handler))
         // Timeline API (Trust Replay)
         .route("/api/actions", get(list_actions_handler))
         .route("/api/actions/:action_id", get(get_action_handler))

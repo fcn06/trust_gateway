@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 trust_verifier = { path = "../../verifier" }
 serde_json = "1.0"
+chrono = "0.4"
 anyhow = "1.0"

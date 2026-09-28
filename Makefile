@@ -1,7 +1,7 @@
 # trust-gateway Makefile
 # Convenience targets for building, testing, and running trust-gateway.
 
-.PHONY: all check test quickstart demo-docker conformance audit lint doctor
+.PHONY: all check test quickstart demo-docker conformance audit lint doctor clean
 
 all: check test conformance
 
@@ -42,3 +42,19 @@ lint:
 doctor:
 	@echo "🩺 Running environment doctor..."
 	@bash scripts/doctor.sh
+
+# ── Cleanup ────────────────────────────────────────────
+clean:
+	@echo "🧹 Cleaning trust-gateway workspace..."
+	cargo clean || true
+	@echo "🧹 Cleaning trust-gateway examples..."
+	@for d in examples/*; do \
+		if [ -d "$$d" ] && [ -f "$$d/Cargo.toml" ]; then \
+			(cd "$$d" && cargo clean) || true; \
+		fi; \
+	done
+	find . -name "target" -type d -prune -exec rm -rf {} +
+	find examples -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find examples -type f -name "*.pyc" -delete 2>/dev/null || true
+	find examples -type f -name "*.pyo" -delete 2>/dev/null || true
+	find examples -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true

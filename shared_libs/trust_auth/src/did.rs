@@ -370,12 +370,39 @@ pub async fn verify_oauth2_eddsa_jwt(
     } else if iss.starts_with("http://") || iss.starts_with("https://") {
         format!("{}/.well-known/jwks.json", iss.trim_end_matches('/'))
     } else {
-        "http://127.0.0.1:3075/.well-known/jwks.json".to_string()
+        std::env::var("OAUTH2_SERVICE_URL")
+            .map(|u| format!("{}/.well-known/jwks.json", u.trim_end_matches('/')))
+            .unwrap_or_else(|_| "http://127.0.0.1:3075/.well-known/jwks.json".to_string())
     };
 
-    let jwks_res = client.get(&target_jwks_url).send().await.map_err(|e| {
+    let jwks_res = match client.get(&target_jwks_url).send().await {
+        Ok(res) if res.status().is_success() => Ok(res),
+        other => {
+            let local_jwks_url = std::env::var("OAUTH2_SERVICE_URL")
+                .map(|u| format!("{}/.well-known/jwks.json", u.trim_end_matches('/')))
+                .unwrap_or_else(|_| "http://127.0.0.1:3075/.well-known/jwks.json".to_string());
+            if target_jwks_url != local_jwks_url {
+                tracing::debug!(
+                    "Primary JWKS fetch failed ({:?}), trying local fallback: {}",
+                    other.as_ref().err(),
+                    local_jwks_url
+                );
+                client.get(&local_jwks_url).send().await
+            } else {
+                other
+            }
+        }
+    }
+    .map_err(|e| {
         VpError::IssuerResolution(format!("Failed to fetch JWKS from {target_jwks_url}: {e}"))
     })?;
+
+    if !jwks_res.status().is_success() {
+        return Err(VpError::IssuerResolution(format!(
+            "JWKS endpoint returned HTTP {}",
+            jwks_res.status()
+        )));
+    }
     let jwks: serde_json::Value = jwks_res.json().await.map_err(|e| {
         VpError::IssuerResolution(format!(
             "Failed to parse JWKS JSON from {target_jwks_url}: {e}"
@@ -421,6 +448,7 @@ pub async fn verify_oauth2_eddsa_jwt(
     let tenant_id = payload
         .get("tenant_id")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && *s != "default" && *s != "unknown")
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
             let sub = payload

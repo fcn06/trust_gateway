@@ -1,4 +1,4 @@
-# 🛡️ Trust Gateway
+# 🛡️ Trust Gateway: A Potential Enabler for Agent-to-Agent (A2A) Commerce
 
 <p align="center">
   <img src="docs/illustrations/Trust_Gateway_Overall_1.png" alt="Trust Gateway Overall" width="80%">

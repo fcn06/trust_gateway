@@ -384,3 +384,110 @@ pub async fn revive_agent_handler(
         Err(e) => Json(serde_json::json!({ "error": format!("{}", e) })).into_response(),
     }
 }
+
+/// Upstream agent definition payload as emitted by agent_core discovery helper
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveryAgentDefinition {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub agent_endpoint: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<DiscoverySkillDefinition>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiscoverySkillDefinition {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub parameters: serde_json::Value,
+    #[serde(default)]
+    pub output: serde_json::Value,
+}
+
+/// POST /v1/discovery/agents — Register an upstream agent from agent_core DiscoveryService.
+pub async fn discovery_register_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(def): Json<DiscoveryAgentDefinition>,
+) -> impl IntoResponse {
+    let allowed_tools: Vec<String> = def.skills.into_iter().map(|s| s.name).collect();
+    let reg_req = RegisterAgentRequest {
+        name: def.name.clone(),
+        owner: "external_swarm".to_string(),
+        agent_type: AgentType::ExternalSwarm,
+        environment: AgentEnvironment::Prod,
+        policy_profile: "external_restricted".to_string(),
+        allowed_tools,
+        delegated_identity: def.agent_endpoint.unwrap_or_else(|| "external".to_string()),
+        metadata: serde_json::json!({
+            "discovery_id": def.id,
+            "description": def.description,
+        }),
+    };
+
+    match state.agent_registry.register(reg_req).await {
+        Ok(record) => {
+            tracing::info!(
+                "📡 Registered upstream discovery agent: {} ({})",
+                record.name,
+                record.agent_id
+            );
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({
+                    "status": "registered",
+                    "agent_id": record.agent_id,
+                    "agent": record,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("Failed to register discovery agent: {e}"),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discovery_agent_definition_deserialization() {
+        let json_payload = serde_json::json!({
+            "id": "agent-123",
+            "name": "Supplier Agent",
+            "description": "Handles B2B negotiation",
+            "agent_endpoint": "http://127.0.0.1:9090",
+            "skills": [
+                {
+                    "name": "catalog_query",
+                    "description": "Queries product catalog",
+                    "parameters": null,
+                    "output": null
+                }
+            ]
+        });
+
+        let def: DiscoveryAgentDefinition = serde_json::from_value(json_payload)
+            .expect("should deserialize DiscoveryAgentDefinition from agent_core");
+
+        assert_eq!(def.id, Some("agent-123".to_string()));
+        assert_eq!(def.name, "Supplier Agent");
+        assert_eq!(
+            def.agent_endpoint,
+            Some("http://127.0.0.1:9090".to_string())
+        );
+        assert_eq!(def.skills.len(), 1);
+        assert_eq!(def.skills[0].name, "catalog_query");
+    }
+}

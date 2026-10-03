@@ -111,6 +111,14 @@ struct Args {
         default_value = "search_skills,switch_context,list_bundles,vp_search,claw_weather,claw_extract_content_from_url,claw_hello_world,inspect_schema,compute_statistics,detect_anomalies,generate_markdown,join_datasets,sample_rows,discover_agent_services,call_b2b_agent,register_b2b_agent,list_registered_b2b_agents,discover_b2b_agents,reputation_inspect_counterparty,contract_propose_or_amend,contract_verify_and_activate,receipt_present_and_store"
     )]
     default_tools: String,
+
+    /// LLM Egress Gateway URL (loopback swarm_gateway sidecar)
+    #[arg(long, env = "LLM_GATEWAY_URL", default_value = "http://127.0.0.1:8085")]
+    llm_gateway_url: String,
+
+    /// Enable LLM Egress Gateway sidecar supervision
+    #[arg(long, env = "ENABLE_LLM_GATEWAY_SUPERVISOR", default_value_t = false)]
+    enable_llm_gateway_supervisor: bool,
 }
 
 async fn run_supervised<F, Fut, E>(
@@ -905,6 +913,47 @@ async fn main() -> Result<()> {
             }
         },
     ));
+
+    // Optional LLM Egress Gateway sidecar supervisor
+    if args.enable_llm_gateway_supervisor {
+        let token = cancel_token.clone();
+        let llm_url = args.llm_gateway_url.clone();
+        let llm_client = state.http_client.clone();
+        let health_url = format!("{}/health", llm_url.trim_end_matches('/'));
+        tracing::info!(
+            "🔭 Spawning LLM Egress Gateway supervisor for {}",
+            health_url
+        );
+        background_tasks.spawn(run_supervised(
+            "llm_gateway_supervisor",
+            token,
+            Some(state.task_statuses.clone()),
+            move || {
+                let client = llm_client.clone();
+                let url = health_url.clone();
+                async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                        match client.get(&url).send().await {
+                            Ok(resp) => {
+                                if !resp.status().is_success() {
+                                    tracing::warn!(
+                                        "⚠️ LLM Gateway probe returned status {}",
+                                        resp.status()
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("⚠️ LLM Gateway probe failed at {}: {}", url, e);
+                            }
+                        }
+                    }
+                    #[allow(unreachable_code)]
+                    Ok::<(), anyhow::Error>(())
+                }
+            },
+        ));
+    }
 
     background_tasks.close();
 

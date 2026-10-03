@@ -16,6 +16,8 @@ The Trust Gateway enforces the 3-pillar zero-trust value proposition:
 ### 🛡️ Pillar 2: Gateway Decides (Governance & Control)
 * **Layer 0 Call-Chain Guard**: Sits at the entrance of the decision pipeline (`crates/trust-policy/src/call_chain.rs`). Enforces call-chain depth bounds (`max_depth = 10`), cycle/recursion loop detection (`allow_cycles = false`), and per-tool frequency caps (`max_frequency_per_tool = 3`) while verifying call-stack integrity against server-tracked session state.
 * **Governance Plane**: The Trust Gateway evaluates request attributes against `policy.toml` (`crates/trust-policy`, `policy-sdk`). If required by policy rules, human approval is triggered via the approval daemon, backed by a durable pending-approvals store.
+* **Dynamic Agent Discovery & Registration**: Provides decentralized agent endpoint cataloging (`POST /v1/discovery/agents`), allowing peer and twin agents to publish capabilities and discover verified communication channels.
+* **LLM Gateway Supervisor**: Integrated reverse proxy layer monitoring and auditing outbound LLM calls against token quotas, model policies, and tenant budgets before requests reach LLM providers.
 * **Grant Minting Plane**: Upon approval, the Gateway mints a short-lived Ed25519-signed `ExecutionGrant` JWT (`crates/trust-grants`), cryptographically bound to the SHA-256 `input_hash` of canonical arguments (`crates/trust-canonical`).
 * **Trust Operations Plane (`trust_ops`)**: Key lifecycle management (JWKS rotation), executor posture attestation, and hash-chained audit log reconciliation (`crates/trust-audit`).
 * **CLI Policy Enforcement Point**: Command-line interface adapter (`adapters/surface-cli`) providing dynamic CLI introspection and execution of governed tools via `trustctl tool run`.
@@ -89,4 +91,5 @@ Proposal (arguments)
 | **Pillar 3** | [`crates/trust-executor-sdk`](../../crates/trust-executor-sdk) | Abstract Executor trait & outcome state reconciliation. |
 | **Pillar 3** | [`crates/trust-egress`](../../crates/trust-egress) | Regex & LLM-powered PII & secret egress scrubbing. |
 | **Pillar 3** | [`verifier/`](../../verifier) | Standalone zero-dependency Ed25519 execution grant verifier library. |
+| **Shared** | [`shared_libs/identity_context`](../../shared_libs/identity_context) | RequestContext metadata normalization, alias mapping (`agent_jwt` ↔ `credential`, `tenant`), and cross-framework auth bridging. |
 

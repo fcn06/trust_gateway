@@ -20,6 +20,7 @@ It separates reasoning intelligence from execution authority by requiring agents
 | `ExecutionGrant` | Gateway → Executor / Agent | Ed25519-signed authorization token bound to exact input digest |
 | `GrantedAction` | Gateway → Executor Host | Dispatched execution envelope containing grant and parameters |
 | `ExecutionResult` | Executor → Gateway / Agent | Standardized execution outcome status and sanitized output |
+| `AgentRegistration` | Agent → Gateway | Agent capability & endpoint advertisement submitted to `/v1/discovery/agents` |
 
 ---
 
@@ -92,6 +93,17 @@ The grant authorizes one execution of one versioned tool with exactly one canoni
 | **HTTP REST Payload** (`POST /v1/actions/propose`) | `action_name` | Ingress action/tool name submitted by agent: `"action_name": "claw_hello_world"` |
 | **Internal Domain Model** (`ProposedAction`) | `tool_name` | Internal tool name field in Rust domain model: `tool_name: "claw_hello_world"` |
 | **`ExecutionGrant` JWT Claim** | `tool_name` | Signed JWT claim bound to signature: `"tool_name": "claw_hello_world"` |
+
+### RequestContext Metadata Normalization & Aliases
+
+To support cross-framework agent interoperability (including `swarm_commons` 0.2.0), the gateway and `identity_context` normalize ingress metadata keys across client transports:
+
+| Canonical Key | Supported Aliases | Semantics |
+| :--- | :--- | :--- |
+| `credential` | `agent_jwt`, `jwt` | Agent identity/delegation JWT verified against trusted authority roots. |
+| `tenant_id` | `tenant` | Multi-tenant isolation scope identifier. |
+| `authorization` | `auth_header`, `bearer` | Inbound transport authorization header. |
+| `thread_id` | `thid`, `conversation_id` | Distributed conversation trace identifier. |
 
 ---
 

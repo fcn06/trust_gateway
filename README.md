@@ -174,6 +174,9 @@ This project defines a working set of authorization contracts, independent in pr
 * **Deterministic Contract Kernel (`trust-contract`)**: Pure aggregate enforcing RFC 8785 canonical JSON, SHA-256 fingerprinting, 10-state FSM, and a 9-step activation ceremony over mutual Ed25519 signatures.
 * **Autonomous Reputation & Evidence Lifecycle**: Cold-start containment via local NATS KV `reputation_scores`, peer attestation verification against `trusted_peer_roots` anchors, and portable, signed `ExecutionReceipt` proofs returned upon `ActionSucceeded`.
 * **Cognitive-to-Cryptographic MCP Tools**: 4 specialized lifecycle tools (`reputation_inspect_counterparty`, `contract_propose_or_amend`, `contract_verify_and_activate`, `receipt_present_and_store`) bridging semantic reasoning to control plane enforcement.
+* **Dynamic Agent Discovery & Service Registration**: Decentralized registration via `POST /v1/discovery/agents`, enabling agents to advertise capabilities and discover registered endpoints dynamically.
+* **LLM Gateway Supervisor Integration**: Transparent LLM call proxying and policy supervision via `ENABLE_LLM_GATEWAY_SUPERVISOR` and `LLM_GATEWAY_URL`.
+* **Metadata Normalization (`identity_context`)**: RequestContext metadata aliases (`agent_jwt` ↔ `credential`, `tenant` ↔ `tenant_id`, `authorization`, `thread_id`) ensuring unified compatibility across heterogeneous agent frameworks (such as `swarm_commons` 0.2.0).
 * **Canonicalization & Hashing**: Deterministic canonical JSON serialization with lexicographically sorted object keys followed by SHA-256 hashing (`input_hash`).
 * **Verification Rules**: Ed25519 public key signature verification, nonce (`jti`) tracking intended to make grant reuse hard, and strict TTL expiration.
 * **CLI Surface Adapter**: Dynamic Policy Enforcement Point (`adapters/surface-cli`) projecting native tool JSON Schemas into typed CLI commands with POSIX exit codes (0, 1, 126, 127, 130).
@@ -298,6 +301,7 @@ Key topics covered in the whitepaper:
 | **B2B Agent Whitepaper** | [`whitepaper/b2b_agent_whitepaper.md`](whitepaper/b2b_agent_whitepaper.md) |
 | **Reputation Lifecycle Example** | [`examples/agent_reputation_lifecycle/README.md`](examples/agent_reputation_lifecycle/README.md) |
 | **Contributor & CLI Quickstart** | [`docs/QUICKSTART.md`](docs/QUICKSTART.md) |
+| **API Transports & Discovery** | [`docs/reference/API_TRANSPORTS.md`](docs/reference/API_TRANSPORTS.md) |
 | **Integrate via Python** | [`examples/python-agent/quickstart.py`](examples/python-agent/quickstart.py) |
 | **Integrate via MCP** | [`docs/tutorials/mcp-client.md`](docs/tutorials/mcp-client.md) |
 | **Integrate via REST** | [`docs/tutorials/rest-curl-agent.md`](docs/tutorials/rest-curl-agent.md) |

@@ -317,4 +317,5 @@ nats-server -js
 - **[`docs/concepts/VISUAL_GUIDE.md`](concepts/VISUAL_GUIDE.md)** — 5-minute visual architecture overview
 - **[`docs/concepts/ARCHITECTURE.md`](concepts/ARCHITECTURE.md)** — Detailed architectural plane breakdown
 - **[`docs/reference/PROTOCOL_SPEC.md`](reference/PROTOCOL_SPEC.md)** — Protocol specification
+- **[`docs/reference/API_TRANSPORTS.md`](reference/API_TRANSPORTS.md)** — API transports, dynamic agent discovery, and supervisor configuration
 - **[`docs/reference/security-guarantees.md`](reference/security-guarantees.md)** — Security guarantees matrix

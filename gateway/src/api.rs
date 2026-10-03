@@ -60,6 +60,11 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
             get(crate::agent_api::list_agents_handler)
                 .post(crate::agent_api::register_agent_handler),
         )
+        // Upstream discovery registration (compatible with agent_core DiscoveryService)
+        .route(
+            "/v1/discovery/agents",
+            post(crate::agent_api::discovery_register_handler),
+        )
         .route(
             "/v1/agents/:agent_id",
             get(crate::agent_api::get_agent_handler)

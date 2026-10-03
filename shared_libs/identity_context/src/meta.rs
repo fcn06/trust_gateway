@@ -66,7 +66,26 @@ pub fn extract_meta(args: &mut serde_json::Value) -> Result<MetaPayload, MetaErr
     let meta_value = match args.as_object_mut() {
         Some(obj) => match obj.remove("_meta") {
             Some(v) => v,
-            None => return Err(MetaError::NoMetaBlock),
+            None => {
+                // Support RequestContext metadata payload from upstream swarm_commons
+                if let Some(meta) = obj.get("metadata") {
+                    let has_identity = meta.get("session_jwt").is_some()
+                        || meta.get("agent_jwt").is_some()
+                        || meta.get("credential").is_some()
+                        || meta.get("authorization").is_some()
+                        || meta.get("io.lianxi").is_some();
+                    if has_identity {
+                        match obj.remove("metadata") {
+                            Some(v) => v,
+                            None => return Err(MetaError::NoMetaBlock),
+                        }
+                    } else {
+                        return Err(MetaError::NoMetaBlock);
+                    }
+                } else {
+                    return Err(MetaError::NoMetaBlock);
+                }
+            }
         },
         None => return Err(MetaError::NoMetaBlock),
     };
@@ -83,12 +102,27 @@ pub fn extract_meta(args: &mut serde_json::Value) -> Result<MetaPayload, MetaErr
         .cloned()
         .unwrap_or(meta_value.clone());
 
-    // Extract required session_jwt
+    // Extract required session_jwt / credential
+    // Supports RequestContext aliases: agent_jwt, credential, authorization ("Bearer " stripped)
     let session_jwt = ag_block
         .get("session_jwt")
+        .or_else(|| ag_block.get("agent_jwt"))
+        .or_else(|| ag_block.get("credential"))
         .or_else(|| ag_block.get("X-Session-JWT"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
+        .or_else(|| {
+            ag_block
+                .get("authorization")
+                .and_then(|v| v.as_str())
+                .map(|s| {
+                    if let Some(stripped) = s.strip_prefix("Bearer ") {
+                        stripped.to_string()
+                    } else {
+                        s.to_string()
+                    }
+                })
+        })
         .ok_or(MetaError::MissingSessionJwt)?;
 
     // Validate JWT is decodable
@@ -102,6 +136,7 @@ pub fn extract_meta(args: &mut serde_json::Value) -> Result<MetaPayload, MetaErr
         session_jwt,
         tenant_id: ag_block
             .get("tenant_id")
+            .or_else(|| ag_block.get("tenant"))
             .or_else(|| ag_block.get("X-Tenant-ID"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
@@ -116,10 +151,13 @@ pub fn extract_meta(args: &mut serde_json::Value) -> Result<MetaPayload, MetaErr
             .map(|s| s.to_string()),
         correlation_id: ag_block
             .get("correlation_id")
+            .or_else(|| ag_block.get("thread_id"))
+            .or_else(|| ag_block.get("conversation_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         source_id: ag_block
             .get("source_id")
+            .or_else(|| ag_block.get("source"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })
@@ -150,6 +188,16 @@ pub fn validate_tenant_consistency(
 pub fn strip_meta(args: &mut serde_json::Value) {
     if let Some(obj) = args.as_object_mut() {
         obj.remove("_meta");
+        if let Some(meta) = obj.get("metadata") {
+            if meta.get("session_jwt").is_some()
+                || meta.get("agent_jwt").is_some()
+                || meta.get("credential").is_some()
+                || meta.get("authorization").is_some()
+                || meta.get("io.lianxi").is_some()
+            {
+                obj.remove("metadata");
+            }
+        }
     }
 }
 
@@ -401,5 +449,56 @@ mod tests {
 
         let result = extract_meta(&mut args);
         assert!(matches!(result, Err(MetaError::MissingSessionJwt)));
+    }
+
+    #[test]
+    fn test_extract_meta_with_request_context_aliases() {
+        let jwt = make_jwt(&serde_json::json!({
+            "iss": "did:twin:zOwner",
+            "tenant_id": "tenant-swarm-42",
+        }));
+
+        let mut args = serde_json::json!({
+            "action": "execute_task",
+            "metadata": {
+                "agent_jwt": jwt,
+                "tenant": "tenant-swarm-42",
+                "thread_id": "thread-99",
+                "source": "swarm-beta"
+            }
+        });
+
+        let meta =
+            extract_meta(&mut args).expect("should extract metadata using RequestContext aliases");
+
+        assert!(
+            args.get("metadata").is_none(),
+            "metadata credentials must be stripped"
+        );
+        assert_eq!(meta.tenant_id, Some("tenant-swarm-42".to_string()));
+        assert_eq!(meta.correlation_id, Some("thread-99".to_string()));
+        assert_eq!(meta.source_id, Some("swarm-beta".to_string()));
+    }
+
+    #[test]
+    fn test_extract_meta_with_bearer_authorization() {
+        let jwt = make_jwt(&serde_json::json!({
+            "iss": "did:twin:zOwner",
+            "tenant_id": "tenant-bearer",
+        }));
+
+        let mut args = serde_json::json!({
+            "action": "query",
+            "_meta": {
+                "authorization": format!("Bearer {jwt}"),
+                "tenant_id": "tenant-bearer",
+                "conversation_id": "conv-101"
+            }
+        });
+
+        let meta = extract_meta(&mut args).expect("should extract authorization Bearer token");
+        assert_eq!(meta.session_jwt, jwt);
+        assert_eq!(meta.tenant_id, Some("tenant-bearer".to_string()));
+        assert_eq!(meta.correlation_id, Some("conv-101".to_string()));
     }
 }

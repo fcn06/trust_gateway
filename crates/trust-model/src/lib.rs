@@ -101,8 +101,32 @@ pub struct PolicyDecision {
     pub reason: String,
 }
 
+/// Economic claim binding a payment token, credit reservation, or maximum cost limit to a grant.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq, Default)]
+pub struct EconomicClaim {
+    /// Currency code (e.g. "USD", "EUR", "CREDIT").
+    pub currency: String,
+    /// Maximum allowable cost for this tool execution in minor units (e.g. cents).
+    pub max_cost_minor: u64,
+    /// Ephemeral X42/H42 payment voucher or token (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_token: Option<String>,
+    /// Pre-allocated quota reservation identifier (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_reservation_id: Option<String>,
+}
+
+/// Execution budget constraints for execution resources.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq, Default)]
+pub struct ExecutionBudget {
+    #[serde(default)]
+    pub max_duration_seconds: u32,
+    #[serde(default)]
+    pub max_external_calls: u32,
+}
+
 /// Short-lived Ed25519-signed authorization grant
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub struct ExecutionGrant {
     pub grant_id: String,
     pub action_id: String,
@@ -118,6 +142,10 @@ pub struct ExecutionGrant {
     pub contract_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economic_claim: Option<EconomicClaim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<ExecutionBudget>,
 }
 
 impl ExecutionGrant {
@@ -127,6 +155,18 @@ impl ExecutionGrant {
             "idemp_{}_{}_{}",
             self.tenant_id, self.workspace_id, self.grant_id
         )
+    }
+
+    /// Fluent builder method to attach an economic claim to the grant.
+    pub fn with_economic_claim(mut self, claim: Option<EconomicClaim>) -> Self {
+        self.economic_claim = claim;
+        self
+    }
+
+    /// Fluent builder method to attach execution budget constraints to the grant.
+    pub fn with_budget(mut self, budget: Option<ExecutionBudget>) -> Self {
+        self.budget = budget;
+        self
     }
 }
 
@@ -165,4 +205,70 @@ pub struct TrustEnvelope<T> {
     pub trace_id: String,
     pub timestamp: i64,
     pub payload: T,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_execution_grant_backward_compatibility() {
+        let legacy_json = serde_json::json!({
+            "grant_id": "grant_123",
+            "action_id": "act_456",
+            "tenant_id": "tenant_xyz",
+            "workspace_id": "default",
+            "tool_name": "orders.read",
+            "input_hash": "sha256_hash",
+            "issuer": "gateway_1",
+            "expires_at": 1700000000,
+            "nonce": "nonce_789"
+        });
+
+        let grant: ExecutionGrant = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(grant.grant_id, "grant_123");
+        assert!(grant.economic_claim.is_none());
+        assert!(grant.budget.is_none());
+
+        // Serialized output should omit economic_claim and budget
+        let serialized = serde_json::to_value(&grant).unwrap();
+        assert!(serialized.get("economic_claim").is_none());
+        assert!(serialized.get("budget").is_none());
+    }
+
+    #[test]
+    fn test_execution_grant_with_economic_claim_and_budget() {
+        let grant = ExecutionGrant {
+            grant_id: "grant_eco_001".to_string(),
+            action_id: "act_eco_001".to_string(),
+            tenant_id: "tenant_enterprise".to_string(),
+            workspace_id: "prod".to_string(),
+            tool_name: "stripe.charge".to_string(),
+            input_hash: "hash_abc".to_string(),
+            issuer: "trust_gateway".to_string(),
+            expires_at: 1750000000,
+            nonce: "nonce_eco".to_string(),
+            contract_id: None,
+            contract_hash: None,
+            economic_claim: Some(EconomicClaim {
+                currency: "USD".to_string(),
+                max_cost_minor: 5000,
+                payment_token: Some("x42_token_payload".to_string()),
+                quota_reservation_id: Some("res_12345".to_string()),
+            }),
+            budget: Some(ExecutionBudget {
+                max_duration_seconds: 30,
+                max_external_calls: 3,
+            }),
+        };
+
+        let json = serde_json::to_value(&grant).unwrap();
+        assert_eq!(json["economic_claim"]["currency"], "USD");
+        assert_eq!(json["economic_claim"]["max_cost_minor"], 5000);
+        assert_eq!(json["budget"]["max_duration_seconds"], 30);
+
+        let roundtrip: ExecutionGrant = serde_json::from_value(json).unwrap();
+        assert_eq!(roundtrip.economic_claim.unwrap().currency, "USD");
+        assert_eq!(roundtrip.budget.unwrap().max_external_calls, 3);
+    }
 }

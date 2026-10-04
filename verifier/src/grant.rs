@@ -67,6 +67,21 @@ pub struct DelegationChain {
     pub on_behalf_of: String,
 }
 
+/// Economic claim binding a payment token, credit reservation, or maximum cost limit to a grant.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq, Default)]
+pub struct EconomicClaim {
+    /// Currency code (e.g. "USD", "EUR", "CREDIT").
+    pub currency: String,
+    /// Maximum allowable cost for this tool execution in minor units (e.g. cents).
+    pub max_cost_minor: u64,
+    /// Ephemeral X42/H42 payment voucher or token (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_token: Option<String>,
+    /// Pre-allocated quota reservation identifier (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_reservation_id: Option<String>,
+}
+
 /// Short-lived, action-specific execution grant token claims.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub struct ExecutionGrant {
@@ -134,6 +149,10 @@ pub struct ExecutionGrant {
     /// Execution budget grant bounds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<ExecutionBudget>,
+
+    /// Economic claim and payment authorization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economic_claim: Option<EconomicClaim>,
 
     /// B2B Negotiated Interaction Contract ID (if action is contract-governed).
     #[serde(default, skip_serializing_if = "Option::is_none")]

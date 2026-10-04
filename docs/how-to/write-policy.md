@@ -127,6 +127,26 @@ priority = 20
 
 ---
 
+## Dynamic Reputation & Trust Policies
+
+In hierarchical policy mode (`policy_sdk`), organizations can configure adaptive reputation thresholds under `[organization.reputation]`:
+
+```toml
+[organization.reputation]
+min_successful_executions = 5             # Cold-start threshold
+max_failure_rate = 0.10                   # Block agents with >10% failure rate
+min_peer_score_for_auto_approval = 0.80   # Require high peer attestation for large actions
+adaptive_downgrade = true                 # Downgrade to human approval instead of hard deny
+```
+
+### Adaptive Downgrade
+When `adaptive_downgrade = true`:
+- Unknown or cold-start counterparties (executions < 5 and lacking trusted peer attestation) are escalated to `RequiresHumanApproval` (`reputation_downgrade_cold_start`) instead of failing immediately.
+- High-value operations (> $1,000) from unverified counterparties trigger `RequiresHumanApproval` (`reputation_unverified_high_value`).
+- Counterparties exceeding `max_failure_rate` are rejected immediately with `Deny`.
+
+---
+
 ## Validating a Policy
 
 Use `trustctl` to lint your policy file:

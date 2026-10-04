@@ -22,6 +22,7 @@ fn test_negative_invariant_invalid_action_rejected() {
         budget: None,
         contract_id: None,
         contract_hash: None,
+        ..Default::default()
     };
 
     let args = serde_json::json!({"summary": "meeting"});

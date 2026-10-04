@@ -20,6 +20,7 @@ fn test_negative_invariant_invalid_action_rejected() {
         registry_hash: String::new(),
         delegation: None,
         budget: None,
+        ..Default::default()
     };
 
 

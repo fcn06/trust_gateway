@@ -128,6 +128,8 @@ mod tests {
             nonce: "nonce-1".to_string(),
             contract_id: None,
             contract_hash: None,
+            economic_claim: None,
+            budget: None,
         }
     }
 

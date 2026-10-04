@@ -179,6 +179,9 @@ This project defines a working set of authorization contracts, independent in pr
 * **Metadata Normalization (`identity_context`)**: RequestContext metadata aliases (`agent_jwt` ↔ `credential`, `tenant` ↔ `tenant_id`, `authorization`, `thread_id`) ensuring unified compatibility across heterogeneous agent frameworks (such as `swarm_commons` 0.2.0).
 * **Canonicalization & Hashing**: Deterministic canonical JSON serialization with lexicographically sorted object keys followed by SHA-256 hashing (`input_hash`).
 * **Verification Rules**: Ed25519 public key signature verification, nonce (`jti`) tracking intended to make grant reuse hard, and strict TTL expiration.
+* **Dynamic Multi-Dimensional Trust Metrics (`policy-sdk`)**: Runtime counterparty evaluation (`DynamicTrustMetrics`: failure rate ceilings, cold-start limits, peer attestation scores) with automatic adaptive downgrade to human approval when trust thresholds or local interaction histories are unmet.
+* **Economic Claims & Metered Execution Grants (`ExecutionGrant`)**: Cryptographic binding of `EconomicClaim` (currency, cost ceilings, payment vouchers/tokens, quota reservations) and `ExecutionBudget` (duration caps, call limits) to the grant JWT, enabling trust and budget verification for billable/compute-intensive tools before execution.
+* **Semantic IO Mapping Middleware (`b2b_agent`)**: Inbound translation layer mapping foreign A2A and MCP tool call schemas to canonical Lianxi tool definitions with deterministic parameter mapping, default value injection, and argument sanitization.
 * **CLI Surface Adapter**: Dynamic Policy Enforcement Point (`adapters/surface-cli`) projecting native tool JSON Schemas into typed CLI commands with POSIX exit codes (0, 1, 126, 127, 130).
 
 This repository is the only implementation right now — mine, in Rust — plus a Python SDK. "Protocol" here describes an internal design, not an externally reviewed or adopted specification.

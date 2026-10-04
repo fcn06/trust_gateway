@@ -4,7 +4,7 @@ pub mod simulation;
 
 pub use evaluator::PolicyEvaluator;
 pub use layers::{
-    AgentPolicy, HierarchicalPolicy, OrganizationPolicy, PlatformPolicy, PolicyOutcome,
-    TransactionPolicy,
+    AgentPolicy, DynamicTrustMetrics, HierarchicalPolicy, OrganizationPolicy, PlatformPolicy,
+    PolicyOutcome, ReputationPolicy, TransactionPolicy,
 };
 pub use simulation::{SimulationEngine, SimulationResult};

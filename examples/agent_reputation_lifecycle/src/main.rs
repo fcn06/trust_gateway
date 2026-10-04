@@ -357,6 +357,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         nonce: uuid::Uuid::new_v4().to_string(),
         contract_id: Some(contract.contract_id.clone()),
         contract_hash: Some(contract_hash.clone()),
+        economic_claim: None,
+        budget: None,
     };
 
     let granted_action = trust_model::GrantedAction {

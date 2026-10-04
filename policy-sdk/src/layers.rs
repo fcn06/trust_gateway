@@ -17,6 +17,42 @@ pub struct PlatformPolicy {
     pub max_grant_ttl_seconds: u64,
 }
 
+/// Multi-dimensional dynamic trust telemetry provided by the Gateway or caller evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DynamicTrustMetrics {
+    /// Number of historically verified successful executions.
+    pub successful_executions: u64,
+    /// Number of historically recorded failed executions (runtime errors, contract breaches).
+    pub failed_executions: u64,
+    /// Historical failure rate in range [0.0, 1.0].
+    pub failure_rate: f64,
+    /// Normalized peer attestation score in range [0.0, 1.0], derived from trusted peer root attestations.
+    pub peer_attestation_score: Option<f64>,
+    /// Transitive reputation score (PageRank-style centrality) if participating in federation.
+    pub transitive_trust_score: Option<f64>,
+}
+
+/// Dynamic reputation policy rules configured in policy.toml under [organization.reputation].
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ReputationPolicy {
+    /// Minimum successful executions required for cold-start exit (default: None).
+    #[serde(default)]
+    pub min_successful_executions: Option<u64>,
+    /// Maximum allowable failure rate before automatic denial (e.g., 0.05 for 5%).
+    #[serde(default)]
+    pub max_failure_rate: Option<f64>,
+    /// Minimum peer attestation score required to bypass human approval for high-risk tools.
+    #[serde(default)]
+    pub min_peer_score_for_auto_approval: Option<f64>,
+    /// If true, borderline reputation downgrades decision to RequiresHumanApproval instead of Deny.
+    #[serde(default = "default_adaptive_downgrade")]
+    pub adaptive_downgrade: bool,
+}
+
+fn default_adaptive_downgrade() -> bool {
+    true
+}
+
 /// 2. Organization Policy — Enterprise rules & caps.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OrganizationPolicy {
@@ -25,6 +61,8 @@ pub struct OrganizationPolicy {
     pub blacklisted_tools: Vec<String>,
     #[serde(default)]
     pub min_reputation_successful_executions: Option<u64>,
+    #[serde(default)]
+    pub reputation: Option<ReputationPolicy>,
     #[serde(default)]
     pub trusted_peer_roots: Vec<String>,
 }

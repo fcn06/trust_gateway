@@ -1,4 +1,4 @@
-# 🛡️ Trust Gateway: The Execution Firewall for AI Agents
+# 🛡️ Trust Gateway: The Execution Firewall for AI Agents. Decoupling Intelligence from Authority.
 
 <p align="center">
   <img src="docs/illustrations/Trust_Gateway_Overall_1.png" alt="Trust Gateway Overall" width="80%">

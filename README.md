@@ -8,40 +8,83 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
 [![NATS](https://img.shields.io/badge/NATS-JetStream-green?logo=nats.io)](https://nats.io)
 [![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20Streamable-purple)](https://modelcontextprotocol.io)
-[![Whitepaper](https://img.shields.io/badge/Whitepaper-NICP%20Architecture-teal?logo=read-the-docs&logoColor=white)](whitepaper/b2b_agent_whitepaper.md)
+[![Whitepaper: NICP Architecture](https://img.shields.io/badge/Whitepaper-NICP%20Architecture-teal?logo=read-the-docs&logoColor=white)](whitepaper/b2b_agent_whitepaper.md)
+[![Whitepaper: A New Integration Era](https://img.shields.io/badge/Whitepaper-A%20New%20Integration%20Era-indigo?logo=read-the-docs&logoColor=white)](whitepaper/A_New_Opportunity_for_integration_thanks_to_ai_agents.md)
 
-> **Stop giving AI agents raw API keys. Trust Gateway enforces deterministic policy, human-in-the-loop approvals, and cryptographic execution grants for autonomous tools — a potential enabler for Agent-to-Agent (A2A) commerce.**
-
-AI agents must be able to **propose** actions without possessing the authority to **execute** them.
-
-Trust Gateway sits between reasoning agents and real-world tools. Agents never receive downstream API credentials. Instead, the gateway verifies intent against machine-readable contracts and policies, issuing short-lived cryptographic grants (`ExecutionGrant`) that isolated executors verify before touching external state.
-
-> **"Agents propose. Gateway decides. Executors verify."**
-
-> 📄 **Reference Architecture (Sept 2026):** Read the technical whitepaper on [Interaction Contracts & Autonomous Reputation Lifecycle for B2B Agents (NICP)](whitepaper/b2b_agent_whitepaper.md).
+> **Stop giving AI agents raw API keys.** We stand at the precipice of an autonomous **Agentic Economy**—a multi-trillion-dollar frontier where software agents will not merely assist humans behind screens, but independently discover counterparties, orchestrate global supply chains, negotiate bilateral commercial agreements, and transact capital at machine speed.
+>
+> For thirty years, enterprise integration has been shackled by handwritten specifications: brittle EDI mappings, bespoke point-to-point APIs, and months of manual partner onboarding. Autonomous agents bring an extraordinary promise: what if counterparty systems could dynamically negotiate their own integration interfaces at runtime?
+>
+> Yet this revolutionary future cannot be built on **ambient authority**. Handing raw downstream credentials, payment rails, or administrative database access to probabilistic neural networks is an existential hazard. When an LLM reasons probabilistically, giving it ambient execution power is like handing a loaded firearm to a brilliant but unpredictable intern.
+>
+> **Trust Gateway is the zero-trust execution control plane and integration framework for the agentic era.** It builds the missing architectural bridge: freeing cognitive models to explore, communicate, and negotiate at peak creative velocity across heterogeneous ecosystems (A2A, MCP, LangChain, Swarms), while enforcing mathematical, deterministic certainty before any real-world mutation touches enterprise state.
 
 ---
 
-## Simplified Architecture
+> ### ⚡ The Governing Axiom of Autonomous Systems
+> # **"Agents propose. Gateway decides. Executors verify."**
+
+AI agents must be fully empowered to **propose** ambitious intents without possessing the ambient authority to **execute** them.
+
+Trust Gateway sits as an uncompromising cryptographic firewall between reasoning intelligence and downstream capabilities. Agents never hold downstream API keys, OAuth refresh tokens, or database credentials. Instead, proposed actions are continuously verified against hierarchical organizational policies, dynamic counterparty trust telemetry, and execution budgets. When policy permits, the gateway mints short-lived, Ed25519-signed cryptographic grants (`ExecutionGrant`) mathematically bound to the tool name and canonical input hash. Isolated executors verify this grant before touching external state—turning stochastic agent plans into provable, enterprise-grade execution.
+
+---
+
+### 📚 Foundational Whitepapers
+
+This project explores the dual frontiers of autonomous commerce and next-generation systems integration:
+
+1. 📄 **[Can Agents Replace Per-Partner Integration Specs? Notes From One Experiment](whitepaper/A_New_Opportunity_for_integration_thanks_to_ai_agents.md)** *(October 2026)*  
+   *How autonomous agents rewrite enterprise integration (EDI, iPaaS) by moving from brittle pair-wise specifications written for every partner to self-descriptions and policies written once, with agreements negotiated dynamically at runtime.*
+2. 📄 **[Interaction Contracts for Autonomous B2B Agents: Architecture, Threat Model, and Open Questions (NICP)](whitepaper/b2b_agent_whitepaper.md)** *(September 2026)*  
+   *A deep architectural exploration of the Negotiated Interaction Contract Protocol (NICP), cryptographic Execution Grants, cold-start counterparty containment, and verifiable execution receipts for safe Agent-to-Agent (A2A) commerce.*
+
+---
+
+## 📐 The Architecture of Sovereign Trust
+
+To unlock safe autonomy, Trust Gateway replaces the dangerous ambient authority model with a **three-tier sovereign separation**:
 
 ```text
-┌────────────┐       ProposedAction       ┌───────────────┐
-│  AI Agent  │ ─────────────────────────▶ │ Trust Gateway │
-└────────────┘                            └───────┬───────┘
-                                                │
-      No downstream credentials                 │ GrantedAction
-                                                │ + ExecutionGrant
-                                                ▼
-                                        ┌───────────────┐
-                                        │   Executor    │
-                                        │ owns API keys │
-                                        └───────┬───────┘
-                                                │
-                                                ▼
-                                           Tools / Systems
+  🧠 SEMANTIC PLANE (Intelligence)
+  ┌───────────────────────────────┐
+  │           AI Agent            │  • Formulates multi-turn plans & reasoning
+  │  (Zero downstream credentials)│  • Interacts with users or external swarms
+  └───────────────┬───────────────┘
+                  │
+                  │ 1. Proposes Action (Intent, Parameters, Context)
+                  ▼
+  ⚖️ CONTROL PLANE (Governance)
+  ┌───────────────────────────────┐
+  │         Trust Gateway         │  • Evaluates 4-layer policy & bilateral contracts (NICP)
+  │   (Deterministic Policy PEP)  │  • Assesses dynamic counterparty trust & economic quotas
+  └───────────────┬───────────────┘  • Mints single-use, Ed25519-signed ExecutionGrant
+                  │
+                  │ 2. Dispatches GrantedAction + Cryptographic Grant
+                  ▼
+  🛡️ EXECUTION PLANE (Capability)
+  ┌───────────────────────────────┐
+  │     Isolated Executor Host    │  • Cryptographically verifies grant signature & input hash
+  │    (Holds physical API keys)  │  • Enforces nonces, timeout bounds & egress scrubbing
+  └───────────────┬───────────────┘
+                  │
+                  │ 3. Performs Authorized Mutation
+                  ▼
+         🌐 Production Systems (SaaS, ERP, Databases, Payments)
 ```
 
-The agent never receives the downstream credential. It submits a `ProposedAction` to Trust Gateway. If policy permits the action, the gateway issues an `ExecutionGrant` cryptographically bound to that exact tool and parameter set. The executor verifies the grant before using its own credential to perform the action.
+### Decoupling Thought from Power: How It Works
+
+1. **Reasoning Without Danger (The Agent Proposes)**  
+   The AI agent plans and reasons at peak creative velocity. It never possesses, requests, or handles downstream credentials, database passwords, or payment tokens. When it identifies a necessary mutation, it submits a `ProposedAction` detailing *what* it intends to do and *with what arguments*.
+
+2. **Governance With Mathematical Rigor (The Gateway Decides)**  
+   Trust Gateway intercepts the proposal at the boundary. It evaluates tenant policies, bilateral interaction contracts, historical reputation telemetry, call-chain loop limits, and economic budgets. If authorized, the gateway mints a short-lived (30s) `ExecutionGrant` JWT cryptographically bound to the SHA-256 digest of the canonical inputs (`input_hash`).
+
+3. **Execution With Cryptographic Proof (The Executor Verifies)**  
+   The isolated executor holds the physical API keys or SaaS credentials, but it never trusts the agent directly. It verifies the gateway's digital signature, validates that the arguments have not been tampered with, checks that the single-use nonce has not been replayed, and confirms that execution stays within budget. Only then does it execute the mutation—scrubbing sensitive PII before returning the filtered result.
+
+> **The Result:** The enterprise gains complete, deterministic safety and auditability without choking agent intelligence. Prompt injections, hallucinations, and runaway loops are stopped dead at the gateway boundary.
 
 
 

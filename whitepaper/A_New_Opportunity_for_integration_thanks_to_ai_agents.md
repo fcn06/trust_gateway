@@ -103,6 +103,7 @@ What I'm **not** proposing:
 - **Not "LLMs replace APIs."** Two models chatting freely across company boundaries isn't auditable or repeatable, and it's exposed to manipulation. The APIs and back-office systems stay. Agents sit *in front of* them.
 - **Not "no specification at all."** Section 7 argues the specification moves rather than disappears.
 - **Not "agents decide what is allowed."** Agents negotiate semantics and propose terms. What a company actually permits is decided by its own written policy, enforced by deterministic software. A negotiated agreement can only narrow that space, never widen it.
+- **Not a replacement for top-down Hub-and-Spoke mandates.** In concentrated supply chains (retail, automotive, aerospace), dominant hubs like Walmart, Airbus, or Amazon do not negotiate interfaces at runtime; they hand suppliers an AS2/EDI or REST specification and require byte-for-byte compliance. I am not suggesting agents will change that dynamic. If this architecture has an economic wedge, it is more likely in relationships where neither party can dictate the spec: **the mid-market long tail**, **horizontal SaaS-to-SaaS ad-hoc connections**, or **multi-carrier spot logistics** (see §10.2).
 
 ---
 
@@ -127,11 +128,12 @@ EXECUTION LAYER  (deterministic: no LLM)
 
 The **Trust Gateway** is a deterministic program, with no LLM inside, that sits between a company's agent and its internal systems. The agent can only *propose* actions. The gateway checks each proposal and, if it passes, issues an **execution grant**: a short-lived, signed authorization for that one action with those exact arguments. The back-office system checks the grant before acting. After a successful action, the gateway issues a signed **execution receipt** that can serve as evidence later.
 
-Three properties matter for the integration question:
+Four properties matter for the integration question:
 
 1. **The agent holds no credentials** to internal systems. It can only propose.
 2. **What a company allows is the intersection** of three things: the negotiated agreement, the company's own policy, and the verified identity of the partner. If two agents agree on €50,000 but policy caps new partners at €10,000, €10,000 applies.
 3. **The agreement is a signed artifact.** Whatever the agents said to each other, what binds both sides is a document both signed, byte for byte.
+4. **Execution grants map to immutable ledger entries.** Enterprise backends (SAP, Oracle NetSuite) rely on rigid master data, strict three-way matching, and batch accounting. A runtime agreement cannot simply bypass those controls. In this design, the execution grant binds the specific, immutable agreement hash and resolved parameters, so that downstream actions remain auditable and can reconcile with existing financial ledgers without silent drift.
 
 In EDI terms, the agent plays roughly the role of the people who negotiate a trading-partner agreement and implementation guide. The agreement plays the role of those documents. The gateway plays the role of the translator and validation layer that rejects non-conforming messages. The difference is that the first two happen at runtime rather than in workshops.
 
@@ -187,6 +189,8 @@ The B2B agent 🟡 receives requests from external agents, authenticated with OA
 | Present / store receipts | Exchanging references and evidence of past performance |
 
 New partners start with low limits ("cold start"). They can unlock higher limits by presenting signed execution receipts from companies the host already recognizes.
+
+**Exception-based human escalation ("integration co-pilot"):** Enterprise integration rarely tolerates autonomous black boxes; automation is only acceptable if the blast radius is bounded. In this design, the agent cannot finalize agreements that stray outside pre-configured policy corridors (such as transactions above a conservative limit, unfamiliar cancellation terms, or low-confidence semantic matches). Instead, the negotiation pauses and surfaces an exception to a human review queue. A specialist inspects the structured diff, checks the proposed mapping against the worked examples, and decides whether to approve, amend, or reject activation. The agent acts as a drafting assistant—an integration co-pilot—rather than an unsupervised authority.
 
 ### 5.5 A four-turn negotiation that ends in an execution 🟡
 
@@ -269,7 +273,7 @@ Commercial terms and technical mapping change at different speeds and are owned 
 | Data mapping | Hand-written today 🟢; agent-proposed and verified mapping ⚪ |
 | Security onboarding | DIDs, mutual signatures, one-time grants 🟢 (this may just move effort into key management) |
 | Testing / certification | Signed worked examples and canary transactions ⚪ (see §8.1) |
-| Go-live | Agreement becomes active 🟢; human approval above set thresholds ⚪ (partly prototyped, not exercised beyond a single test) |
+| Go-live | Agreement becomes active 🟢; exception-based human sign-off above semantic drift or financial risk thresholds ⚪ (partly prototyped) |
 | Change management | New version linked by hash 🟢; automatic renegotiation triggers ⚪ |
 | Disputes | Signed chain receipt → grant → agreement 🟢; reconciliation logic ⚪ |
 | Offboarding | Agreement revoked or expired; no adapter to decommission 🟢 |
@@ -288,6 +292,8 @@ The biggest risk is **false agreement**: both sides sign the same bytes but unde
 
 There is a trap here. **If the agents generate the examples, the check can pass vacuously**: two agents that share a misunderstanding will produce examples that encode it, and those examples will "agree." So the examples must come from each side's **real system behavior**, not from an agent's reading of the schema. That means past transactions (suitably anonymized), existing test fixtures, or outputs recorded from a sandbox of the actual back-office system. Each side contributes examples drawn from its own systems, and the other side must reproduce the stated outcome.
 
+Furthermore, these examples must be validated against **actual backend business validation engines**—not merely tested for JSON or XML schema validity. For instance, the backend engine must be capable of flagging that a VAT-inclusive price was supplied without the required statutory tax breakdown, or that an ordered item unit conflicts with the warehouse packaging master.
+
 Combined with a few **low-value canary transactions** before full limits apply, this would act as an automated, per-relationship certification step. It's much like the test cycles EDI partners already run, but checked at runtime against evidence from real systems.
 
 *Question:* How many examples does it take to catch most semantic mismatches in a typical document type? Is there a practical way to choose them?
@@ -298,11 +304,7 @@ Combined with a few **low-value canary transactions** before full limits apply, 
 A's schema + B's schema
         │
         ▼
-Agent proposes a mapping ──► Deterministic checks
-                             - required fields covered
-                             - no lossy numeric or unit conversion
-                             - identifiers survive a round trip
-                             - generated test payloads + the signed worked examples (§8.1)
+Agent proposes a mapping ──► Deterministic checks (syntactic + behavioral)
         │
         ▼
 Frozen, hashed mapping artifact ──► hash included in the SIGNED agreement
@@ -311,7 +313,24 @@ Frozen, hashed mapping artifact ──► hash included in the SIGNED agreement
 Runtime uses the artifact only; no LLM at execution time
 ```
 
+The **Deterministic checks** evaluate:
+- Syntactic / structural validation:
+  - required fields covered
+  - no lossy numeric or unit conversion
+  - identifiers survive a round trip
+- Behavioral / business rule validation:
+  - generated test payloads + signed worked examples (§8.1)
+  - backend business rule execution (tax, packaging, dates)
+
 The first concrete step would be to bring the existing mapping (or its hash) inside the signed part of the agreement.
+
+**The deterministic validation trap.**
+Notice the distinction between syntactic checks and behavioral validation in the checks above. Syntactic checks (`required fields covered`, `no lossy numeric conversion`, `identifiers survive a round trip`) are necessary structural guards, but they represent a seductive trap: **the most destructive B2B integration bugs pass all three checks cleanly**. For example:
+- Mapping `NetPrice` to `GrossPrice`: both are valid `decimal` types, both survive round-trip conversion without precision loss, and mandatory field requirements are satisfied—yet every invoice generated under this mapping will miscalculate tax and trigger financial reconciliation failure.
+- Mapping `RequestedDeliveryDate` to `PromisedShipDate`: identical ISO-8601 timestamps, but contractually opposite meanings (buyer demand vs. supplier commitment).
+- Mapping `PackQuantity` to `ItemQuantity` where pack size happens to be 1 in initial synthetic tests, silently failing in production when a 12-pack carton is shipped.
+
+Deterministic syntactic checks cannot catch semantic divergence; they verify structural plumbing, not operational truth. That is why I think syntactic validation alone is insufficient: only **behavioral execution against enterprise business rules** (via backend validation logic and the ground-truth worked examples of §8.1) has a chance of catching these divergences before an agreement is frozen into a signed contract.
 
 *Question:* Which classes of mapping errors can deterministic checks catch, and which (two fields with the same type but different business meaning) fundamentally can't be?
 
@@ -329,7 +348,13 @@ The same interaction agreement could be produced by a company's agent negotiatin
 
 ### 8.5 Other directions, briefly
 
-Automatic renegotiation when a capability changes, chains of agreements across multi-tier supply chains, and human review of negotiated agreements above set thresholds are all plausible. They matter less until §8.1–8.2 show the semantic step can work.
+Three further areas seem worth exploring:
+
+1. **Exception-based human approval workflows ("Integration Co-Pilot").** In enterprise integration, automation is accepted only if the blast radius is strictly bounded. When an agent encounters ambiguous schemas, low semantic confidence scores, or counter-proposals that push outside conservative policy envelopes, the negotiation should not proceed autonomously. Instead, it pauses and routes an exception to a human review queue. The human reviews the proposed agreement diff and test results, acting as a supervisor who authorizes the final cryptographic signature.
+
+2. **ERP master data impedance matching and ledger idempotency.** In enterprise systems (SAP, Oracle NetSuite, Microsoft Dynamics), partner configurations are fundamentally static: vendor and customer master records store pre-vetted payment terms (e.g., "net 30"), incoterms, tax jurisdiction codes, and bank accounts. If two runtime agents dynamically negotiate a micro-amendment (such as "net 15 days" for a spot order), downstream financial ledgers, automated three-way matching, and nocturnal batch processing can fail or trigger compliance warnings. The gateway must act as an impedance matcher: execution grants should map cleanly into immutable ledger entries with explicit references to the signed agreement, while enterprise policies strictly demarcate which parameters may float dynamically (e.g., spot freight rates within a collar) versus which must remain locked to static ERP master tables.
+
+3. **Automatic renegotiation triggers and multi-tier supply chains.** Automatic renegotiation when a capability changes and chains of agreements across multi-tier supply chains are plausible extensions. They matter less until §8.1–8.2 show the semantic step can work.
 
 ---
 
@@ -375,6 +400,12 @@ The full benchmark protocol, anti-contamination schema design, trap taxonomies, 
 5. Is the **long tail** of low-volume partners really where unmet integration demand lies?
 6. What evidence would convince you this is **not** worth pursuing?
 
+### 9.4 Publication and Dissemination Roadmap
+
+Because this paper tries to bridge established integration engineering with language model experiments, it needs scrutiny from people who have built both. To test whether these ideas hold up beyond my own repository, potential avenues for external feedback include:
+- **Applied Systems Venues & Workshops:** Adapting the empirical benchmark protocol (Appendix C) and runtime grant architecture for peer-reviewed discussion in venues focused on web services, distributed systems, and enterprise data (such as IEEE ICWS, ACM DEBS, or enterprise systems tracks at VLDB/SIGMOD).
+- **Practitioner & Architectural Forums:** Sharing targeted technical write-ups with enterprise integration architects (e.g., through ACM Queue, Martin Fowler's architecture bliki, or technical essays on Substack / Hacker News) to invite direct critique from practitioners who manage SAP, EDIFACT, and iPaaS systems daily.
+
 ---
 
 ## 10. Risks and Reasons This Might Not Work
@@ -383,22 +414,26 @@ The full benchmark protocol, anti-contamination schema design, trap taxonomies, 
 
 The whole thesis depends on each company maintaining a **high-quality, machine-readable description of itself**: a capability catalogue with accurate field definitions, units, code lists, and edge-case behavior, plus a policy that reflects what the business actually wants. In other words, a **data dictionary**, kept current as systems change.
 
-Companies have historically been bad at maintaining these. I suspect this is part of why ebXML's "describe yourself once" promise didn't spread as hoped. Writing a profile is a project; keeping it true is a permanent cost that nobody owns. If the self-description drifts from reality, agents will negotiate confidently against a fiction, and the cost doesn't disappear. It moves from building integrations to maintaining catalogues, possibly with worse failure modes.
+Companies have historically been bad at maintaining these. I suspect this is part of why ebXML's "describe yourself once" promise didn't spread as hoped. Writing a profile is a project; keeping it true is a permanent cost that nobody owns. **If maintaining an OpenAPI spec or JSON Schema data dictionary is already neglected by internal teams, asking them to maintain an agentic capability catalogue will fail for the exact same reasons.** If the self-description drifts from reality, agents will negotiate confidently against a fiction, and the cost doesn't disappear. It moves from building integrations to maintaining catalogues, possibly with worse failure modes.
 
-I don't have an answer. Two partial mitigations seem worth exploring: generating the catalogue from artifacts that are already maintained because systems depend on them (API schemas, database constraints, test fixtures), and continuously checking the catalogue against real transactions. Neither is built ⚪. **If this risk can't be managed, I think the rest of the paper doesn't matter much.**
+I don't have an answer. The only plausible mitigation is that the catalogue cannot be hand-authored prose: it must be **mechanically derived from working code, database schema constraints, ORM models, and existing contract tests**, and verified continuously against real production transactions. Neither is built ⚪. **If this risk can't be managed, I think the rest of the paper doesn't matter much.**
 
 ### 10.2 Other risks
 
 Several of these could, on their own, make the idea impractical.
 
 1. **False semantic agreement.** Signatures guarantee both parties signed the same bytes, not that they understood the same thing. This is the most serious *technical* risk. §8.1 is a partial answer at best.
-2. **Power asymmetry.** Negotiation assumes roughly comparable parties. In practice a large buyer often simply imposes its specification on suppliers, and will likely keep doing so. That limits where negotiation applies. It also suggests the benefit, if any, would be concentrated among peers and in the long tail, where nobody is big enough to impose a spec.
+2. **Power asymmetry and the Hub-and-Spoke reality.** Negotiation assumes roughly comparable parties. In real-world enterprise supply chains (retail, automotive, aerospace, telecom), the **Hub-and-Spoke model** dominates: Walmart, Airbus, or Amazon does not negotiate interfaces or commercial envelopes at runtime. They hand suppliers an AS2/EDI or REST specification and state: *"Comply with this byte-for-byte or you do not trade with us."* I am not suggesting agents will change that reality. If this architecture has a realistic economic wedge, it is not in trying to replace top-down EDI in concentrated supply chains, but where power is distributed and custom bilateral specs are cost-prohibitive:
+   - **The mid-market long tail:** Tier-2 and tier-3 suppliers, regional manufacturers, and distributors who lack the leverage to dictate terms and cannot afford custom six-figure bilateral integration projects.
+   - **Horizontal SaaS-to-SaaS ad-hoc integrations:** Connecting specialized business platforms (e.g., a niche field-service tool to a regional inventory system) on demand without waiting for centralized integration vendors or pre-built iPaaS connectors.
+   - **Multi-carrier logistics brokerage and spot markets:** Dynamic freight booking, spot capacity procurement, and multi-carrier dispatch where market participants change daily and no single hub commands absolute interface hegemony.
 3. **Adversarial counterparties.** Negotiation messages come from outside the company. A partner could embed instructions meant to manipulate the other agent, or simply negotiate in bad faith. Deterministic policy limits what the agent can *agree to*, but it doesn't limit what it can be persuaded to *say* or *disclose*.
 4. **Model drift.** The same negotiation, or the same interpretation of an existing agreement, might come out differently after a model upgrade. That argues strongly for freezing everything semantic into signed artifacts (§8.1–8.2) and never re-deriving meaning at runtime. It also means agreements negotiated with one model version may need re-validation later.
 5. **Accountability.** When a negotiated agreement turns out to be wrong, who is accountable: the deploying company, the model provider, the policy author? I'm not a lawyer. The interaction agreement is a technical artifact and doesn't settle this.
 6. **Repeatability.** Two negotiations under the same conditions may produce different agreements, which may be unacceptable for regulated exchanges.
 7. **Cost and latency.** For high-volume, stable relationships, a classic integration built once may simply be cheaper than any negotiation.
 8. **Two-sided adoption.** The full benefit needs both sides running agents and sharing an envelope. That coordination problem has slowed every previous integration standard, ebXML included.
+9. **State drift, ERP master data, and batch processing.** In enterprise backends (SAP, Oracle NetSuite, Microsoft Dynamics), partner configurations are fundamentally static: vendor and customer master records store pre-vetted payment terms (e.g., "net 30"), incoterms, tax jurisdiction codes, and bank accounts. If two runtime agents dynamically agree to micro-amendments on a per-order basis (such as agreeing to "net 15 days" or dynamic early-settlement discounts), downstream financial accounting runs, automated three-way matching (PO vs. receipt vs. invoice), and nocturnal batch processing can reject the posting, throw reconciliation errors, or violate statutory tax reporting rules. An interaction agreement cannot simply float detached from these operational realities: execution grants must map into immutable ledger entries, and enterprise policy must strictly demarcate what can be negotiated dynamically (e.g., spot freight rates within a collar) versus what must remain pinned to master records.
 
 ---
 
@@ -421,6 +456,8 @@ Several of these could, on their own, make the idea impractical.
 | Agent-proposed, verified, frozen mapping in the signed agreement | §8.2 | ⚪ |
 | Standards as pivots | §8.3 | ⚪ |
 | Agreements with partners that have no agent | §8.4 | ⚪ |
+| Exception-based human review queue ("Integration Co-Pilot") | §5.4, §8.5 | ⚪ |
+| ERP master data impedance matching and immutable ledger mapping | §3, §8.5 | ⚪ |
 | Semantic-trap benchmark with baselines and pre-committed falsification thresholds | §9.1 | ⚪ |
 | Catalogue generated from maintained artifacts and checked against real transactions | §10.1 | ⚪ |
 

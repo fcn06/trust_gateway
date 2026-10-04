@@ -64,6 +64,17 @@
         }
       ]
     },
+    "economic_claim": {
+      "description": "Economic claim and payment authorization.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/EconomicClaim"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "executor_id": {
       "description": "Designated executor identity.",
       "default": "",
@@ -180,6 +191,40 @@
         "valid_until": {
           "type": "integer",
           "format": "int64"
+        }
+      }
+    },
+    "EconomicClaim": {
+      "description": "Economic claim binding a payment token, credit reservation, or maximum cost limit to a grant.",
+      "type": "object",
+      "required": [
+        "currency",
+        "max_cost_minor"
+      ],
+      "properties": {
+        "currency": {
+          "description": "Currency code (e.g. \"USD\", \"EUR\", \"CREDIT\").",
+          "type": "string"
+        },
+        "max_cost_minor": {
+          "description": "Maximum allowable cost for this tool execution in minor units (e.g. cents).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "payment_token": {
+          "description": "Ephemeral X42/H42 payment voucher or token (optional).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quota_reservation_id": {
+          "description": "Pre-allocated quota reservation identifier (optional).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },

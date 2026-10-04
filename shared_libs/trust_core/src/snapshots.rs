@@ -119,6 +119,7 @@ mod tests {
             "contract_hash",
             "contract_id",
             "delegation",
+            "economic_claim",
             "executor_id",
             "expires_at",
             "grant_id",

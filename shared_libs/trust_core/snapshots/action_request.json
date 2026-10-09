@@ -184,6 +184,13 @@
       "description": "Authentication strength of the current session.\n\nExpanded to a 5-tier numeric hierarchy (1-5) to enable strict `>= min_auth_level` policy evaluations.",
       "oneOf": [
         {
+          "description": "Level 0: Unauthenticated guest agent session (public browsing, FAQs).",
+          "type": "string",
+          "enum": [
+            "level0_guest"
+          ]
+        },
+        {
           "description": "Level 1: Static API Key (Long-lived, lowest assurance).",
           "type": "string",
           "enum": [

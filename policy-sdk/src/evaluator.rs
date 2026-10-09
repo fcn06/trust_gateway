@@ -113,6 +113,24 @@ impl PolicyEvaluator {
         self.evaluate(tenant_id, agent_id, tool_name, amount_usd)
     }
 
+    /// Evaluates an execution grant proposal with explicit session tier context (guest, account, step_up).
+    pub fn evaluate_with_session_tier(
+        &self,
+        tenant_id: &str,
+        agent_id: &str,
+        tool_name: &str,
+        amount_usd: Option<u64>,
+        session_tier: &str,
+        is_mutation: bool,
+    ) -> PolicyOutcome {
+        if session_tier.eq_ignore_ascii_case("guest") && is_mutation {
+            return PolicyOutcome::Deny {
+                reason: "SessionTier: Guest session cannot execute mutations. Customer account authentication required.".to_string(),
+            };
+        }
+        self.evaluate(tenant_id, agent_id, tool_name, amount_usd)
+    }
+
     /// Evaluates an action with contextual counterparty reputation evidence.
     ///
     /// If `min_reputation_successful_executions` is configured on the organization policy:
@@ -436,5 +454,38 @@ mod tests {
             }
             _ => panic!("Expected RequiresHumanApproval, got {:?}", outcome),
         }
+    }
+
+    #[test]
+    fn test_evaluate_with_session_tier() {
+        let policy = create_test_policy();
+        let evaluator = PolicyEvaluator::new(policy);
+
+        // Guest session attempting mutation -> Deny
+        let outcome = evaluator.evaluate_with_session_tier(
+            "tenant_1",
+            "agent_1",
+            "orders.create",
+            Some(10),
+            "guest",
+            true, // is_mutation
+        );
+        match outcome {
+            PolicyOutcome::Deny { reason } => {
+                assert!(reason.contains("Guest session cannot execute mutations"));
+            }
+            _ => panic!("Expected Deny for guest mutation, got {:?}", outcome),
+        }
+
+        // Guest session attempting read -> Allow
+        let outcome_read = evaluator.evaluate_with_session_tier(
+            "tenant_1",
+            "agent_1",
+            "orders.list",
+            None,
+            "guest",
+            false, // is_mutation
+        );
+        assert_eq!(outcome_read, PolicyOutcome::Allow);
     }
 }

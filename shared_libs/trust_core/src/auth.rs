@@ -59,6 +59,8 @@ impl std::fmt::Display for TokenClass {
 /// WebAuthn (L5) > VP (L4) > Session (L3) > API Key (L2) > Anonymous (L1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum VerifiedAuthLevel {
+    /// Guest / unauthenticated browsing session
+    Level0Guest = 0,
     /// Anonymous / unauthenticated
     Level1Anonymous = 1,
     /// API key or OAuth client credentials

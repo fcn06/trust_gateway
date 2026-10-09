@@ -84,6 +84,7 @@ impl Executor for ConnectorExecutor {
             "shopify_list_orders" => {
                 Ok(json!({ "error": "Shopify integration not yet connected" }))
             }
+            "box_shop_checkout" => self.execute_box_shop_checkout(&grant, args).await,
             _ => Err(TrustError::Internal(format!(
                 "Unsupported connector tool: {}",
                 grant.allowed_action()
@@ -179,6 +180,53 @@ impl ConnectorExecutor {
             .json()
             .await
             .map_err(|e| TrustError::Internal(format!("Failed to parse response: {e}")))?;
+
+        Ok(data)
+    }
+
+    async fn execute_box_shop_checkout(
+        &self,
+        grant: &VerifiedGrant,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, TrustError> {
+        let shop_url = std::env::var("BOX_DEMO_SHOP_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:3003".to_string());
+        let checkout_url = format!("{}/api/checkout", shop_url.trim_end_matches('/'));
+
+        let mut payload = args.clone();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("grant_id".to_string(), json!(grant.grant_id()));
+            obj.insert("owner_did".to_string(), json!(grant.owner_did()));
+            obj.insert("tenant_id".to_string(), json!(grant.tenant_id()));
+            obj.insert("input_hash".to_string(), json!(grant.input_hash()));
+            if !obj.contains_key("recipient_did") || obj["recipient_did"].is_null() {
+                obj.insert("recipient_did".to_string(), json!(grant.owner_did()));
+            }
+        }
+
+        let resp = self
+            .http_client
+            .post(&checkout_url)
+            .header("X-Execution-Grant-Id", grant.grant_id())
+            .header("X-Tenant-Id", grant.tenant_id())
+            .header("X-Owner-Did", grant.owner_did())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| TrustError::Internal(format!("Box Demo Shop API error: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_text = resp.text().await.unwrap_or_default();
+            return Err(TrustError::Internal(format!(
+                "Box Demo Shop checkout failed with status {status}: {err_text}"
+            )));
+        }
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TrustError::Internal(format!("Failed to parse checkout response: {e}")))?;
 
         Ok(data)
     }

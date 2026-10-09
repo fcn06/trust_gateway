@@ -148,6 +148,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/ingress", post(didcomm_handler))
         .route("/publish", post(publish_did_handler))
         .route("/did/{did}", get(resolve_did_handler))
+        .route(
+            "/.well-known/personal-agent.json",
+            get(gateway_personal_agent_manifest_handler),
+        )
         // OID4VP proxy endpoints (dumb HTTP→NATS pipes)
         .route(
             "/oid4vp/request/{node_id}/{request_id}",
@@ -690,4 +694,42 @@ async fn oid4vp_submit_response(
     })?;
 
     Ok(Json(response))
+}
+
+/// Serve the Personal Agent Protocol (PAP) discovery manifest.
+async fn gateway_personal_agent_manifest_handler() -> impl IntoResponse {
+    let gateway_url =
+        std::env::var("GATEWAY_URL").unwrap_or_else(|_| "http://localhost:3002".to_string());
+    let oauth_url =
+        std::env::var("OAUTH_URL").unwrap_or_else(|_| "http://127.0.0.1:3075".to_string());
+
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        Json(serde_json::json!({
+            "pap_version": "0.1",
+            "provider": {
+                "name": "Lianxi Trust Gateway",
+                "description": "Zero-trust execution firewall and multi-tenant personal agent router",
+                "docs": "https://github.com/fcn06/trust_gateway"
+            },
+            "routes": {
+                "ingress": format!("{}/ingress", gateway_url),
+                "mcp": format!("{}/mcp/sse", gateway_url),
+                "wallet_ws": format!("{}/ws/wallet", gateway_url),
+                "oid4vp": format!("{}/oid4vp", gateway_url)
+            },
+            "authentication": {
+                "supported_tiers": ["guest", "account", "step_up"],
+                "oauth_token_endpoint": format!("{}/auth/token", oauth_url),
+                "jwks_uri": format!("{}/.well-known/jwks.json", oauth_url)
+            },
+            "security_invariants": {
+                "execution_control": "Agents propose. Gateway decides. Executors verify.",
+                "grant_format": "Ed25519-signed ExecutionGrant JWT (30s TTL)",
+                "anti_replay": "Single-use cryptographic nonces",
+                "egress_filtering": "PII redaction and structural schema validation"
+            }
+        })),
+    )
 }

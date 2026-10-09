@@ -137,7 +137,12 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
             "/v1/mcp/sse",
             get(crate::mcp_sse::sse_handler).post(crate::mcp_sse::messages_handler),
         )
+        .route(
+            "/mcp/sse",
+            get(crate::mcp_sse::sse_handler).post(crate::mcp_sse::messages_handler),
+        )
         .route("/v1/mcp/messages", post(crate::mcp_sse::messages_handler))
+        .route("/mcp/messages", post(crate::mcp_sse::messages_handler))
         // OAuth Proxy (Redirect to Connector MCP Server)
         .route(
             "/oauth/*path",

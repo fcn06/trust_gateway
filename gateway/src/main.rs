@@ -108,7 +108,7 @@ struct Args {
     #[arg(
         long,
         env = "DEFAULT_TOOLS",
-        default_value = "search_skills,switch_context,list_bundles,vp_search,claw_weather,claw_extract_content_from_url,claw_hello_world,inspect_schema,compute_statistics,detect_anomalies,generate_markdown,join_datasets,sample_rows,discover_agent_services,call_b2b_agent,register_b2b_agent,list_registered_b2b_agents,discover_b2b_agents,reputation_inspect_counterparty,contract_propose_or_amend,contract_verify_and_activate,receipt_present_and_store"
+        default_value = "search_skills,switch_context,list_bundles,vp_search,claw_weather,claw_extract_content_from_url,claw_hello_world,inspect_schema,compute_statistics,detect_anomalies,generate_markdown,join_datasets,sample_rows,discover_agent_services,call_b2b_agent,register_b2b_agent,list_registered_b2b_agents,discover_b2b_agents,reputation_inspect_counterparty,contract_propose_or_amend,contract_verify_and_activate,receipt_present_and_store,box_shop_checkout"
     )]
     default_tools: String,
 

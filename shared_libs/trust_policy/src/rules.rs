@@ -71,9 +71,14 @@ pub struct PolicyMatcher {
     pub max_amount: Option<String>,
     /// Match against action tags, e.g. ["payout_change", "identity_change"].
     pub tags: Option<Vec<String>>,
-    /// Minimum authentication level required (1-5). Actions with a lower
+    /// Minimum authentication level required (0-5). Actions with a lower
     /// auth_level will not match this rule.
     pub min_auth_level: Option<u8>,
+    /// Maximum authentication level (0-5). Actions with a higher
+    /// auth_level will not match this rule. Useful for matching guest sessions.
+    pub max_auth_level: Option<u8>,
+    /// Optional session tier ("guest", "account", "step_up").
+    pub session_tier: Option<String>,
     /// Restrict to specific authentication methods, e.g. ["hmac_jwt", "vp_eddsa"].
     pub auth_methods: Option<Vec<String>>,
     /// Required OAuth scopes. The actor must possess ALL of these scopes to match the rule.

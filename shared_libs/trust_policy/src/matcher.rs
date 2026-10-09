@@ -98,6 +98,28 @@ impl PolicyMatcher {
             }
         }
 
+        // Match maximum authentication level
+        if let Some(max_level) = self.max_auth_level {
+            let actor_level = req.actor.auth_level as u8;
+            if actor_level > max_level {
+                return false;
+            }
+        }
+
+        // Match session tier ("guest", "account", "step_up")
+        if let Some(ref tier) = self.session_tier {
+            let actor_level = req.actor.auth_level as u8;
+            let matches_tier = match tier.to_ascii_lowercase().as_str() {
+                "guest" => actor_level == 0,
+                "account" => (1..=3).contains(&actor_level),
+                "step_up" | "verified" => actor_level >= 4,
+                _ => false,
+            };
+            if !matches_tier {
+                return false;
+            }
+        }
+
         // Match specific authentication methods
         if let Some(ref methods) = self.auth_methods {
             if !methods.is_empty() {
@@ -401,5 +423,61 @@ mod tests {
             "extra_scope".to_string(),
         ];
         assert!(matcher.matches(&req_full));
+    }
+
+    #[test]
+    fn test_max_auth_level_match() {
+        let matcher = PolicyMatcher {
+            max_auth_level: Some(0),
+            ..Default::default()
+        };
+
+        let mut req_guest = make_request("any", OperationKind::Read, None, vec![]);
+        req_guest.actor.auth_level = AuthLevel::Level0Guest;
+        assert!(
+            matcher.matches(&req_guest),
+            "Level0Guest should match max_auth_level=0"
+        );
+
+        let mut req_user = make_request("any", OperationKind::Read, None, vec![]);
+        req_user.actor.auth_level = AuthLevel::Level3Session;
+        assert!(
+            !matcher.matches(&req_user),
+            "Level3Session should NOT match max_auth_level=0"
+        );
+    }
+
+    #[test]
+    fn test_session_tier_guest_and_account() {
+        let guest_matcher = PolicyMatcher {
+            session_tier: Some("guest".to_string()),
+            ..Default::default()
+        };
+        let account_matcher = PolicyMatcher {
+            session_tier: Some("account".to_string()),
+            ..Default::default()
+        };
+
+        let mut req_guest = make_request("any", OperationKind::Read, None, vec![]);
+        req_guest.actor.auth_level = AuthLevel::Level0Guest;
+        assert!(
+            guest_matcher.matches(&req_guest),
+            "Level0Guest matches guest tier"
+        );
+        assert!(
+            !account_matcher.matches(&req_guest),
+            "Level0Guest does not match account tier"
+        );
+
+        let mut req_account = make_request("any", OperationKind::Read, None, vec![]);
+        req_account.actor.auth_level = AuthLevel::Level3Session;
+        assert!(
+            !guest_matcher.matches(&req_account),
+            "Level3Session does not match guest tier"
+        );
+        assert!(
+            account_matcher.matches(&req_account),
+            "Level3Session matches account tier"
+        );
     }
 }

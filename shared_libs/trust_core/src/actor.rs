@@ -53,6 +53,8 @@ pub struct ActorContext {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AuthLevel {
+    /// Level 0: Unauthenticated guest agent session (public browsing, FAQs).
+    Level0Guest = 0,
     /// Level 1: Static API Key (Long-lived, lowest assurance).
     Level1ApiKey = 1,
     /// Level 2: Bearer Token (e.g., OAuth2 with scopes).
@@ -69,6 +71,7 @@ pub enum AuthLevel {
 impl std::fmt::Display for AuthLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Level0Guest => write!(f, "level0_guest"),
             Self::Level1ApiKey => write!(f, "level1_api_key"),
             Self::Level2Bearer => write!(f, "level2_bearer"),
             Self::Level3Session => write!(f, "level3_session"),

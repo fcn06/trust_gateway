@@ -9,6 +9,21 @@ action_names = ["stripe_refund", "mock_refund"]
 effect = "allow"
 
 [[rules]]
+id = "guest-read-only-auto-allow"
+priority = 8
+operation_kinds = ["read"]
+session_tier = "guest"
+effect = "allow"
+
+[[rules]]
+id = "guest-mutations-deny"
+priority = 9
+operation_kinds = ["create", "update", "delete", "financial_mutation"]
+session_tier = "guest"
+effect = "deny"
+reason = "Personal agent in guest session cannot execute mutations. Customer account sign-in required."
+
+[[rules]]
 id = "read-actions-auto-allow"
 priority = 10
 operation_kinds = ["read"]
@@ -61,3 +76,12 @@ min_amount = "100.00 EUR"
 effect = "require_approval"
 tier = "tier2"
 reason = "Refunds above €100 require re-authentication"
+
+[[rules]]
+id = "box-shop-checkout-approval"
+priority = 25
+action_names = ["box_shop_checkout"]
+effect = "require_approval"
+tier = "tier1"
+reason = "Zero-credential checkout transactions require owner approval"
+

@@ -364,6 +364,47 @@ pub fn builtin_descriptors() -> Vec<ToolDescriptor> {
             app_id: None,
             operation_attributes: Default::default(),
         },
+        ToolDescriptor {
+            tool_id: "io.lianxi.box_shop.checkout@v1".into(),
+            display_name: "Box Shop — Zero-Credential Checkout".into(),
+            description: "Execute a secure zero-credential checkout with Box Demo Shop. Requires amount and currency, with optional cart_id, items, and recipient_did. Payment authorization is verified via execution grant without exposing card numbers.".into(),
+            mcp_name: "box_shop_checkout".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "amount": { "type": "number", "description": "Total checkout amount" },
+                    "currency": { "type": "string", "description": "Currency code (e.g. EUR, USD)" },
+                    "cart_id": { "type": "string", "description": "Optional cart ID" },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "name": { "type": "string" },
+                                "quantity": { "type": "integer" },
+                                "price": { "type": "number" }
+                            }
+                        },
+                        "description": "Optional list of items purchased"
+                    },
+                    "recipient_did": { "type": "string", "description": "Customer DID for async notification delivery" },
+                    "shipping_address": { "type": "string", "description": "Shipping address" }
+                },
+                "required": ["amount", "currency"]
+            }),
+            output_schema: serde_json::json!({"type": "object"}),
+            risk_tier: RiskTier::Financial,
+            executor_profile: ExecutorProfile::Connector,
+            required_scopes: vec!["shop:checkout".into()],
+            egress_class: EgressClass::B2b,
+            bundle_membership: vec!["default_tools".into(), "ecommerce".into()],
+            version: "1.0.0".into(),
+            deprecation: None,
+            cron: None,
+            app_id: None,
+            operation_attributes: Default::default(),
+        },
 
         // ── Discovery Bundle ───────────────────────────────
         ToolDescriptor {
@@ -867,5 +908,24 @@ mod tests {
         let kv_key = format!("tool_{}", tool_id.replace([':', '@'], "_"));
         assert!(!kv_key.contains(':'));
         assert!(kv_key.starts_with("tool_"));
+    }
+
+    #[test]
+    fn box_shop_checkout_descriptor_registered() {
+        let tools = builtin_descriptors();
+        let checkout_tool = tools
+            .iter()
+            .find(|t| t.mcp_name == "box_shop_checkout")
+            .expect("box_shop_checkout tool must be registered in builtin_descriptors");
+
+        assert_eq!(checkout_tool.tool_id, "io.lianxi.box_shop.checkout@v1");
+        assert_eq!(checkout_tool.risk_tier, RiskTier::Financial);
+        assert_eq!(checkout_tool.executor_profile, ExecutorProfile::Connector);
+        assert!(checkout_tool
+            .bundle_membership
+            .contains(&"default_tools".to_string()));
+        assert!(checkout_tool
+            .bundle_membership
+            .contains(&"ecommerce".to_string()));
     }
 }

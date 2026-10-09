@@ -45,6 +45,7 @@ impl SessionClaims {
     /// Derive the AuthLevel enum from the numeric value.
     pub fn to_auth_level(&self) -> trust_core::actor::AuthLevel {
         match self.auth_level {
+            0 => trust_core::actor::AuthLevel::Level0Guest,
             1 => trust_core::actor::AuthLevel::Level1ApiKey,
             2 => trust_core::actor::AuthLevel::Level2Bearer,
             3 => trust_core::actor::AuthLevel::Level3Session,

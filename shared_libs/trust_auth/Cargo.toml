@@ -21,6 +21,7 @@ hex = "0.4.3"
 bs58 = "0.5.1"
 async-nats = "0.37"
 tokio = { version = "1", features = ["net"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

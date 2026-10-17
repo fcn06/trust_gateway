@@ -48,3 +48,9 @@ audit.jsonl
 Thumbs.db
 scratch/
 tmp/
+
+
+# ── Private / Internal Agent Documentation ──────────
+docs/agent_identity/
+docs/local_command_line/
+docs/sample_calls_b2b_agent/

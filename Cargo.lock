@@ -4802,6 +4802,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "identity_context",
+ "p256",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

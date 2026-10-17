@@ -1,4 +1,6 @@
+pub mod budget;
 pub mod call_chain;
+pub use budget::*;
 pub use call_chain::*;
 
 use trust_model::{PolicyDecision, ProposedAction};

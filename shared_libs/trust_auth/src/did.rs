@@ -20,6 +20,20 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use identity_context::models::{IdentityContext, SourceContext};
 use sha2::{Digest, Sha256};
 
+/// Representation of an agent's public key (supports Ed25519 and P-256 / ES256).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentPublicKey {
+    Ed25519([u8; 32]),
+    P256(p256::ecdsa::VerifyingKey),
+}
+
+/// Representation of an issuer organization's public key (supports Ed25519 and P-256).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssuerPublicKey {
+    Ed25519([u8; 32]),
+    P256(p256::ecdsa::VerifyingKey),
+}
+
 /// Result of a successfully verified Verifiable Presentation.
 #[derive(Debug, Clone)]
 pub struct VerifiedPresentation {
@@ -34,7 +48,7 @@ pub struct VerifiedPresentation {
 }
 
 /// Errors that can occur during VP verification.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VpError {
     /// Token is not a VP (no "vp" field in payload).
     NotAVp,
@@ -56,6 +70,18 @@ pub enum VpError {
     CredentialSignatureInvalid,
     /// Binding check failed: credentialSubject.id != agent_did.
     BindingMismatch { expected: String, got: String },
+    /// Token or credential has expired.
+    TokenExpired(String),
+    /// Token or credential is not yet valid (nbf).
+    TokenNotYetValid(String),
+    /// Presentation audience does not match expected gateway audience.
+    AudienceMismatch { expected: String, got: String },
+    /// Presentation replay detected via nonce/jti/signature cache.
+    ReplayDetected(String),
+    /// Issuer is not in the trusted issuer allowlist.
+    UntrustedIssuer(String),
+    /// Algorithm mismatch or unsupported cryptographic algorithm.
+    UnsupportedAlgorithm(String),
 }
 
 impl std::fmt::Display for VpError {
@@ -78,6 +104,14 @@ impl std::fmt::Display for VpError {
                     "Binding mismatch: credentialSubject.id='{got}' != agent_did='{expected}'"
                 )
             }
+            Self::TokenExpired(m) => write!(f, "Token expired: {m}"),
+            Self::TokenNotYetValid(m) => write!(f, "Token not yet valid: {m}"),
+            Self::AudienceMismatch { expected, got } => {
+                write!(f, "Audience mismatch: expected '{expected}', got '{got}'")
+            }
+            Self::ReplayDetected(m) => write!(f, "Replay attack detected: {m}"),
+            Self::UntrustedIssuer(i) => write!(f, "Issuer '{i}' is not in trusted allowlist"),
+            Self::UnsupportedAlgorithm(a) => write!(f, "Unsupported cryptographic algorithm: {a}"),
         }
     }
 }
@@ -107,34 +141,127 @@ pub fn is_verifiable_presentation(token: &str) -> bool {
 
 // ─── Full Verification Pipeline ──────────────────────────────
 
-/// Verify a Verifiable Presentation JWT through the complete 6-step pipeline.
+/// Check whether an issuer DID is permitted by TRUSTED_ISSUER_DOMAINS.
+/// If unset or "*", defaults to permissive.
+pub fn is_trusted_issuer(issuer_did: &str) -> bool {
+    let allowed_env = match std::env::var("TRUSTED_ISSUER_DOMAINS") {
+        Ok(val) => val,
+        Err(_) => return true,
+    };
+    let trimmed = allowed_env.trim();
+    if trimmed.is_empty() || trimmed == "*" {
+        return true;
+    }
+    let allowed_list: Vec<&str> = trimmed
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let domain_part = issuer_did.strip_prefix("did:web:").unwrap_or(issuer_did);
+    let host = domain_part.split(':').next().unwrap_or(domain_part);
+
+    allowed_list.iter().any(|&item| {
+        item == host
+            || item == domain_part
+            || item == issuer_did
+            || (item.starts_with("*.") && host.ends_with(&item[1..]))
+    })
+}
+
+/// Verify a Verifiable Presentation JWT through the comprehensive verification pipeline:
 ///
-/// 1. Decode VP envelope
-/// 2. Extract + whitelist agent DID
-/// 3. Resolve agent public key (zero-network)
-/// 4. Verify VP JWS signature
-/// 5. Extract + verify inner VC (issuer did:web resolution)
-/// 6. Binding check + tenant derivation
-pub async fn verify_presentation(
+/// 1. Decode VP envelope and header (EdDSA or ES256)
+/// 2. Validate VP envelope temporal validity (exp, nbf with 60s tolerance)
+/// 3. Validate VP audience (aud) if expected_audience is specified
+/// 4. Extract + whitelist agent DID (did:key, did:jwk, did:twin)
+/// 5. Resolve agent public key (zero-network, supports Ed25519 and P-256)
+/// 6. Verify VP outer signature
+/// 7. Check replay protection (nonce / jti / signature hash in JetStream KV)
+/// 8. Extract inner Verifiable Credential and validate temporal validity (exp, nbf)
+/// 9. Check issuer DID allowlist (SSRF / tenant quarantine protection)
+/// 10. Resolve issuer public key (SSRF-guarded did:web resolution + JetStream KV cache)
+/// 11. Verify inner VC signature (EdDSA or ES256)
+/// 12. Binding check: credentialSubject.id == agent_did
+/// 13. Tenant derivation: SHA256 of issuer DID
+pub async fn verify_presentation_with_options(
     token: &str,
     http_client: &reqwest::Client,
     kv_store: Option<&async_nats::jetstream::kv::Store>,
+    expected_audience: Option<&str>,
 ) -> Result<VerifiedPresentation, VpError> {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let b64_pad = base64::engine::general_purpose::URL_SAFE;
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         return Err(VpError::MalformedToken("Expected 3-part JWT".into()));
     }
 
+    // ── Decode VP header ─────────────────────────────────────
+    let header_bytes = b64
+        .decode(parts[0])
+        .or_else(|_| b64_pad.decode(parts[0]))
+        .map_err(|e| VpError::MalformedToken(format!("header base64: {e}")))?;
+    let header: serde_json::Value = serde_json::from_slice(&header_bytes)
+        .map_err(|e| VpError::MalformedToken(format!("header JSON: {e}")))?;
+    let vp_alg = header
+        .get("alg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("EdDSA");
+
     // ── Decode VP payload ────────────────────────────────────
     let payload_bytes = b64
         .decode(parts[1])
+        .or_else(|_| b64_pad.decode(parts[1]))
         .map_err(|e| VpError::MalformedToken(format!("payload base64: {e}")))?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
         .map_err(|e| VpError::MalformedToken(format!("payload JSON: {e}")))?;
 
     if payload.get("vp").is_none() {
         return Err(VpError::NotAVp);
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    const CLOCK_SKEW_TOLERANCE_SECS: u64 = 60;
+
+    // ── Temporal validity: outer VP exp / nbf ────────────────
+    if let Some(exp) = payload.get("exp").and_then(|v| v.as_u64()) {
+        if now > exp + CLOCK_SKEW_TOLERANCE_SECS {
+            return Err(VpError::TokenExpired(format!(
+                "VP envelope expired at {exp}, current time is {now}"
+            )));
+        }
+    }
+    if let Some(nbf) = payload.get("nbf").and_then(|v| v.as_u64()) {
+        if now + CLOCK_SKEW_TOLERANCE_SECS < nbf {
+            return Err(VpError::TokenNotYetValid(format!(
+                "VP envelope not valid until {nbf}, current time is {now}"
+            )));
+        }
+    }
+
+    // ── Audience check: outer VP aud ─────────────────────────
+    if let Some(expected_aud) = expected_audience {
+        let aud_matches = match payload.get("aud") {
+            Some(serde_json::Value::String(s)) => s == expected_aud,
+            Some(serde_json::Value::Array(arr)) => {
+                arr.iter().any(|v| v.as_str() == Some(expected_aud))
+            }
+            _ => false,
+        };
+        if !aud_matches {
+            let got = payload
+                .get("aud")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            return Err(VpError::AudienceMismatch {
+                expected: expected_aud.to_string(),
+                got,
+            });
+        }
     }
 
     // ── Step 3: Extract Agent DID ────────────────────────────
@@ -160,11 +287,46 @@ pub async fn verify_presentation(
     let signing_input = format!("{}.{}", parts[0], parts[1]);
     let sig_bytes = b64
         .decode(parts[2])
+        .or_else(|_| b64_pad.decode(parts[2]))
         .map_err(|_| VpError::VpSignatureInvalid)?;
-    verify_ed25519_signature(&agent_pubkey, signing_input.as_bytes(), &sig_bytes)
-        .map_err(|_| VpError::VpSignatureInvalid)?;
+    verify_agent_signature(&agent_pubkey, vp_alg, signing_input.as_bytes(), &sig_bytes)?;
 
     tracing::info!("✅ VP outer signature verified for agent: {}", agent_did);
+
+    // ── Replay Protection: JetStream KV nonces ───────────────
+    if let Some(kv) = kv_store {
+        let replay_id = payload
+            .get("jti")
+            .or_else(|| payload.get("nonce"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let mut hasher = Sha256::new();
+                hasher.update(&sig_bytes);
+                hex::encode(hasher.finalize())
+            });
+
+        // Invariant 3: JetStream keys MUST use '_' separator
+        let replay_key = format!("vp_replay_{}", replay_id.replace([':', '.', '-'], "_"));
+
+        match kv.get(&replay_key).await {
+            Ok(Some(_)) => {
+                return Err(VpError::ReplayDetected(format!(
+                    "Replay detected for presentation key: {replay_key}"
+                )));
+            }
+            Ok(None) => {
+                if let Err(e) = kv.put(&replay_key, "used".into()).await {
+                    tracing::warn!("Failed to store VP replay key '{}': {}", replay_key, e);
+                } else {
+                    tracing::debug!("Recorded VP replay key '{}'", replay_key);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Could not query replay KV store: {}", e);
+            }
+        }
+    }
 
     // ── Step 4: Extract inner Verifiable Credential ──────────
     let vc_jwt = payload
@@ -179,18 +341,63 @@ pub async fn verify_presentation(
         })
         .ok_or(VpError::NoCredential)?;
 
-    // Decode the inner VC JWT payload
+    // Decode the inner VC JWT header & payload
     let vc_parts: Vec<&str> = vc_jwt.split('.').collect();
     if vc_parts.len() != 3 {
         return Err(VpError::MalformedToken(
             "Inner VC is not a 3-part JWT".into(),
         ));
     }
+    let vc_header_bytes = b64
+        .decode(vc_parts[0])
+        .or_else(|_| b64_pad.decode(vc_parts[0]))
+        .map_err(|e| VpError::MalformedToken(format!("VC header base64: {e}")))?;
+    let vc_header: serde_json::Value = serde_json::from_slice(&vc_header_bytes)
+        .map_err(|e| VpError::MalformedToken(format!("VC header JSON: {e}")))?;
+    let vc_alg = vc_header
+        .get("alg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("EdDSA");
+
     let vc_payload_bytes = b64
         .decode(vc_parts[1])
+        .or_else(|_| b64_pad.decode(vc_parts[1]))
         .map_err(|e| VpError::MalformedToken(format!("VC payload base64: {e}")))?;
     let vc_payload: serde_json::Value = serde_json::from_slice(&vc_payload_bytes)
         .map_err(|e| VpError::MalformedToken(format!("VC payload JSON: {e}")))?;
+
+    // ── Temporal validity: inner VC exp / nbf ────────────────
+    let vc_exp = vc_payload.get("exp").and_then(|v| v.as_u64()).or_else(|| {
+        vc_payload
+            .get("vc")
+            .and_then(|vc| vc.get("expirationDate"))
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.timestamp() as u64)
+    });
+    if let Some(exp) = vc_exp {
+        if now > exp + CLOCK_SKEW_TOLERANCE_SECS {
+            return Err(VpError::TokenExpired(format!(
+                "Inner VC expired at {exp}, current time is {now}"
+            )));
+        }
+    }
+
+    let vc_nbf = vc_payload.get("nbf").and_then(|v| v.as_u64()).or_else(|| {
+        vc_payload
+            .get("vc")
+            .and_then(|vc| vc.get("validFrom").or_else(|| vc.get("issuanceDate")))
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.timestamp() as u64)
+    });
+    if let Some(nbf) = vc_nbf {
+        if now + CLOCK_SKEW_TOLERANCE_SECS < nbf {
+            return Err(VpError::TokenNotYetValid(format!(
+                "Inner VC not valid until {nbf}, current time is {now}"
+            )));
+        }
+    }
 
     // ── Step 4.2: Extract issuer DID ─────────────────────────
     let issuer_did = vc_payload
@@ -212,6 +419,11 @@ pub async fn verify_presentation(
         return Err(VpError::IssuerNotDidWeb(issuer_did));
     }
 
+    // ── Step 4.2.1: Enforce issuer trust allowlist ───────────
+    if !is_trusted_issuer(&issuer_did) {
+        return Err(VpError::UntrustedIssuer(issuer_did));
+    }
+
     // ── Step 4.3: Resolve issuer public key (network call) ───
     let issuer_pubkey = resolve_did_web(&issuer_did, http_client, kv_store).await?;
 
@@ -219,9 +431,14 @@ pub async fn verify_presentation(
     let vc_signing_input = format!("{}.{}", vc_parts[0], vc_parts[1]);
     let vc_sig_bytes = b64
         .decode(vc_parts[2])
+        .or_else(|_| b64_pad.decode(vc_parts[2]))
         .map_err(|_| VpError::CredentialSignatureInvalid)?;
-    verify_ed25519_signature(&issuer_pubkey, vc_signing_input.as_bytes(), &vc_sig_bytes)
-        .map_err(|_| VpError::CredentialSignatureInvalid)?;
+    verify_issuer_signature(
+        &issuer_pubkey,
+        vc_alg,
+        vc_signing_input.as_bytes(),
+        &vc_sig_bytes,
+    )?;
 
     tracing::info!("✅ Inner VC signature verified from issuer: {}", issuer_did);
 
@@ -257,6 +474,16 @@ pub async fn verify_presentation(
     })
 }
 
+/// Verify a Verifiable Presentation JWT through the complete 6-step pipeline.
+pub async fn verify_presentation(
+    token: &str,
+    http_client: &reqwest::Client,
+    kv_store: Option<&async_nats::jetstream::kv::Store>,
+) -> Result<VerifiedPresentation, VpError> {
+    let expected_aud = std::env::var("TRUST_GATEWAY_AUDIENCE").ok();
+    verify_presentation_with_options(token, http_client, kv_store, expected_aud.as_deref()).await
+}
+
 /// Verifies a standard session JWT signed with EdDSA (by a did:twin or did:jwk).
 /// This is used when the Vault delegates a session token instead of issuing a Verifiable Presentation.
 pub fn verify_eddsa_session_jwt(token: &str) -> Result<identity_context::jwt::JwtClaims, VpError> {
@@ -290,7 +517,7 @@ pub fn verify_eddsa_session_jwt(token: &str) -> Result<identity_context::jwt::Jw
         .or_else(|_| b64_pad.decode(parts[2]))
         .map_err(|_| VpError::VpSignatureInvalid)?;
 
-    verify_ed25519_signature(&agent_pubkey, signing_input.as_bytes(), &sig_bytes)
+    verify_agent_signature(&agent_pubkey, "EdDSA", signing_input.as_bytes(), &sig_bytes)
         .map_err(|_| VpError::VpSignatureInvalid)?;
 
     let claims: identity_context::jwt::JwtClaims = serde_json::from_value(payload)
@@ -490,9 +717,9 @@ pub async fn verify_oauth2_eddsa_jwt(
 
 // ─── DID Resolution Helpers ──────────────────────────────────
 
-/// Resolve an agent's Ed25519 public key from their self-certifying DID.
+/// Resolve an agent's public key (Ed25519 or P-256) from their self-certifying DID.
 /// Zero network calls — the key is embedded in the DID itself.
-fn resolve_agent_public_key(did: &str) -> Result<[u8; 32], VpError> {
+pub fn resolve_agent_public_key(did: &str) -> Result<AgentPublicKey, VpError> {
     if did.starts_with("did:jwk:") {
         resolve_did_jwk(did)
     } else if did.starts_with("did:twin:") {
@@ -504,54 +731,84 @@ fn resolve_agent_public_key(did: &str) -> Result<[u8; 32], VpError> {
     }
 }
 
-/// Resolve Ed25519 public key from `did:jwk:<base64url-JWK>`.
-///
-/// Strips prefix → base64url-decode → parse JWK JSON → extract `x` field → decode to 32 bytes.
-fn resolve_did_jwk(did: &str) -> Result<[u8; 32], VpError> {
+/// Resolve public key from `did:jwk:<base64url-JWK>`.
+/// Supports OKP/Ed25519 and EC/P-256.
+pub fn resolve_did_jwk(did: &str) -> Result<AgentPublicKey, VpError> {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let b64_pad = base64::engine::general_purpose::URL_SAFE;
     let jwk_b64 = did
         .strip_prefix("did:jwk:")
         .ok_or_else(|| VpError::AgentKeyResolution("Not a did:jwk".into()))?;
 
     let jwk_bytes = b64
         .decode(jwk_b64)
+        .or_else(|_| b64_pad.decode(jwk_b64))
         .map_err(|e| VpError::AgentKeyResolution(format!("did:jwk base64 decode: {e}")))?;
     let jwk: serde_json::Value = serde_json::from_slice(&jwk_bytes)
         .map_err(|e| VpError::AgentKeyResolution(format!("did:jwk JSON parse: {e}")))?;
 
-    // Validate key type: OKP + Ed25519
     let kty = jwk.get("kty").and_then(|v| v.as_str()).unwrap_or("");
     let crv = jwk.get("crv").and_then(|v| v.as_str()).unwrap_or("");
-    if kty != "OKP" || crv != "Ed25519" {
-        return Err(VpError::AgentKeyResolution(format!(
-            "Unsupported JWK: kty={kty}, crv={crv} (expected OKP/Ed25519)"
-        )));
+
+    if kty == "OKP" && crv == "Ed25519" {
+        let x_b64 = jwk
+            .get("x")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| VpError::AgentKeyResolution("Missing 'x' in JWK".into()))?;
+        let x_bytes = b64
+            .decode(x_b64)
+            .or_else(|_| b64_pad.decode(x_b64))
+            .map_err(|e| VpError::AgentKeyResolution(format!("JWK x decode: {e}")))?;
+        let arr: [u8; 32] = x_bytes.try_into().map_err(|_| {
+            VpError::AgentKeyResolution("Ed25519 public key must be 32 bytes".into())
+        })?;
+        Ok(AgentPublicKey::Ed25519(arr))
+    } else if kty == "EC" && crv == "P-256" {
+        let x_b64 = jwk
+            .get("x")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| VpError::AgentKeyResolution("Missing 'x' in P-256 JWK".into()))?;
+        let y_b64 = jwk
+            .get("y")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| VpError::AgentKeyResolution("Missing 'y' in P-256 JWK".into()))?;
+        let x_bytes = b64
+            .decode(x_b64)
+            .or_else(|_| b64_pad.decode(x_b64))
+            .map_err(|e| VpError::AgentKeyResolution(format!("JWK x decode: {e}")))?;
+        let y_bytes = b64
+            .decode(y_b64)
+            .or_else(|_| b64_pad.decode(y_b64))
+            .map_err(|e| VpError::AgentKeyResolution(format!("JWK y decode: {e}")))?;
+        if x_bytes.len() != 32 || y_bytes.len() != 32 {
+            return Err(VpError::AgentKeyResolution(
+                "P-256 coordinates must be 32 bytes each".into(),
+            ));
+        }
+        let mut uncompressed = Vec::with_capacity(65);
+        uncompressed.push(0x04);
+        uncompressed.extend_from_slice(&x_bytes);
+        uncompressed.extend_from_slice(&y_bytes);
+        let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&uncompressed)
+            .map_err(|e| VpError::AgentKeyResolution(format!("Invalid P-256 SEC1 point: {e}")))?;
+        Ok(AgentPublicKey::P256(vk))
+    } else {
+        Err(VpError::AgentKeyResolution(format!(
+            "Unsupported JWK: kty={kty}, crv={crv} (expected OKP/Ed25519 or EC/P-256)"
+        )))
     }
-
-    let x_b64 = jwk
-        .get("x")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| VpError::AgentKeyResolution("Missing 'x' in JWK".into()))?;
-    let x_bytes = b64
-        .decode(x_b64)
-        .map_err(|e| VpError::AgentKeyResolution(format!("JWK x decode: {e}")))?;
-
-    x_bytes
-        .try_into()
-        .map_err(|_| VpError::AgentKeyResolution("Ed25519 public key must be 32 bytes".into()))
 }
 
 /// Resolve Ed25519 public key from `did:twin:z<hex>`.
-fn resolve_did_twin(did: &str) -> Result<[u8; 32], VpError> {
-    ssi_crypto::did::parse_did_twin_pubkey(did)
-        .ok_or_else(|| VpError::AgentKeyResolution(format!("Invalid did:twin format: {did}")))
+pub fn resolve_did_twin(did: &str) -> Result<AgentPublicKey, VpError> {
+    let pk = ssi_crypto::did::parse_did_twin_pubkey(did)
+        .ok_or_else(|| VpError::AgentKeyResolution(format!("Invalid did:twin format: {did}")))?;
+    Ok(AgentPublicKey::Ed25519(pk))
 }
 
-/// Resolve Ed25519 public key from `did:key:z<multibase>`.
-///
-/// Strips the `z` multibase prefix (base58btc), decodes, checks for the
-/// Ed25519 multicodec prefix (0xed 0x01), and extracts the 32-byte key.
-fn resolve_did_key(did: &str) -> Result<[u8; 32], VpError> {
+/// Resolve public key from `did:key:z<multibase>`.
+/// Supports Ed25519 (0xed01) and P-256 (0x1200).
+pub fn resolve_did_key(did: &str) -> Result<AgentPublicKey, VpError> {
     let key_part = did.strip_prefix("did:key:z").ok_or_else(|| {
         VpError::AgentKeyResolution("did:key must start with 'z' (base58btc)".into())
     })?;
@@ -561,15 +818,23 @@ fn resolve_did_key(did: &str) -> Result<[u8; 32], VpError> {
         .map_err(|e| VpError::AgentKeyResolution(format!("did:key base58 decode: {e}")))?;
 
     // Ed25519 multicodec varint prefix: 0xed 0x01
-    if decoded.len() < 34 || decoded[0] != 0xed || decoded[1] != 0x01 {
-        return Err(VpError::AgentKeyResolution(
-            "did:key: expected Ed25519 multicodec prefix (0xed01)".into(),
-        ));
+    if decoded.len() >= 34 && decoded[0] == 0xed && decoded[1] == 0x01 {
+        let arr: [u8; 32] = decoded[2..34].try_into().map_err(|_| {
+            VpError::AgentKeyResolution("Ed25519 public key must be 32 bytes".into())
+        })?;
+        return Ok(AgentPublicKey::Ed25519(arr));
     }
 
-    decoded[2..34]
-        .try_into()
-        .map_err(|_| VpError::AgentKeyResolution("Ed25519 public key must be 32 bytes".into()))
+    // P-256 multicodec varint prefix: 0x80 0x24 (0x1200)
+    if decoded.len() >= 35 && decoded[0] == 0x80 && decoded[1] == 0x24 {
+        let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&decoded[2..])
+            .map_err(|e| VpError::AgentKeyResolution(format!("Invalid P-256 did:key: {e}")))?;
+        return Ok(AgentPublicKey::P256(vk));
+    }
+
+    Err(VpError::AgentKeyResolution(
+        "did:key: expected Ed25519 (0xed01) or P-256 (0x1200) multicodec prefix".into(),
+    ))
 }
 
 fn make_nats_key(did: &str) -> String {
@@ -599,7 +864,7 @@ fn is_private_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-/// Resolve an organization's Ed25519 public key from `did:web:<domain>`.
+/// Resolve an organization's public key (Ed25519 or P-256) from `did:web:<domain>`.
 ///
 /// Translates `did:web:example.com` → `https://example.com/.well-known/did.json`,
 /// fetches the DID Document, and extracts the first verification method's public key.
@@ -607,13 +872,26 @@ async fn resolve_did_web(
     did: &str,
     _http_client: &reqwest::Client,
     kv_store: Option<&async_nats::jetstream::kv::Store>,
-) -> Result<[u8; 32], VpError> {
+) -> Result<IssuerPublicKey, VpError> {
     if let Some(kv) = kv_store {
         let key = make_nats_key(did);
         if let Ok(Some(entry)) = kv.get(&key).await {
-            if let Ok(bytes) = <[u8; 32]>::try_from(entry.as_ref()) {
-                tracing::info!("🎯 DID cache hit for {}: {}", did, key);
-                return Ok(bytes);
+            let bytes = entry.as_ref();
+            if bytes.len() == 32 {
+                if let Ok(arr) = <[u8; 32]>::try_from(bytes) {
+                    tracing::info!("🎯 DID cache hit for {}: {}", did, key);
+                    return Ok(IssuerPublicKey::Ed25519(arr));
+                }
+            } else if bytes.len() == 33 && bytes[0] == 0x01 {
+                if let Ok(arr) = <[u8; 32]>::try_from(&bytes[1..]) {
+                    tracing::info!("🎯 DID cache hit for {}: {}", did, key);
+                    return Ok(IssuerPublicKey::Ed25519(arr));
+                }
+            } else if bytes.len() >= 34 && bytes[0] == 0x02 {
+                if let Ok(vk) = p256::ecdsa::VerifyingKey::from_sec1_bytes(&bytes[1..]) {
+                    tracing::info!("🎯 DID cache hit for {}: {}", did, key);
+                    return Ok(IssuerPublicKey::P256(vk));
+                }
             }
         }
     }
@@ -706,7 +984,21 @@ async fn resolve_did_web(
 
     if let Some(kv) = kv_store {
         let key = make_nats_key(did);
-        if let Err(e) = kv.put(&key, pubkey.to_vec().into()).await {
+        let cache_bytes = match &pubkey {
+            IssuerPublicKey::Ed25519(pk) => {
+                let mut v = Vec::with_capacity(33);
+                v.push(0x01);
+                v.extend_from_slice(pk);
+                v
+            }
+            IssuerPublicKey::P256(vk) => {
+                let mut v = Vec::with_capacity(34);
+                v.push(0x02);
+                v.extend_from_slice(vk.to_encoded_point(true).as_bytes());
+                v
+            }
+        };
+        if let Err(e) = kv.put(&key, cache_bytes.into()).await {
             tracing::warn!("⚠️ Failed to write DID to cache: {}", e);
         } else {
             tracing::info!("💾 Cached resolved public key for DID: {}", did);
@@ -716,11 +1008,10 @@ async fn resolve_did_web(
     Ok(pubkey)
 }
 
-/// Extract an Ed25519 public key from a DID Document's verificationMethod array.
-///
-/// Supports both `publicKeyJwk` and `publicKeyHex` / `publicKeyMultibase` formats.
-fn extract_pubkey_from_did_document(doc: &serde_json::Value) -> Result<[u8; 32], VpError> {
+/// Extract an Ed25519 or P-256 public key from a DID Document's verificationMethod array.
+fn extract_pubkey_from_did_document(doc: &serde_json::Value) -> Result<IssuerPublicKey, VpError> {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let b64_pad = base64::engine::general_purpose::URL_SAFE;
 
     let methods = doc
         .get("verificationMethod")
@@ -736,22 +1027,47 @@ fn extract_pubkey_from_did_document(doc: &serde_json::Value) -> Result<[u8; 32],
                 if let Some(x) = jwk.get("x").and_then(|v| v.as_str()) {
                     let bytes = b64
                         .decode(x)
+                        .or_else(|_| b64_pad.decode(x))
                         .map_err(|e| VpError::IssuerResolution(format!("JWK x decode: {e}")))?;
-                    return bytes
+                    let arr: [u8; 32] = bytes
                         .try_into()
-                        .map_err(|_| VpError::IssuerResolution("Key must be 32 bytes".into()));
+                        .map_err(|_| VpError::IssuerResolution("Key must be 32 bytes".into()))?;
+                    return Ok(IssuerPublicKey::Ed25519(arr));
+                }
+            } else if kty == "EC" && crv == "P-256" {
+                if let (Some(x_str), Some(y_str)) = (
+                    jwk.get("x").and_then(|v| v.as_str()),
+                    jwk.get("y").and_then(|v| v.as_str()),
+                ) {
+                    let x_bytes = b64
+                        .decode(x_str)
+                        .or_else(|_| b64_pad.decode(x_str))
+                        .map_err(|e| VpError::IssuerResolution(format!("JWK x decode: {e}")))?;
+                    let y_bytes = b64
+                        .decode(y_str)
+                        .or_else(|_| b64_pad.decode(y_str))
+                        .map_err(|e| VpError::IssuerResolution(format!("JWK y decode: {e}")))?;
+                    if x_bytes.len() == 32 && y_bytes.len() == 32 {
+                        let mut uncompressed = Vec::with_capacity(65);
+                        uncompressed.push(0x04);
+                        uncompressed.extend_from_slice(&x_bytes);
+                        uncompressed.extend_from_slice(&y_bytes);
+                        if let Ok(vk) = p256::ecdsa::VerifyingKey::from_sec1_bytes(&uncompressed) {
+                            return Ok(IssuerPublicKey::P256(vk));
+                        }
+                    }
                 }
             }
         }
 
         // Try publicKeyHex (Ed25519VerificationKey2020)
         if let Some(hex_key) = method.get("publicKeyHex").and_then(|v| v.as_str()) {
-            let bytes = hex::decode(hex_key)
-                .map_err(|e| VpError::IssuerResolution(format!("publicKeyHex: {e}")))?;
-            if bytes.len() == 32 {
-                return bytes
-                    .try_into()
-                    .map_err(|_| VpError::IssuerResolution("Key must be 32 bytes".into()));
+            if let Ok(bytes) = hex::decode(hex_key) {
+                if bytes.len() == 32 {
+                    if let Ok(arr) = <[u8; 32]>::try_from(bytes) {
+                        return Ok(IssuerPublicKey::Ed25519(arr));
+                    }
+                }
             }
         }
 
@@ -759,25 +1075,26 @@ fn extract_pubkey_from_did_document(doc: &serde_json::Value) -> Result<[u8; 32],
         if let Some(mb) = method.get("publicKeyMultibase").and_then(|v| v.as_str()) {
             if let Some(b58_part) = mb.strip_prefix('z') {
                 if let Ok(decoded) = bs58::decode(b58_part).into_vec() {
-                    // May have multicodec prefix 0xed 0x01
-                    let key_bytes =
-                        if decoded.len() == 34 && decoded[0] == 0xed && decoded[1] == 0x01 {
-                            &decoded[2..34]
-                        } else if decoded.len() == 32 {
-                            &decoded[..]
-                        } else {
-                            continue;
-                        };
-                    return key_bytes
-                        .try_into()
-                        .map_err(|_| VpError::IssuerResolution("Key must be 32 bytes".into()));
+                    if decoded.len() == 34 && decoded[0] == 0xed && decoded[1] == 0x01 {
+                        if let Ok(arr) = <[u8; 32]>::try_from(&decoded[2..34]) {
+                            return Ok(IssuerPublicKey::Ed25519(arr));
+                        }
+                    } else if decoded.len() == 32 {
+                        if let Ok(arr) = <[u8; 32]>::try_from(decoded) {
+                            return Ok(IssuerPublicKey::Ed25519(arr));
+                        }
+                    } else if decoded.len() >= 35 && decoded[0] == 0x80 && decoded[1] == 0x24 {
+                        if let Ok(vk) = p256::ecdsa::VerifyingKey::from_sec1_bytes(&decoded[2..]) {
+                            return Ok(IssuerPublicKey::P256(vk));
+                        }
+                    }
                 }
             }
         }
     }
 
     Err(VpError::IssuerResolution(
-        "No supported Ed25519 key found in DID document".into(),
+        "No supported Ed25519 or P-256 key found in DID document".into(),
     ))
 }
 
@@ -797,6 +1114,77 @@ fn verify_ed25519_signature(
     let sig = Signature::from_bytes(&sig_arr);
     vk.verify(message, &sig)
         .map_err(|e| format!("Signature verification failed: {e}"))
+}
+
+/// Verify a P-256 (ES256) signature.
+fn verify_p256_signature(
+    vk: &p256::ecdsa::VerifyingKey,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), String> {
+    use p256::ecdsa::signature::Verifier;
+    let sig = p256::ecdsa::Signature::from_slice(signature)
+        .or_else(|_| p256::ecdsa::Signature::from_der(signature))
+        .map_err(|e| format!("Invalid P-256 signature format: {e}"))?;
+    vk.verify(message, &sig)
+        .map_err(|e| format!("P-256 signature verification failed: {e}"))
+}
+
+/// Verify signature from an AgentPublicKey (Ed25519 or P-256).
+fn verify_agent_signature(
+    pubkey: &AgentPublicKey,
+    alg: &str,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), VpError> {
+    match pubkey {
+        AgentPublicKey::Ed25519(pk) => {
+            if !alg.is_empty() && alg != "EdDSA" {
+                return Err(VpError::UnsupportedAlgorithm(format!(
+                    "Algorithm {alg} does not match Ed25519 key"
+                )));
+            }
+            verify_ed25519_signature(pk, message, signature)
+                .map_err(|_| VpError::VpSignatureInvalid)
+        }
+        AgentPublicKey::P256(vk) => {
+            if !alg.is_empty() && alg != "ES256" {
+                return Err(VpError::UnsupportedAlgorithm(format!(
+                    "Algorithm {alg} does not match P-256 key"
+                )));
+            }
+            verify_p256_signature(vk, message, signature).map_err(|_| VpError::VpSignatureInvalid)
+        }
+    }
+}
+
+/// Verify signature from an IssuerPublicKey (Ed25519 or P-256).
+fn verify_issuer_signature(
+    pubkey: &IssuerPublicKey,
+    alg: &str,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), VpError> {
+    match pubkey {
+        IssuerPublicKey::Ed25519(pk) => {
+            if !alg.is_empty() && alg != "EdDSA" {
+                return Err(VpError::UnsupportedAlgorithm(format!(
+                    "Algorithm {alg} does not match Ed25519 key"
+                )));
+            }
+            verify_ed25519_signature(pk, message, signature)
+                .map_err(|_| VpError::CredentialSignatureInvalid)
+        }
+        IssuerPublicKey::P256(vk) => {
+            if !alg.is_empty() && alg != "ES256" {
+                return Err(VpError::UnsupportedAlgorithm(format!(
+                    "Algorithm {alg} does not match P-256 key"
+                )));
+            }
+            verify_p256_signature(vk, message, signature)
+                .map_err(|_| VpError::CredentialSignatureInvalid)
+        }
+    }
 }
 
 /// Derive a deterministic tenant_id from an issuer DID via SHA256.
@@ -867,14 +1255,43 @@ mod tests {
         let (_, vk) = make_ed25519_keypair();
         let did = make_did_jwk(&vk);
         let resolved = resolve_did_jwk(&did).unwrap();
-        assert_eq!(resolved, vk.to_bytes());
+        assert_eq!(resolved, AgentPublicKey::Ed25519(vk.to_bytes()));
+    }
+
+    #[test]
+    fn test_resolve_p256_did_jwk() {
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let sk = p256::ecdsa::SigningKey::from_slice(&[42u8; 32]).unwrap();
+        let vk = sk.verifying_key();
+        let point = vk.to_encoded_point(false);
+        let jwk = serde_json::json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "x": b64.encode(point.x().unwrap()),
+            "y": b64.encode(point.y().unwrap()),
+        });
+        let did = format!("did:jwk:{}", b64.encode(serde_json::to_vec(&jwk).unwrap()));
+        let resolved = resolve_did_jwk(&did).unwrap();
+        assert_eq!(resolved, AgentPublicKey::P256(*vk));
+    }
+
+    #[test]
+    fn test_resolve_p256_did_key() {
+        let sk = p256::ecdsa::SigningKey::from_slice(&[42u8; 32]).unwrap();
+        let vk = sk.verifying_key();
+        let point = vk.to_encoded_point(true); // compressed SEC1 (33 bytes)
+        let mut mc_bytes = vec![0x80, 0x24];
+        mc_bytes.extend_from_slice(point.as_bytes());
+        let did = format!("did:key:z{}", bs58::encode(&mc_bytes).into_string());
+        let resolved = resolve_did_key(&did).unwrap();
+        assert_eq!(resolved, AgentPublicKey::P256(*vk));
     }
 
     #[test]
     fn test_resolve_did_twin() {
         let identity = ssi_crypto::did::create_did_twin();
         let resolved = resolve_did_twin(&identity.did).unwrap();
-        assert_eq!(resolved, identity.public_key);
+        assert_eq!(resolved, AgentPublicKey::Ed25519(identity.public_key));
     }
 
     #[test]
@@ -886,13 +1303,33 @@ mod tests {
         let encoded = bs58::encode(&mc_bytes).into_string();
         let did = format!("did:key:z{encoded}");
         let resolved = resolve_did_key(&did).unwrap();
-        assert_eq!(resolved, vk.to_bytes());
+        assert_eq!(resolved, AgentPublicKey::Ed25519(vk.to_bytes()));
     }
 
     #[test]
     fn test_forbidden_did_method() {
         let result = resolve_agent_public_key("did:web:example.com");
         assert!(matches!(result, Err(VpError::ForbiddenDidMethod(_))));
+    }
+
+    #[test]
+    fn test_issuer_allowlist() {
+        // Test default permissive when unset
+        assert!(is_trusted_issuer("did:web:any-domain.com"));
+
+        // Set allowlist
+        std::env::set_var(
+            "TRUSTED_ISSUER_DOMAINS",
+            "partner-corp.com,*.trusted-ecosystem.io,did:web:special-org.net",
+        );
+
+        assert!(is_trusted_issuer("did:web:partner-corp.com"));
+        assert!(is_trusted_issuer("did:web:partner-corp.com:subpath"));
+        assert!(is_trusted_issuer("did:web:agent.trusted-ecosystem.io"));
+        assert!(is_trusted_issuer("did:web:special-org.net"));
+        assert!(!is_trusted_issuer("did:web:untrusted-attacker.com"));
+
+        std::env::remove_var("TRUSTED_ISSUER_DOMAINS");
     }
 
     #[test]
@@ -960,5 +1397,65 @@ mod tests {
         } else {
             panic!("Expected Unsupported algorithm error");
         }
+    }
+
+    #[tokio::test]
+    async fn test_verify_presentation_expired_envelope() {
+        use ed25519_dalek::Signer;
+        let client = reqwest::Client::new();
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let (sk, vk) = make_ed25519_keypair();
+        let agent_did = make_did_jwk(&vk);
+
+        let header = b64.encode(b"{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}");
+        let payload = b64.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "iss": agent_did,
+                "exp": 1000,
+                "vp": {
+                    "verifiableCredential": "fake.vc.jwt"
+                }
+            }))
+            .unwrap(),
+        );
+        let signing_input = format!("{header}.{payload}");
+        let sig = sk.sign(signing_input.as_bytes());
+        let token = format!("{signing_input}.{}", b64.encode(sig.to_bytes()));
+
+        let res = verify_presentation(&token, &client, None).await;
+        assert!(matches!(res, Err(VpError::TokenExpired(_))));
+    }
+
+    #[tokio::test]
+    async fn test_verify_presentation_audience_mismatch() {
+        use ed25519_dalek::Signer;
+        let client = reqwest::Client::new();
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let (sk, vk) = make_ed25519_keypair();
+        let agent_did = make_did_jwk(&vk);
+
+        let header = b64.encode(b"{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}");
+        let payload = b64.encode(
+            serde_json::to_vec(&serde_json::json!({
+                "iss": agent_did,
+                "aud": "did:web:expected-gateway.com",
+                "vp": {
+                    "verifiableCredential": "fake.vc.jwt"
+                }
+            }))
+            .unwrap(),
+        );
+        let signing_input = format!("{header}.{payload}");
+        let sig = sk.sign(signing_input.as_bytes());
+        let token = format!("{signing_input}.{}", b64.encode(sig.to_bytes()));
+
+        let res = verify_presentation_with_options(
+            &token,
+            &client,
+            None,
+            Some("did:web:different-gateway.com"),
+        )
+        .await;
+        assert!(matches!(res, Err(VpError::AudienceMismatch { .. })));
     }
 }

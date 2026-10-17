@@ -358,6 +358,24 @@ impl AuthResolver {
             .await
             .map_err(|e| AuthError::InvalidToken(anyhow::anyhow!(e.to_string())))?;
 
+        // Extract delegated scopes from credentialSubject (scope, scopes, allowed_tools, permissions)
+        let oauth_scopes = match vp
+            .credential_subject
+            .get("scope")
+            .or_else(|| vp.credential_subject.get("scopes"))
+            .or_else(|| vp.credential_subject.get("allowed_tools"))
+            .or_else(|| vp.credential_subject.get("permissions"))
+        {
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+            Some(serde_json::Value::String(s)) => {
+                s.split_whitespace().map(|item| item.to_string()).collect()
+            }
+            _ => Vec::new(),
+        };
+
         // Verified presentations represent AuthLevel 4.
         Ok(IdentityContext {
             tenant_id: vp.tenant_id,
@@ -366,12 +384,36 @@ impl AuthResolver {
             requester_did: vp.agent_did,
             auth_level: trust_core::actor::AuthLevel::Level4Verified,
             auth_method: AuthMethod::VpEdDsa,
-            oauth_scopes: vec![],
+            oauth_scopes,
             session_jwt: vp_token.to_string(),
             source: SourceContext {
                 source_type: SourceType::SsiAgent,
                 ..Default::default()
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_extract_scopes_from_credential_subject() {
+        let subject = serde_json::json!({
+            "id": "did:key:z1234",
+            "scope": ["catalog:browse", "checkout:reserve", "payment:exec"]
+        });
+
+        let scopes: Vec<String> = match subject.get("scope") {
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+            _ => vec![],
+        };
+
+        assert_eq!(
+            scopes,
+            vec!["catalog:browse", "checkout:reserve", "payment:exec"]
+        );
     }
 }

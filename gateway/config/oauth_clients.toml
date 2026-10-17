@@ -41,12 +41,44 @@ allowed_scopes = ["mcp:execute", "tools:list", "tools:call"]
 display_name = "Claude.ai"
 
 [[clients]]
+client_id = "company-alpha"
+client_secret_env = "B2B_SECRET_COMPANY_ALPHA"
+tenant_id = "tenant_alpha"
+redirect_uris = ["http://localhost:4010/oauth/callback", "http://127.0.0.1:4010/oauth/callback"]
+allowed_scopes = ["b2b:query", "b2b:semantic_filter"]
+display_name = "Company Alpha"
+
+[[clients]]
 client_id = "company-beta"
 client_secret_env = "B2B_SECRET_COMPANY_BETA"
 tenant_id = "tenant_beta"
 redirect_uris = ["http://localhost:4010/oauth/callback", "http://127.0.0.1:4010/oauth/callback"]
 allowed_scopes = ["b2b:query", "mcp:execute", "tools:list", "tools:call"]
 display_name = "Company Beta"
+
+[[clients]]
+client_id = "company-gamma"
+client_secret_env = "B2B_SECRET_COMPANY_GAMMA"
+tenant_id = "tenant_gamma"
+redirect_uris = ["http://localhost:4010/oauth/callback", "http://127.0.0.1:4010/oauth/callback"]
+allowed_scopes = ["b2b:query", "b2b:semantic_filter"]
+display_name = "Company Gamma"
+
+[[clients]]
+client_id = "company-delta"
+client_secret_env = "B2B_SECRET_COMPANY_DELTA"
+tenant_id = "tenant_delta"
+redirect_uris = ["http://localhost:4010/oauth/callback", "http://127.0.0.1:4010/oauth/callback"]
+allowed_scopes = ["b2b:query"]
+display_name = "Company Delta"
+
+[[clients]]
+client_id = "company-epsilon"
+client_secret_env = "B2B_SECRET_COMPANY_EPSILON"
+tenant_id = "tenant_epsilon"
+redirect_uris = ["http://localhost:4010/oauth/callback", "http://127.0.0.1:4010/oauth/callback"]
+allowed_scopes = ["b2b:query"]
+display_name = "Company Epsilon"
 
 # To avoid mistakes
 # MCP URL ="https://trust.lianxi.io/v1/mcp/sse"

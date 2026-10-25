@@ -1,0 +1,11 @@
+[skill]
+id = "io.lianxi.skill.data_analyst@v1"
+name = "Data Analyst"
+description = "Hardened dynamic data analysis capabilities sandbox"
+
+[progressive_unlock]
+levels = [
+    { level = 1, name = "Explorer", description = "Allows schema inspection and markdown report generation." },
+    { level = 2, name = "Analyst", description = "Allows data sampling and stats computation." },
+    { level = 3, name = "Senior Analyst", description = "Allows cross-dataset joins and anomaly detection." }
+]

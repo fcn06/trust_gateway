@@ -1,0 +1,18 @@
+[package]
+name = "trust-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Pure governance kernel, canonical hashing, grant validation, manifest models"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+jwt-simple = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+bs58 = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }

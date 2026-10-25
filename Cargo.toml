@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/trust-sdk",
+    "crates/trust-engine",
+    "bins/trust-gateway-oss",
+    "bins/trustctl",
+]
+
+[workspace.dependencies]
+subtle = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "0.8"
+toml = "0.8"
+
+sha2 = "0.10"
+ed25519-dalek = { version = "2.1", default-features = false, features = ["rand_core"] }
+jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
+hex = "0.4"
+base64 = "0.22"
+bs58 = "0.5"
+
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+async-stream = "0.3"
+axum = { version = "0.7", features = ["ws"] }
+tower = { version = "0.5" }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+dashmap = "6.1"
+
+thiserror = "1.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+clap = { version = "4.0", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+regex = "1.10"
+libc = "0.2"
+
+trust-sdk = { path = "crates/trust-sdk" }
+trust-engine = { path = "crates/trust-engine" }

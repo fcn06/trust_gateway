@@ -1,0 +1,15 @@
+{
+  "grant_id": "grant_mis_003",
+  "action_id": "act_125",
+  "tenant_id": "tenant_prod_1",
+  "owner_did": "did:example:user123",
+  "requester_did": "did:example:agent456",
+  "executor_id": "exec_host_alpha",
+  "allowed_action": "google.calendar.event.create",
+  "tool_version": "1.0.0",
+  "clearance": "auto_approved",
+  "expires_at": 1893456000,
+  "input_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "policy_hash": "pol_hash_789",
+  "registry_hash": "reg_hash_456"
+}

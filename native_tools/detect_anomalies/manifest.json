@@ -1,0 +1,34 @@
+{
+  "schema_version": "lianxi.skill/v1",
+  "id": "io.lianxi.skill.detect_anomalies@v1",
+  "name": "detect_anomalies",
+  "version": "1.0.0",
+  "description": "Native skill detect_anomalies",
+  "author_did": "did:web:lianxi.io",
+  "data_origin_trust": "TrustedInternal",
+  "lineage_rules": [],
+  "execution": {
+    "runtime": "native_tool",
+    "entrypoint": "run.sh",
+    "timeout_secs": 15,
+    "memory_limit_mb": 512,
+    "allowed_interpreters": ["bash", "sh"]
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string" }
+    }
+  },
+  "policy_defaults": {
+    "default_tier": "tier0_auto",
+    "max_frequency_per_trace": 3,
+    "default_risk_level": "low",
+    "operation_kind": "read"
+  },
+  "egress": {
+    "contains_pii": false,
+    "max_payload_bytes": 65536,
+    "allowed_fields": ["result", "status", "data"]
+  }
+}

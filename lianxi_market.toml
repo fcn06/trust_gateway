@@ -1,0 +1,17 @@
+mode = "oss_standalone"
+
+[server]
+listen_addr = "127.0.0.1:8080"
+request_limit_bytes = 65536
+
+[auth]
+# Static API key for local mono-tenant testing (can be overridden by TRUST_GATEWAY_API_KEY env var)
+api_key = "sk_default_dev_key"
+
+[keys]
+grant_signing_key_path = "dev/grant_signing.pem"
+
+[paths]
+tools_dir = "native_tools"
+policy_path = "policy.default.toml"
+audit_db_path = "audit.sqlite"

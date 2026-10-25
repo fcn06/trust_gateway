@@ -1,0 +1,15 @@
+{
+  "grant_id": "grant_exp_002",
+  "action_id": "act_124",
+  "tenant_id": "tenant_prod_1",
+  "owner_did": "did:example:user123",
+  "requester_did": "did:example:agent456",
+  "executor_id": "exec_host_alpha",
+  "allowed_action": "google.calendar.event.create",
+  "tool_version": "1.0.0",
+  "clearance": "auto_approved",
+  "expires_at": 1600000000,
+  "input_hash": "2f6e91f16597950c76fb0d28704207902d24294a6136d8d9b15d0eb12c8b8bf9",
+  "policy_hash": "pol_hash_789",
+  "registry_hash": "reg_hash_456"
+}

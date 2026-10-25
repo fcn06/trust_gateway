@@ -1,0 +1,38 @@
+{
+  "schema_version": "lianxi.skill/v1",
+  "id": "io.lianxi.skill.hello_world@v1",
+  "name": "claw_hello_world",
+  "version": "1.0.0",
+  "description": "Example Claw skill — echoes back the provided message",
+  "author_did": "did:web:lianxi.io",
+  "data_origin_trust": "TrustedInternal",
+  "lineage_rules": [],
+  "execution": {
+    "runtime": "native_tool",
+    "entrypoint": "run.sh",
+    "timeout_secs": 10,
+    "memory_limit_mb": 256,
+    "allowed_interpreters": ["bash", "sh"]
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "description": "Message to echo back"
+      }
+    },
+    "required": ["message"]
+  },
+  "policy_defaults": {
+    "default_tier": "tier0_auto",
+    "max_frequency_per_trace": 5,
+    "default_risk_level": "low",
+    "operation_kind": "read"
+  },
+  "egress": {
+    "contains_pii": false,
+    "max_payload_bytes": 65536,
+    "allowed_fields": ["result", "skill", "action_id"]
+  }
+}

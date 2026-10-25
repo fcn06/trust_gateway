@@ -1,0 +1,35 @@
+{
+  "schema_version": "lianxi.skill/v1",
+  "id": "io.lianxi.skill.weather@v1",
+  "name": "claw_weather",
+  "version": "1.0.0",
+  "description": "Get current weather for a location. CRITICAL: You MUST provide arguments as a valid JSON object with the 'location' key (e.g. {\"location\": \"Boston\"}). Do NOT supply a raw string.",
+  "author_did": "did:web:lianxi.io",
+  "execution": {
+    "runtime": "native_tool",
+    "entrypoint": "run.sh",
+    "timeout_secs": 30,
+    "memory_limit_mb": 512,
+    "allowed_interpreters": ["bash", "sh"]
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "location": {
+        "type": "string",
+        "description": "The city or location to search for, e.g., 'London' or 'Chengdu'"
+      }
+    },
+    "required": ["location"]
+  },
+  "policy_defaults": {
+    "default_tier": "tier0_auto",
+    "max_frequency_per_trace": 3,
+    "default_risk_level": "low"
+  },
+  "egress": {
+    "contains_pii": false,
+    "max_payload_bytes": 65536,
+    "allowed_fields": ["result", "skill", "action_id", "location", "temperature", "condition"]
+  }
+}

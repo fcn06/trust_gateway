@@ -1,0 +1,30 @@
+[governance]
+policy_version = "1.0.0"
+default_action = "deny"
+input_hash_binding_required = true
+max_grant_ttl_seconds = 30
+
+[[rules]]
+name = "Auto-allow read-only operations"
+operation_kind = "read"
+action = "allow"
+priority = 10
+
+[[rules]]
+name = "Require approval for financial mutations"
+operation_kind = "financial_mutation"
+action = "require_approval"
+min_amount_cents = 10000
+priority = 20
+
+[[rules]]
+name = "Require approval for mutations"
+operation_kind = "write"
+action = "require_approval"
+priority = 15
+
+[[rules]]
+name = "Deny destructive operations"
+operation_kind = "destructive"
+action = "deny"
+priority = 30

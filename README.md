@@ -223,6 +223,48 @@ Trust Gateway serves as **Tier 2 (Execution Egress Firewall)** within enterprise
 
 ---
 
+## 🛡️ Policy Governance & Agent Escalation: The 4 Decision Branches
+
+When an autonomous AI agent submits an action proposal, the Trust Gateway evaluates it against deterministic policy rules through **4 distinct decision paths**:
+
+```text
+Incoming Action Proposal
+           │
+           ├── 1. EXPLICIT REJECT    ──> Matched a "deny" rule. Blocked immediately with 403 Forbidden.
+           ├── 2. EXPLICIT APPROVE   ──> Matched an "allow" rule. Executes immediately (< 1 ms).
+           ├── 3. EXPLICIT ESCALATE  ──> Matched a sensitive rule. Mandatory human sign-off (Passkey/FIDO2).
+           └── 4. UNMATCHED (NEW)    ──> Novel action that matches ZERO rules.
+                                           │
+                                           ├── Is Triage Agent online? (:4015)
+                                           │     ├── YES ──> Cognitive Triage generates risk dossier + draft rule,
+                                           │     │           presenting it to a human for 1-click approval.
+                                           │     └── NO  ──> Direct Manual Escalation (safe default fallback).
+```
+
+### Explaining the Process in Plain Words
+
+1. **Explicit Rejections are Absolute:**
+   If a rule marks an action as `deny` (such as executing destructive OS commands, dropping tables, or calling unauthorized endpoints), the gateway rejects it on the spot with `403 Forbidden`. No humans are disturbed and no AI model is queried.
+
+2. **Explicit Approvals are Instant:**
+   If a rule marks an action as `allow` (such as verified read-only operations within quota), the gateway generates a cryptographically bound Ed25519 `ExecutionGrant` in `< 1 ms` and runs the action in the isolated sandbox.
+
+3. **Explicit Escalations Always Require Human Authority:**
+   If an action triggers an escalation rule (such as initiating financial transactions over $10,000 or altering IAM roles), policy dictates that this is **non-delegable to AI models**. The gateway pauses execution and requires a human administrator to provide a cryptographic passkey or admin approval.
+
+4. **Novel Tool Calls Trigger Agent Triage (Instead of Failing):**
+   In traditional static firewalls, any tool call that doesn't have an existing rule is either blindly blocked (breaking agent autonomy) or blindly allowed (introducing security risk). In Marketplace Trust Gateway:
+   * **Cognitive Triage First:** The gateway could dispatch the novel action to a standalone triage_agent service. The triage agent analyzes the arguments, calculates the financial and operational blast radius, and prepares an **executive summary dossier** and a **draft TOML rule**.
+   * **Human Approves in 1 Click:** The human approver reviews the pre-analyzed dossier and can approve the action and accept the synthesized rule with a single click. Once adopted, future calls to that tool match the rule automatically!
+
+5. **Safe Default Fallback (Resilience Guarantee):**
+   If the `triage_agent` service is offline, unreachable, or times out (> 2.5s), the gateway **gracefully falls back to direct manual escalation** (`Tier1RequireHumanApproval`). It **never fails open**, never crashes, and never executes unapproved operations without human review.
+
+> 📖 **Detailed Architecture Document:**  
+> For full sequence diagrams, failure mode analyses, and code mapping, consult the comprehensive architectural specification in [`public/docs/illustrations/architecture/README.md`](docs/illustrations/architecture/README.md).
+
+---
+
 ## Community Edition (OSS) vs. Commercial Pro
 
 The open-source core provides a functional mono-tenant governance engine suitable for evaluation, local prototyping, and internal deployment (Alpha v0.1.x). Advanced multi-tenant enterprise features live in the commercial extension:

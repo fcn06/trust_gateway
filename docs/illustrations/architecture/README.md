@@ -156,8 +156,8 @@ When a human approver accepts an unmatched action, they can optionally toggle `a
 
 | Component | Repository Path | Core Functionality |
 |---|---|---|
-| **Decision Model** | [`public/crates/trust-sdk/src/model.rs`](file:///home/fred/Agents_Projects/Antigravity/codebase/four_tier_entreprise_agentic_stack/marketplace_trust_gateway/public/crates/trust-sdk/src/model.rs) | Defines `PolicyDecision`, `is_unmatched`, `matched_rule`, and governance tiers. |
-| **Policy Engine** | [`public/crates/trust-engine/src/policy.rs`](file:///home/fred/Agents_Projects/Antigravity/codebase/four_tier_entreprise_agentic_stack/marketplace_trust_gateway/public/crates/trust-engine/src/policy.rs) | Evaluates rules, detects zero-match conditions, and handles default escalation fallbacks. |
-| **Pipeline Hook** | [`public/crates/trust-engine/src/pipeline.rs`](file:///home/fred/Agents_Projects/Antigravity/codebase/four_tier_entreprise_agentic_stack/marketplace_trust_gateway/public/crates/trust-engine/src/pipeline.rs) | Step 8 dispatches to Triage Agent with automatic fallback to manual escalation. |
-| **Approval Manager** | [`public/crates/trust-engine/src/approval.rs`](file:///home/fred/Agents_Projects/Antigravity/codebase/four_tier_entreprise_agentic_stack/marketplace_trust_gateway/public/crates/trust-engine/src/approval.rs) | Stores `ApprovalRecord` enriched with `triage_dossier` and `candidate_rule`. |
-| **Standalone Triage Agent** | [`triage_agent/`](file:///home/fred/Agents_Projects/Antigravity/codebase/four_tier_entreprise_agentic_stack/triage_agent) | Standalone microservice on port 4015 performing cognitive triage and rule synthesis. |
+| **Decision Model** | [`trust-sdk/src/model.rs`](../../../crates/trust-sdk/src/model.rs) | Defines `PolicyDecision`, `is_unmatched`, `matched_rule`, and governance tiers. |
+| **Policy Engine** | [`trust-engine/src/policy.rs`](../../../crates/trust-engine/src/policy.rs) | Evaluates rules, detects zero-match conditions, and handles default escalation fallbacks. |
+| **Pipeline Hook** | [`trust-engine/src/pipeline.rs`](../../../crates/trust-engine/src/pipeline.rs) | Step 8 dispatches to Triage Agent with automatic fallback to manual escalation. |
+| **Approval Manager** | [`trust-engine/src/approval.rs`](../../../crates/trust-engine/src/approval.rs) | Stores `ApprovalRecord` enriched with `triage_dossier` and `candidate_rule`. |
+| **Standalone Triage Agent** | [`triage_agent/`](../../../../triage_agent) | Standalone microservice on port 4015 performing cognitive triage and rule synthesis. |

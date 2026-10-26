@@ -187,9 +187,92 @@ impl TrustEngine {
             return Err(EngineError::ActionDenied(base_decision.reason));
         }
 
-        // Step 8: Human approval if required
+        // Step 8: Human approval or Cognitive Triage if required
         if effective_tier >= Tier::Tier1RequireHumanApproval {
             let reason = require_approval_reason.unwrap_or(base_decision.reason);
+
+            // If action is unmatched (no rule triggered), attempt Cognitive Triage first
+            if base_decision.is_unmatched {
+                let triage_url = self
+                    .policy_engine
+                    .triage_agent_url()
+                    .map(|s| s.to_string())
+                    .or_else(|| std::env::var("TRIAGE_AGENT_URL").ok());
+
+                if let Some(url) = triage_url {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_millis(2500))
+                        .build()
+                        .unwrap_or_default();
+
+                    let triage_payload = serde_json::json!({
+                        "triage_id": format!("trg_{}", uuid::Uuid::new_v4()),
+                        "action_id": action.action_id.clone(),
+                        "trace_id": trace_id.clone(),
+                        "tenant_id": tenant_id.to_string(),
+                        "caller_did": verified_jwt.subject().to_string(),
+                        "tool_name": action.tool_name.clone(),
+                        "operation_kind": skill.policy_defaults.operation_kind.clone(),
+                        "arguments": action.arguments.clone(),
+                        "skill_manifest": serde_json::to_value(&skill).ok(),
+                    });
+
+                    let eval_endpoint = format!("{}/v1/triage/evaluate", url.trim_end_matches('/'));
+                    match client.post(&eval_endpoint).json(&triage_payload).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            if let Ok(triage_res) = resp.json::<serde_json::Value>().await {
+                                let rec = triage_res
+                                    .get("recommendation")
+                                    .and_then(|r| r.as_str())
+                                    .unwrap_or("require_human_approval");
+
+                                if rec == "recommend_reject" {
+                                    let reject_reason = triage_res
+                                        .get("dossier")
+                                        .and_then(|d| d.get("mitigation_notes"))
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Cognitive Triage Agent recommended denial for novel action");
+                                    return Err(EngineError::ActionDenied(reject_reason.to_string()));
+                                }
+
+                                let dossier = triage_res.get("dossier").cloned();
+                                let candidate_rule = triage_res.get("candidate_rule").cloned();
+
+                                let approval_record = self
+                                    .approval_manager
+                                    .create_enriched_request(
+                                        action.clone(),
+                                        reason.clone(),
+                                        dossier,
+                                        candidate_rule,
+                                    )
+                                    .await?;
+
+                                return Err(EngineError::ApprovalRequired {
+                                    action_id: action.action_id.clone(),
+                                    approval_id: approval_record.approval_id,
+                                    reason,
+                                });
+                            }
+                        }
+                        Ok(resp) => {
+                            tracing::warn!(
+                                "⚠️ Triage agent returned non-200 ({}); applying default manual escalation.",
+                                resp.status()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "⚠️ Triage agent unavailable at {} ({}); applying default manual escalation.",
+                                eval_endpoint,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Default Manual Escalation path (Standard approval record without triage, or fallback if triage offline)
             let approval_record = self
                 .approval_manager
                 .create_request(action.clone(), reason.clone())

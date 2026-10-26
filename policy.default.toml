@@ -1,6 +1,7 @@
 [governance]
 policy_version = "1.0.0"
-default_action = "deny"
+default_action = "require_approval"
+triage_agent_url = "http://127.0.0.1:4015"
 input_hash_binding_required = true
 max_grant_ttl_seconds = 30
 

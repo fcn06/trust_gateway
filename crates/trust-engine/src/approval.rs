@@ -30,6 +30,10 @@ pub struct ApprovalRecord {
     pub resolved_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage_dossier: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_rule: Option<serde_json::Value>,
 }
 
 pub struct NoopApprovalNotifier;
@@ -143,6 +147,41 @@ impl ApprovalManager {
             expires_at: now + self.ttl_secs,
             resolved_by: None,
             resolved_at: None,
+            triage_dossier: None,
+            candidate_rule: None,
+        };
+
+        {
+            let mut lock = self.records.write().await;
+            lock.insert(approval_id.clone(), record.clone());
+        }
+
+        let _ = self.notifier.notify_approval_requested(&record).await;
+        Ok(record)
+    }
+
+    pub async fn create_enriched_request(
+        &self,
+        action: ProposedAction,
+        reason: String,
+        triage_dossier: Option<serde_json::Value>,
+        candidate_rule: Option<serde_json::Value>,
+    ) -> Result<ApprovalRecord, EngineError> {
+        let approval_id = format!("appr_{}", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().timestamp();
+        let record = ApprovalRecord {
+            approval_id: approval_id.clone(),
+            action_id: action.action_id.clone(),
+            tenant_id: action.tenant_id.clone(),
+            status: ApprovalStatus::Pending,
+            proposed_action: action,
+            reason,
+            requested_at: now,
+            expires_at: now + self.ttl_secs,
+            resolved_by: None,
+            resolved_at: None,
+            triage_dossier,
+            candidate_rule,
         };
 
         {

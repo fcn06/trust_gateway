@@ -195,6 +195,10 @@ pub struct PolicyDecision {
     pub tier: Tier,
     pub policy_fingerprint: String,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_rule: Option<String>,
+    #[serde(default)]
+    pub is_unmatched: bool,
 }
 
 /// Generic envelope wrapper

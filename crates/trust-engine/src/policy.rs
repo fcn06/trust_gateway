@@ -16,6 +16,10 @@ pub enum PolicyError {
 #[derive(Debug, Deserialize, Clone)]
 pub struct GovernanceConfig {
     pub policy_version: String,
+    #[serde(default)]
+    pub default_action: Option<String>,
+    #[serde(default)]
+    pub triage_agent_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -63,6 +67,10 @@ impl PolicyEngine {
 
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    pub fn triage_agent_url(&self) -> Option<&str> {
+        self.config.governance.triage_agent_url.as_deref()
     }
 
     pub fn verify_signature(
@@ -140,6 +148,8 @@ impl PolicyEngine {
                             "Matched policy rule '{}' requires min_auth_level = {}, caller has {:?}",
                             rule.name, min_level, caller_auth_level
                         ),
+                        matched_rule: Some(rule.name.clone()),
+                        is_unmatched: false,
                     };
                 }
             }
@@ -160,22 +170,36 @@ impl PolicyEngine {
                     "Matched policy rule '{}' (priority {})",
                     rule.name, rule.priority
                 ),
+                matched_rule: Some(rule.name.clone()),
+                is_unmatched: false,
             };
         }
 
-        // Default fallback based on manifest default_tier
-        let default_tier = match skill.policy_defaults.default_tier.to_lowercase().as_str() {
-            "tier0_auto" | "tier0" | "auto" => Tier::Tier0Auto,
-            "tier1_human" | "tier1" | "require_approval" => Tier::Tier1RequireHumanApproval,
+        // Zero rules matched!
+        // Fallback: check configured default_action or default to Tier1RequireHumanApproval (Manual Escalation)!
+        let default_tier = match self
+            .config
+            .governance
+            .default_action
+            .as_deref()
+            .unwrap_or("require_approval")
+            .to_lowercase()
+            .as_str()
+        {
+            "tier0_auto" | "tier0" | "auto" | "allow" => Tier::Tier0Auto,
+            "tier1_human" | "tier1" | "require_approval" | "escalate" => Tier::Tier1RequireHumanApproval,
             "tier2_elevated" | "tier2" => Tier::Tier2RequireElevatedApproval,
-            _ => Tier::Tier3Deny,
+            "deny" => Tier::Tier3Deny,
+            _ => Tier::Tier1RequireHumanApproval, // Safe default fallback to manual escalation!
         };
 
         PolicyDecision {
             action_id: action.action_id.clone(),
             tier: default_tier,
             policy_fingerprint: self.fingerprint.clone(),
-            reason: "Default manifest tier applied".to_string(),
+            reason: "Unmatched action: No policy rule triggered; default escalation applied".to_string(),
+            matched_rule: None,
+            is_unmatched: true,
         }
     }
 }
@@ -274,5 +298,42 @@ priority = 100
         let decision_webauthn =
             engine.evaluate_with_auth_level(&action, &skill, AuthLevel::Level5WebAuthn);
         assert_eq!(decision_webauthn.tier, Tier::Tier0Auto);
+        assert!(!decision_webauthn.is_unmatched);
+        assert_eq!(decision_webauthn.matched_rule, Some("High value payout requires WebAuthn".to_string()));
+    }
+
+    #[test]
+    fn test_unmatched_action_falls_back_to_manual_escalation() {
+        let toml_content = r#"
+[governance]
+policy_version = "1.0.0"
+default_action = "require_approval"
+triage_agent_url = "http://127.0.0.1:4015"
+
+[[rules]]
+name = "Allow known safe tool"
+tool_names = ["safe_tool"]
+action = "allow"
+priority = 10
+"#;
+
+        let engine = PolicyEngine::from_toml(toml_content).unwrap();
+        assert_eq!(engine.triage_agent_url(), Some("http://127.0.0.1:4015"));
+
+        // Novel tool that matches ZERO rules
+        let novel_action = ProposedAction {
+            action_id: "act_novel".to_string(),
+            tool_name: "novel_unmapped_tool".to_string(),
+            arguments: serde_json::json!({}),
+            ..Default::default()
+        };
+        let skill = dummy_skill("custom");
+
+        let decision = engine.evaluate_with_auth_level(&novel_action, &skill, AuthLevel::Level3Session);
+        assert!(decision.is_unmatched);
+        assert_eq!(decision.matched_rule, None);
+        assert_eq!(decision.tier, Tier::Tier1RequireHumanApproval);
+        assert!(decision.reason.contains("default escalation applied"));
     }
 }
+

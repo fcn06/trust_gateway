@@ -36,6 +36,19 @@ pub struct PolicyRule {
     pub action: String,
     #[serde(default)]
     pub priority: i32,
+    // Probationary Lifecycle & Guardrail Extensions
+    #[serde(default)]
+    pub lifecycle_state: Option<String>,
+    #[serde(default)]
+    pub probation_target: Option<u32>,
+    #[serde(default)]
+    pub confirmations_count: Option<u32>,
+    #[serde(default)]
+    pub required_approver_quorum: Option<u32>,
+    #[serde(default)]
+    pub projected_fields: Option<Vec<String>>,
+    #[serde(default)]
+    pub escalation_role: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -54,6 +67,19 @@ impl PolicyEngine {
     pub fn from_toml(toml_str: &str) -> Result<Self, PolicyError> {
         let config: PolicyConfig =
             toml::from_str(toml_str).map_err(|e| PolicyError::ParseError(e.to_string()))?;
+
+        // PEP-Level Invariant: A rule in Draft or Probationary cannot grant direct bypass ('allow')
+        for rule in &config.rules {
+            if let Some(ref state) = rule.lifecycle_state {
+                let s = state.to_lowercase();
+                if (s == "probationary" || s == "draft") && rule.action.eq_ignore_ascii_case("allow") {
+                    return Err(PolicyError::ParseError(format!(
+                        "Security Invariant Violation in rule '{}': Rules with lifecycle_state = '{}' cannot grant direct bypass ('allow'). Must require approval.",
+                        rule.name, state
+                    )));
+                }
+            }
+        }
 
         let mut hasher = Sha256::new();
         hasher.update(toml_str.as_bytes());
@@ -147,6 +173,39 @@ impl PolicyEngine {
                         reason: format!(
                             "Matched policy rule '{}' requires min_auth_level = {}, caller has {:?}",
                             rule.name, min_level, caller_auth_level
+                        ),
+                        matched_rule: Some(rule.name.clone()),
+                        is_unmatched: false,
+                    };
+                }
+            }
+
+            // Check lifecycle_state enforcement (PEP level guardrail)
+            if let Some(ref state) = rule.lifecycle_state {
+                let s = state.to_lowercase();
+                if s == "quarantined" {
+                    return PolicyDecision {
+                        action_id: action.action_id.clone(),
+                        tier: Tier::Tier3Deny,
+                        policy_fingerprint: self.fingerprint.clone(),
+                        reason: format!(
+                            "Matched policy rule '{}' is in QUARANTINED status due to security tripwire; execution blocked",
+                            rule.name
+                        ),
+                        matched_rule: Some(rule.name.clone()),
+                        is_unmatched: false,
+                    };
+                }
+                if s == "probationary" || s == "draft" {
+                    let target = rule.probation_target.unwrap_or(5);
+                    let count = rule.confirmations_count.unwrap_or(0);
+                    return PolicyDecision {
+                        action_id: action.action_id.clone(),
+                        tier: Tier::Tier1RequireHumanApproval,
+                        policy_fingerprint: self.fingerprint.clone(),
+                        reason: format!(
+                            "Matched policy rule '{}' is in PROBATIONARY status ({}/{} confirmations). Mandatory human escalation enforced.",
+                            rule.name, count, target
                         ),
                         matched_rule: Some(rule.name.clone()),
                         is_unmatched: false,
@@ -335,5 +394,112 @@ priority = 10
         assert_eq!(decision.tier, Tier::Tier1RequireHumanApproval);
         assert!(decision.reason.contains("default escalation applied"));
     }
-}
 
+    #[test]
+    fn test_pep_rejects_probationary_rule_with_allow_action() {
+        let toml_content = r#"
+[governance]
+policy_version = "1.0.0"
+
+[[rules]]
+name = "Invalid bypass candidate"
+tool_names = ["novel_tool"]
+action = "allow"
+lifecycle_state = "probationary"
+priority = 15
+"#;
+
+        let result = PolicyEngine::from_toml(toml_content);
+        assert!(result.is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains("Security Invariant Violation"));
+        assert!(err_msg.contains("cannot grant direct bypass"));
+    }
+
+    #[test]
+    fn test_pep_enforces_human_escalation_for_probationary_rule() {
+        let toml_content = r#"
+[governance]
+policy_version = "1.0.0"
+
+[[rules]]
+name = "Probationary candidate rule"
+tool_names = ["novel_tool"]
+action = "require_approval"
+lifecycle_state = "probationary"
+probation_target = 5
+confirmations_count = 2
+priority = 15
+"#;
+
+        let engine = PolicyEngine::from_toml(toml_content).unwrap();
+        let action = ProposedAction {
+            action_id: "act_prob".to_string(),
+            tool_name: "novel_tool".to_string(),
+            arguments: serde_json::json!({}),
+            ..Default::default()
+        };
+        let skill = dummy_skill("mutation");
+
+        let decision = engine.evaluate_with_auth_level(&action, &skill, AuthLevel::Level3Session);
+        assert_eq!(decision.tier, Tier::Tier1RequireHumanApproval);
+        assert!(!decision.is_unmatched);
+        assert!(decision.reason.contains("PROBATIONARY status (2/5 confirmations)"));
+    }
+
+    #[test]
+    fn test_pep_denies_quarantined_rule() {
+        let toml_content = r#"
+[governance]
+policy_version = "1.0.0"
+
+[[rules]]
+name = "Quarantined compromised rule"
+tool_names = ["risky_tool"]
+action = "require_approval"
+lifecycle_state = "quarantined"
+priority = 15
+"#;
+
+        let engine = PolicyEngine::from_toml(toml_content).unwrap();
+        let action = ProposedAction {
+            action_id: "act_quarantine".to_string(),
+            tool_name: "risky_tool".to_string(),
+            arguments: serde_json::json!({}),
+            ..Default::default()
+        };
+        let skill = dummy_skill("mutation");
+
+        let decision = engine.evaluate_with_auth_level(&action, &skill, AuthLevel::Level3Session);
+        assert_eq!(decision.tier, Tier::Tier3Deny);
+        assert!(decision.reason.contains("QUARANTINED status due to security tripwire"));
+    }
+
+    #[test]
+    fn test_pep_permits_graduated_rule() {
+        let toml_content = r#"
+[governance]
+policy_version = "1.0.0"
+
+[[rules]]
+name = "Graduated verified rule"
+tool_names = ["graduated_tool"]
+action = "allow"
+lifecycle_state = "graduated"
+priority = 15
+"#;
+
+        let engine = PolicyEngine::from_toml(toml_content).unwrap();
+        let action = ProposedAction {
+            action_id: "act_grad".to_string(),
+            tool_name: "graduated_tool".to_string(),
+            arguments: serde_json::json!({}),
+            ..Default::default()
+        };
+        let skill = dummy_skill("read");
+
+        let decision = engine.evaluate_with_auth_level(&action, &skill, AuthLevel::Level3Session);
+        assert_eq!(decision.tier, Tier::Tier0Auto);
+        assert_eq!(decision.matched_rule, Some("Graduated verified rule".to_string()));
+    }
+}

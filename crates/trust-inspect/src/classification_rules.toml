@@ -1,0 +1,107 @@
+version = "1.0.0"
+
+[destructive]
+keywords = [
+    "delete",
+    "drop",
+    "purge",
+    "destroy",
+    "wipe",
+    "terminate",
+    "revoke_all",
+    "truncate",
+    "kill",
+    "flush"
+]
+http_methods = ["DELETE"]
+
+[mutation]
+keywords = [
+    "create",
+    "update",
+    "set",
+    "amend",
+    "transfer",
+    "send",
+    "grant",
+    "revoke",
+    "modify",
+    "write",
+    "insert",
+    "execute",
+    "upload",
+    "charge",
+    "refund"
+]
+http_methods = ["POST", "PUT", "PATCH"]
+
+[read]
+keywords = [
+    "get",
+    "query",
+    "read",
+    "list",
+    "search",
+    "describe",
+    "fetch",
+    "view",
+    "check",
+    "inspect",
+    "find",
+    "status"
+]
+http_methods = ["GET", "HEAD", "OPTIONS"]
+
+[financial]
+field_keys = [
+    "amount_cents",
+    "amount",
+    "price",
+    "cost",
+    "total",
+    "value",
+    "transfer_amount",
+    "budget",
+    "balance",
+    "payout",
+    "refund_amount"
+]
+high_exposure_threshold_cents = 100000
+
+[iam_scopes]
+contract_keywords = ["vendor", "contract", "agreement", "subscription"]
+contract_scope = "contracts:manage"
+
+finance_keywords = ["billing", "transfer", "invoice", "payout", "payment", "disburse", "charge", "refund"]
+finance_scope = "finance:disburse"
+
+iam_keywords = ["iam", "auth", "role", "token", "permission", "credential", "api_key", "secret", "user_access"]
+iam_scope = "iam:credentials_manage"
+
+destructive_scope = "system:destructive_purge"
+mutation_default_scope = "data:mutation_general"
+read_default_scope = "data:read_restricted"
+
+[pii]
+patterns = [
+    "email",
+    "mail",
+    "phone",
+    "mobile",
+    "ssn",
+    "social_security",
+    "credit_card",
+    "card_number",
+    "cvv",
+    "password",
+    "secret",
+    "token",
+    "api_key",
+    "address",
+    "postal_code",
+    "zip_code",
+    "dob",
+    "birth_date",
+    "date_of_birth"
+]
+

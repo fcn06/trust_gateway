@@ -87,6 +87,8 @@ pub struct ExecutionGrant {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_input_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lineage_attestation: Option<String>,
 }
 
@@ -119,6 +121,8 @@ struct GrantCustomClaims {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     contract_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_input_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     lineage_attestation: Option<String>,
 }
 
@@ -143,6 +147,7 @@ pub fn sign_grant_jwt(
         budget: grant.budget.clone(),
         contract_id: grant.contract_id.clone(),
         contract_hash: grant.contract_hash.clone(),
+        source_input_hash: grant.source_input_hash.clone(),
         lineage_attestation: grant.lineage_attestation.clone(),
     };
 
@@ -220,6 +225,7 @@ pub fn validate_bound(
         budget: custom.budget,
         contract_id: custom.contract_id,
         contract_hash: custom.contract_hash,
+        source_input_hash: custom.source_input_hash,
         lineage_attestation: custom.lineage_attestation,
     };
 
@@ -289,6 +295,7 @@ mod tests {
             budget: None,
             contract_id: None,
             contract_hash: None,
+            source_input_hash: None,
             lineage_attestation: None,
         }
     }
@@ -392,6 +399,7 @@ mod tests {
             budget: None,
             contract_id: None,
             contract_hash: None,
+            source_input_hash: None,
             lineage_attestation: None,
         };
         let mut claims = Claims::with_custom_claims(custom, Duration::from_secs(0))

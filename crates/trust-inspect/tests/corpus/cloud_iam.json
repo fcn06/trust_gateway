@@ -1,0 +1,36 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Cloud IAM Management API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/iam/roles": {
+      "get": {
+        "operationId": "list_iam_roles",
+        "summary": "List IAM roles",
+        "parameters": [],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "operationId": "create_iam_role",
+        "summary": "Create IAM role",
+        "parameters": [
+          { "name": "role_name", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "permissions", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/iam/credentials/revoke_all": {
+      "post": {
+        "operationId": "revoke_all_credentials",
+        "summary": "Revoke all credentials for tenant",
+        "parameters": [
+          { "name": "tenant_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

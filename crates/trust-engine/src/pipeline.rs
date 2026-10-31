@@ -6,6 +6,7 @@ use crate::policy::PolicyEngine;
 use crate::traits::*;
 use ed25519_dalek::VerifyingKey;
 use jwt_simple::prelude::Ed25519KeyPair;
+use sha2::Digest;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use trust_sdk::canonical::canonical_hash;
@@ -32,6 +33,7 @@ pub struct TrustEngine {
     pub dispatcher: Arc<dyn ExecutorDispatcher>,
     pub audit_sink: Arc<dyn AuditSink>,
     pub approval_manager: Arc<ApprovalManager>,
+    pub contract_registry: Arc<dyn ContractRegistry>,
     pub tracked_call_chains: Arc<RwLock<std::collections::HashMap<String, CallChainContext>>>,
     pub configured_api_keys: Vec<String>,
 }
@@ -137,6 +139,40 @@ impl TrustEngine {
             .await?
             .ok_or_else(|| EngineError::SkillNotFound(action.tool_name.clone()))?;
 
+        // Step 4.5: Contract validation & drift detection (OB-INV-01, M4)
+        let active_contract = self
+            .contract_registry
+            .get_contract_for_skill(tenant_id, &action.tool_name)
+            .await?;
+
+        if let Some(ref contract) = active_contract {
+            let now = chrono::Utc::now().timestamp();
+            if let Err(e) = contract.validate_input(&action.tool_name, &action.arguments, now) {
+                let _ = self
+                    .audit_sink
+                    .append(AuditEvent {
+                        event_id: format!("ev_{}", uuid::Uuid::new_v4()),
+                        timestamp: now,
+                        event_type: "contract_drift".to_string(),
+                        tenant_id: tenant_id.to_string(),
+                        trace_id: trace_id.to_string(),
+                        action_id: Some(action.action_id.clone()),
+                        details: serde_json::json!({
+                            "contract_id": contract.contract_id,
+                            "violation": e.to_string(),
+                            "tool_name": action.tool_name,
+                        }),
+                        prev_hash: None,
+                        hash: None,
+                    })
+                    .await;
+                return Err(EngineError::ContractViolation(format!(
+                    "Contract '{}' input validation failed: {e}",
+                    contract.contract_id
+                )));
+            }
+        }
+
         // Step 5: ReputationEvaluator
         let rep_decision = self
             .reputation_evaluator
@@ -183,94 +219,154 @@ impl TrustEngine {
             }
         }
 
+        // Step 8: Cognitive Triage for unmatched novel actions (OB-INV-07 / OB-INV-11)
+        if base_decision.is_unmatched {
+            let triage_url = self
+                .policy_engine
+                .triage_agent_url()
+                .map(|s| s.to_string())
+                .or_else(|| std::env::var("TRIAGE_AGENT_URL").ok());
+
+            if let Some(url) = triage_url {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_millis(2500))
+                    .build()
+                    .unwrap_or_default();
+
+                let triage_payload = serde_json::json!({
+                    "triage_id": format!("trg_{}", uuid::Uuid::new_v4()),
+                    "action_id": action.action_id.clone(),
+                    "trace_id": trace_id.clone(),
+                    "tenant_id": tenant_id.to_string(),
+                    "caller_did": verified_jwt.subject().to_string(),
+                    "tool_name": action.tool_name.clone(),
+                    "operation_kind": skill.policy_defaults.operation_kind.clone(),
+                    "arguments": action.arguments.clone(),
+                    "skill_manifest": serde_json::to_value(&skill).ok(),
+                });
+
+                let eval_endpoint = format!("{}/v1/triage/evaluate", url.trim_end_matches('/'));
+                let body_bytes = serde_json::to_vec(&triage_payload).unwrap_or_default();
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(&body_bytes);
+                let body_hash = format!("{:x}", hasher.finalize());
+
+                let now = chrono::Utc::now().timestamp() as u64;
+                let traceparent_header = format!("00-{}-0000000000000001-01", trace_id);
+                let caller_did = format!("did:twin:z{}", hex::encode(self.signing_key_pair.public_key().to_bytes()));
+
+                let envelope_opt = trust_sdk::envelope::ServiceRequestEnvelope::new(
+                    caller_did,
+                    url.clone(),
+                    "POST",
+                    "/v1/triage/evaluate",
+                    body_hash,
+                    now,
+                    now + 25,
+                    format!("jti_{}", uuid::Uuid::new_v4()),
+                    traceparent_header.clone(),
+                );
+
+                let send_future = async {
+                    let mut req_builder = client
+                        .post(&eval_endpoint)
+                        .header("traceparent", traceparent_header)
+                        .header("content-type", "application/json");
+
+                    if let Ok(mut envelope) = envelope_opt {
+                        if let Ok(key_bytes) = self.signing_key_pair.to_bytes()[..32].try_into() {
+                            let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+                            envelope.sign(&signing_key);
+                            if let Ok(envelope_json) = serde_json::to_string(&envelope) {
+                                req_builder = req_builder.header("x-service-envelope", envelope_json);
+                            }
+                        }
+                    }
+
+                    req_builder.body(body_bytes).send().await
+                };
+
+                match send_future.await {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(triage_res) = resp.json::<serde_json::Value>().await {
+                            let rec = triage_res
+                                .get("recommendation")
+                                .and_then(|r| r.as_str())
+                                .unwrap_or("require_human_approval");
+
+                            if rec == "recommend_reject" {
+                                let reject_reason = triage_res
+                                    .get("dossier")
+                                    .and_then(|d| d.get("mitigation_notes"))
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("Cognitive Triage Agent recommended denial for novel action");
+
+                                let _ = self
+                                    .audit_sink
+                                    .append(AuditEvent {
+                                        event_id: format!("ev_{}", uuid::Uuid::new_v4()),
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                        event_type: "triage_rejection".to_string(),
+                                        tenant_id: tenant_id.to_string(),
+                                        trace_id: trace_id.to_string(),
+                                        action_id: Some(action.action_id.clone()),
+                                        details: serde_json::json!({
+                                            "decision": "denied",
+                                            "reason": reject_reason,
+                                            "triage_recommendation": rec,
+                                        }),
+                                        prev_hash: None,
+                                        hash: None,
+                                    })
+                                    .await;
+
+                                return Err(EngineError::ActionDenied(reject_reason.to_string()));
+                            }
+
+                            let dossier = triage_res.get("dossier").cloned();
+                            let candidate_rule = triage_res.get("candidate_rule").cloned();
+
+                            let approval_record = self
+                                .approval_manager
+                                .create_enriched_request(
+                                    action.clone(),
+                                    base_decision.reason.clone(),
+                                    dossier,
+                                    candidate_rule,
+                                )
+                                .await?;
+
+                            return Err(EngineError::ApprovalRequired {
+                                action_id: action.action_id.clone(),
+                                approval_id: approval_record.approval_id,
+                                reason: base_decision.reason,
+                            });
+                        }
+                    }
+                    Ok(resp) => {
+                        tracing::warn!(
+                            "⚠️ Triage agent returned non-200 ({}); applying default escalation.",
+                            resp.status()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "⚠️ Triage agent unavailable at {} ({}); applying default escalation.",
+                            eval_endpoint,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
         if effective_tier == Tier::Tier3Deny {
             return Err(EngineError::ActionDenied(base_decision.reason));
         }
 
-        // Step 8: Human approval or Cognitive Triage if required
+        // Step 9: Human approval if required
         if effective_tier >= Tier::Tier1RequireHumanApproval {
             let reason = require_approval_reason.unwrap_or(base_decision.reason);
-
-            // If action is unmatched (no rule triggered), attempt Cognitive Triage first
-            if base_decision.is_unmatched {
-                let triage_url = self
-                    .policy_engine
-                    .triage_agent_url()
-                    .map(|s| s.to_string())
-                    .or_else(|| std::env::var("TRIAGE_AGENT_URL").ok());
-
-                if let Some(url) = triage_url {
-                    let client = reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_millis(2500))
-                        .build()
-                        .unwrap_or_default();
-
-                    let triage_payload = serde_json::json!({
-                        "triage_id": format!("trg_{}", uuid::Uuid::new_v4()),
-                        "action_id": action.action_id.clone(),
-                        "trace_id": trace_id.clone(),
-                        "tenant_id": tenant_id.to_string(),
-                        "caller_did": verified_jwt.subject().to_string(),
-                        "tool_name": action.tool_name.clone(),
-                        "operation_kind": skill.policy_defaults.operation_kind.clone(),
-                        "arguments": action.arguments.clone(),
-                        "skill_manifest": serde_json::to_value(&skill).ok(),
-                    });
-
-                    let eval_endpoint = format!("{}/v1/triage/evaluate", url.trim_end_matches('/'));
-                    match client.post(&eval_endpoint).json(&triage_payload).send().await {
-                        Ok(resp) if resp.status().is_success() => {
-                            if let Ok(triage_res) = resp.json::<serde_json::Value>().await {
-                                let rec = triage_res
-                                    .get("recommendation")
-                                    .and_then(|r| r.as_str())
-                                    .unwrap_or("require_human_approval");
-
-                                if rec == "recommend_reject" {
-                                    let reject_reason = triage_res
-                                        .get("dossier")
-                                        .and_then(|d| d.get("mitigation_notes"))
-                                        .and_then(|m| m.as_str())
-                                        .unwrap_or("Cognitive Triage Agent recommended denial for novel action");
-                                    return Err(EngineError::ActionDenied(reject_reason.to_string()));
-                                }
-
-                                let dossier = triage_res.get("dossier").cloned();
-                                let candidate_rule = triage_res.get("candidate_rule").cloned();
-
-                                let approval_record = self
-                                    .approval_manager
-                                    .create_enriched_request(
-                                        action.clone(),
-                                        reason.clone(),
-                                        dossier,
-                                        candidate_rule,
-                                    )
-                                    .await?;
-
-                                return Err(EngineError::ApprovalRequired {
-                                    action_id: action.action_id.clone(),
-                                    approval_id: approval_record.approval_id,
-                                    reason,
-                                });
-                            }
-                        }
-                        Ok(resp) => {
-                            tracing::warn!(
-                                "⚠️ Triage agent returned non-200 ({}); applying default manual escalation.",
-                                resp.status()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "⚠️ Triage agent unavailable at {} ({}); applying default manual escalation.",
-                                eval_endpoint,
-                                e
-                            );
-                        }
-                    }
-                }
-            }
 
             // Default Manual Escalation path (Standard approval record without triage, or fallback if triage offline)
             let approval_record = self
@@ -295,6 +391,11 @@ impl TrustEngine {
         let input_hash = canonical_hash(&action.arguments);
         let grant_jti = format!("grant_{}", uuid::Uuid::new_v4());
 
+        let contract_id = active_contract.as_ref().map(|c| c.contract_id.clone());
+        let contract_hash = active_contract
+            .as_ref()
+            .and_then(|c| c.compute_canonical_hash().ok());
+
         let grant = ExecutionGrant {
             jti: grant_jti.clone(),
             action_id: action.action_id.clone(),
@@ -308,8 +409,9 @@ impl TrustEngine {
             clearance: GrantClearance::AutoApproved,
             economic_claim: economic_claim.clone(),
             budget: None,
-            contract_id: None,
-            contract_hash: None,
+            contract_id,
+            contract_hash,
+            source_input_hash: None,
             lineage_attestation: None,
         };
 

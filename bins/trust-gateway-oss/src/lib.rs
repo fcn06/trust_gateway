@@ -195,6 +195,7 @@ pub async fn build_engine_from_config(config: &AppConfig) -> anyhow::Result<Arc<
         dispatcher,
         audit_sink,
         approval_manager,
+        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec![configured_api_key],
     });
@@ -213,6 +214,8 @@ pub fn build_app(state: Arc<AppState>, request_limit_bytes: usize) -> Router {
         .route("/mcp/messages", post(mcp_messages_handler))
         .route("/v1/actions/propose", post(propose_action_handler))
         .route("/v1/tools/registry", get(tools_registry_handler))
+        .route("/v1/contracts", post(register_contract_handler))
+        .route("/v1/contracts/:id", get(get_contract_handler))
         .route(
             "/v1/approvals/:id/decision",
             post(approval_decision_handler),
@@ -421,8 +424,20 @@ pub async fn propose_action_handler(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
 
+    let trace_id = headers
+        .get("x-trace-id")
+        .and_then(|h| h.to_str().ok())
+        .or_else(|| {
+            action
+                .call_chain
+                .as_ref()
+                .map(|c| c.trace_id.as_str())
+        })
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("tr_{}", uuid::Uuid::new_v4()));
+
     let envelope = TrustEnvelope {
-        trace_id: format!("tr_{}", uuid::Uuid::new_v4()),
+        trace_id,
         timestamp: chrono::Utc::now().timestamp(),
         payload: action,
     };
@@ -459,6 +474,43 @@ pub async fn tools_registry_handler(State(state): State<Arc<AppState>>) -> impl 
         Ok(skills) => (
             StatusCode::OK,
             Json(serde_json::json!({ "skills": skills })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn register_contract_handler(
+    State(state): State<Arc<AppState>>,
+    Json(contract): Json<trust_sdk::contracts::SignedContract>,
+) -> impl IntoResponse {
+    match state.engine.contract_registry.register_contract(contract).await {
+        Ok(()) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "status": "registered" })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn get_contract_handler(
+    State(state): State<Arc<AppState>>,
+    AxumPath(contract_id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.engine.contract_registry.get_contract(&contract_id).await {
+        Ok(Some(contract)) => (StatusCode::OK, Json(contract)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Contract not found" })),
         )
             .into_response(),
         Err(e) => (
@@ -566,6 +618,7 @@ pub async fn approval_decision_handler(
                     budget: None,
                     contract_id: None,
                     contract_hash: None,
+                    source_input_hash: None,
                     lineage_attestation: None,
                 };
 

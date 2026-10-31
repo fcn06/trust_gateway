@@ -71,6 +71,61 @@ pub fn extract_did_twin_ed25519_pubkey(did: &str) -> Result<[u8; 32], DidError> 
     Ok(key_bytes)
 }
 
+/// Create a W3C did:key identifier from a 32-byte Ed25519 signing seed.
+pub fn create_did_key_from_seed(seed_bytes: [u8; 32]) -> DidIdentity {
+    let signing_key = SigningKey::from_bytes(&seed_bytes);
+    let public_key = signing_key.verifying_key().to_bytes();
+
+    // Multicodec for ed25519-pub is 0xed01 (bytes: [0xed, 0x01])
+    let mut multicodec_bytes = Vec::with_capacity(34);
+    multicodec_bytes.push(0xed);
+    multicodec_bytes.push(0x01);
+    multicodec_bytes.extend_from_slice(&public_key);
+
+    let b58 = bs58::encode(multicodec_bytes).into_string();
+    let did = format!("did:key:z{b58}");
+
+    DidIdentity {
+        did,
+        signing_seed: seed_bytes,
+        public_key,
+    }
+}
+
+/// Extract 32-byte Ed25519 public key from a W3C did:key identifier.
+pub fn extract_did_key_ed25519_pubkey(did: &str) -> Result<[u8; 32], DidError> {
+    let clean = did.split('#').next().unwrap_or(did).trim();
+    let b58_part = if let Some(stripped) = clean.strip_prefix("did:key:z") {
+        stripped
+    } else {
+        return Err(DidError::InvalidDidFormat(format!(
+            "Expected 'did:key:z' prefix, got '{did}'"
+        )));
+    };
+
+    let bytes = bs58::decode(b58_part)
+        .into_vec()
+        .map_err(|e| DidError::InvalidDidFormat(format!("Base58 decode error in '{did}': {e}")))?;
+
+    if bytes.len() != 34 {
+        return Err(DidError::InvalidDidFormat(format!(
+            "Expected 34 multicodec bytes for Ed25519 did:key, got {}",
+            bytes.len()
+        )));
+    }
+
+    if bytes[0] != 0xed || bytes[1] != 0x01 {
+        return Err(DidError::InvalidDidFormat(format!(
+            "Invalid multicodec prefix for Ed25519: expected [0xed, 0x01], got [0x{:02x}, 0x{:02x}]",
+            bytes[0], bytes[1]
+        )));
+    }
+
+    let mut pubkey = [0u8; 32];
+    pubkey.copy_from_slice(&bytes[2..34]);
+    Ok(pubkey)
+}
+
 pub fn extract_public_key_from_twin_did(did: &str) -> Result<VerifyingKey, DidError> {
     let bytes = extract_did_twin_ed25519_pubkey(did)?;
     VerifyingKey::from_bytes(&bytes).map_err(|e| DidError::InvalidDidFormat(e.to_string()))
@@ -417,5 +472,19 @@ mod tests {
 
         let found = doc.find_ed25519_pubkey().unwrap();
         assert_eq!(found, pubkey_bytes);
+    }
+
+    #[test]
+    fn test_did_key_roundtrip_and_validation() {
+        let seed = [99u8; 32];
+        let identity = create_did_key_from_seed(seed);
+        assert!(identity.did.starts_with("did:key:z"));
+
+        let extracted = extract_did_key_ed25519_pubkey(&identity.did).unwrap();
+        assert_eq!(extracted, identity.public_key);
+
+        // Negative test: invalid prefix
+        assert!(extract_did_key_ed25519_pubkey("did:key:not_a_z_key").is_err());
+        assert!(extract_did_key_ed25519_pubkey("did:twin:1234").is_err());
     }
 }

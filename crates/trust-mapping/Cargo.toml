@@ -1,0 +1,15 @@
+[package]
+name = "trust-mapping"
+version = "0.1.0"
+edition = "2021"
+description = "Restricted mapping IR, fuel-budgeted interpreter, deterministic verification harness, and schema diff"
+license = "BSL-1.1"
+
+[dependencies]
+trust-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+

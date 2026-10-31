@@ -37,6 +37,9 @@ pub enum EngineError {
     #[error("Action was denied: {0}")]
     ActionDenied(String),
 
+    #[error("Contract violation: {0}")]
+    ContractViolation(String),
+
     #[error("Lineage violation on argument '{argument}': expected sources {expected_sources:?}")]
     LineageViolation {
         argument: String,
@@ -222,6 +225,23 @@ pub trait TaintAndLineageEngine: Send + Sync {
 #[async_trait]
 pub trait AuditSink: Send + Sync {
     async fn append(&self, ev: AuditEvent) -> Result<(), EngineError>;
+}
+
+#[async_trait]
+pub trait ContractRegistry: Send + Sync {
+    async fn register_contract(
+        &self,
+        contract: trust_sdk::contracts::SignedContract,
+    ) -> Result<(), EngineError>;
+    async fn get_contract(
+        &self,
+        contract_id: &str,
+    ) -> Result<Option<trust_sdk::contracts::SignedContract>, EngineError>;
+    async fn get_contract_for_skill(
+        &self,
+        tenant_id: &str,
+        skill_id: &str,
+    ) -> Result<Option<trust_sdk::contracts::SignedContract>, EngineError>;
 }
 
 #[async_trait]

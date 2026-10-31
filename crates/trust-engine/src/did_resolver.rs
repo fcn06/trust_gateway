@@ -80,7 +80,13 @@ impl DidResolver for CachedDidResolver {
                 .map_err(|e| EngineError::AuthError(format!("Invalid did:twin format: {e}")));
         }
 
-        // 2. did:web resolution with in-memory TTL caching
+        // 2. did:key is resolved offline immediately
+        if did.starts_with("did:key:") {
+            return trust_sdk::did::extract_did_key_ed25519_pubkey(did)
+                .map_err(|e| EngineError::AuthError(format!("Invalid did:key format: {e}")));
+        }
+
+        // 3. did:web resolution with in-memory TTL caching
         if did.starts_with("did:web:") {
             let norm_key = did.replace(':', "_");
             let now = chrono::Utc::now().timestamp();
@@ -146,6 +152,15 @@ mod tests {
     async fn test_resolve_did_twin_offline() {
         let resolver = CachedDidResolver::new();
         let identity = create_did_twin_from_seed([44u8; 32]);
+
+        let resolved = resolver.resolve_ed25519_key(&identity.did).await.unwrap();
+        assert_eq!(resolved, identity.public_key);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_did_key_offline() {
+        let resolver = CachedDidResolver::new();
+        let identity = trust_sdk::did::create_did_key_from_seed([55u8; 32]);
 
         let resolved = resolver.resolve_ed25519_key(&identity.did).await.unwrap();
         assert_eq!(resolved, identity.public_key);

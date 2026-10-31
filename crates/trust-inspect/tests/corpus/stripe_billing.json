@@ -1,0 +1,41 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Stripe-like Billing API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/charges": {
+      "post": {
+        "operationId": "create_charge",
+        "summary": "Create a new charge",
+        "parameters": [
+          { "name": "amount_cents", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "currency", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "customer_email", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "card_number", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "get": {
+        "operationId": "list_charges",
+        "summary": "List all charges",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/refunds": {
+      "post": {
+        "operationId": "create_refund",
+        "summary": "Refund an existing charge",
+        "parameters": [
+          { "name": "charge_id", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "refund_amount", "in": "query", "required": false, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  }
+}

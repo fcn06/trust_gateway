@@ -110,6 +110,7 @@ priority = 20
         dispatcher,
         audit_sink: audit_sink.clone(),
         approval_manager,
+        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec!["sk_test_dev_key".to_string()],
     });
@@ -324,6 +325,7 @@ async fn test_conformance_scenario_3_security_regressions() {
         budget: None,
         contract_id: None,
         contract_hash: None,
+        source_input_hash: None,
         lineage_attestation: None,
     };
 
@@ -498,6 +500,7 @@ priority = 100
         dispatcher: Arc::new(LocalSubprocessDispatcher::new(native_tools_dir)),
         audit_sink,
         approval_manager,
+        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec![api_key.clone()],
     });
@@ -666,4 +669,397 @@ priority = 100
         &pub_gateway_key
     )
     .is_ok());
+}
+
+#[tokio::test]
+async fn test_conformance_scenario_5_trace_continuity_and_triage_envelope() {
+    use sha2::{Digest, Sha256};
+    use trust_sdk::envelope::ServiceRequestEnvelope;
+
+    // 1. Set up mock triage agent listener on an ephemeral port
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    let triage_url = format!("http://127.0.0.1:{}", local_addr.port());
+
+    let received_traceparent = Arc::new(RwLock::new(String::new()));
+    let received_envelope = Arc::new(RwLock::new(Option::<ServiceRequestEnvelope>::None));
+    let triage_traceparent_capture = received_traceparent.clone();
+    let triage_envelope_capture = received_envelope.clone();
+    let expected_aud = triage_url.clone();
+
+    tokio::spawn(async move {
+        let triage_app = axum::Router::new().route(
+            "/v1/triage/evaluate",
+            axum::routing::post({
+                let aud = expected_aud.clone();
+                move |headers: axum::http::HeaderMap, body_bytes: axum::body::Bytes| {
+                    let aud = aud.clone();
+                    let tp = triage_traceparent_capture.clone();
+                    let tc = triage_envelope_capture.clone();
+                    async move {
+                        let tp_header = headers
+                            .get("traceparent")
+                            .and_then(|h| h.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+                        let env_header = headers
+                            .get("x-service-envelope")
+                            .and_then(|h| h.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+
+                        let envelope: ServiceRequestEnvelope =
+                            serde_json::from_str(&env_header).expect("Envelope deserialization");
+
+                        // Check audience
+                        assert_eq!(envelope.audience, aud);
+
+                        // Check body hash
+                        let mut hasher = Sha256::new();
+                        hasher.update(&body_bytes);
+                        let computed_hash = format!("{:x}", hasher.finalize());
+                        assert_eq!(envelope.body_sha256, computed_hash);
+
+                        // Verify Ed25519 signature from did:twin
+                        let pubkey_bytes =
+                            trust_sdk::did::extract_did_twin_ed25519_pubkey(&envelope.caller_did)
+                                .expect("Extract did:twin key");
+                        let verifying_key =
+                            ed25519_dalek::VerifyingKey::from_bytes(&pubkey_bytes)
+                                .expect("VerifyingKey");
+                        envelope
+                            .verify_signature(&verifying_key)
+                            .expect("Signature verification");
+
+                        *tp.write().await = tp_header;
+                        *tc.write().await = Some(envelope);
+
+                        axum::Json(serde_json::json!({
+                            "recommendation": "recommend_reject",
+                            "dossier": {
+                                "mitigation_notes": "Novel unapproved action denied by cognitive triage."
+                            }
+                        }))
+                    }
+                }
+            }),
+        );
+        let _ = axum::serve(listener, triage_app).await;
+    });
+
+    // 2. Configure Trust Engine with triage_agent_url
+    let key_pair = Ed25519KeyPair::generate();
+    let policy_toml = format!(
+        r#"
+[governance]
+policy_version = "1.0.0"
+default_action = "deny"
+input_hash_binding_required = true
+max_grant_ttl_seconds = 30
+triage_agent_url = "{}"
+
+[[rules]]
+name = "Auto-allow read-only operations"
+operation_kind = "read"
+action = "allow"
+priority = 10
+"#,
+        triage_url
+    );
+
+    let policy_engine = Arc::new(PolicyEngine::from_toml(&policy_toml).unwrap());
+    let native_tools_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../native_tools");
+    let static_registry = Arc::new(StaticSkillRegistry::new(native_tools_dir, false));
+    static_registry.load_all().await.unwrap();
+
+    // Register a novel unmatched skill
+    let novel_manifest = SkillManifest {
+        schema_version: "lianxi.skill/v1".to_string(),
+        id: "io.lianxi.skill.novel_tool@v1".to_string(),
+        name: "claw_novel_tool".to_string(),
+        version: "1.0.0".to_string(),
+        description: "An unclassified novel tool".to_string(),
+        author_did: "did:web:lianxi.io".to_string(),
+        data_origin_trust: DataOriginTrust::TrustedInternal,
+        lineage_rules: vec![],
+        execution: ExecutionSpec {
+            runtime: RuntimeType::NativeTool,
+            entrypoint: "run.sh".to_string(),
+            timeout_secs: 10,
+            memory_limit_mb: 256,
+            allowed_interpreters: vec!["bash".to_string()],
+        },
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": { "cmd": { "type": "string" } }
+        }),
+        policy_defaults: PolicyDefaults {
+            default_tier: "tier1_require_human_approval".to_string(),
+            max_frequency_per_trace: 5,
+            default_risk_level: "high".to_string(),
+            operation_kind: "unmatched_novel_kind".to_string(),
+        },
+        egress: EgressClassification {
+            contains_pii: false,
+            max_payload_bytes: 65536,
+            allowed_fields: vec![],
+        },
+    };
+    static_registry.register_skill_direct(novel_manifest).await;
+
+    let audit_sink = Arc::new(SqliteAuditSink::in_memory().unwrap());
+    let approval_manager = Arc::new(ApprovalManager::new(Arc::new(NoopApprovalNotifier)));
+    let nonce_store = Arc::new(InMemoryNonceStore::new());
+    let taint_lineage_engine = Arc::new(BasicBinaryTaintTracker::new());
+    let reputation_evaluator = Arc::new(DefaultReputationEvaluator);
+    let settlement_engine = Arc::new(DefaultSettlementEngine);
+    let dispatcher = Arc::new(LocalSubprocessDispatcher::new(native_tools_dir));
+
+    let engine = Arc::new(TrustEngine {
+        tenancy_mode: TenancyMode::Single,
+        signing_key_pair: key_pair,
+        root_verifying_key: None,
+        token_verifier: None,
+        policy_engine,
+        skill_registry: static_registry,
+        nonce_store,
+        taint_lineage_engine,
+        reputation_evaluator,
+        settlement_engine,
+        dispatcher,
+        audit_sink: audit_sink.clone(),
+        approval_manager,
+        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
+        tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
+        configured_api_keys: vec!["sk_test_trace_key".to_string()],
+    });
+
+    let state = Arc::new(AppState {
+        engine: engine.clone(),
+        start_time: Instant::now(),
+        sse_sessions: Arc::new(RwLock::new(HashMap::new())),
+    });
+
+    let gateway_app = build_app(state, 65536);
+
+    // 3. Propose action on the unmatched tool
+    let test_trace_id = "trace_mesh_continuity_42";
+    let propose_req = Request::builder()
+        .method("POST")
+        .uri("/v1/actions/propose")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer sk_test_trace_key")
+        .body(Body::from(
+            serde_json::to_string(&ProposedAction {
+                action_id: "act_continuity_99".to_string(),
+                tool_name: "claw_novel_tool".to_string(),
+                arguments: serde_json::json!({ "cmd": "eval" }),
+                tenant_id: "default".to_string(),
+                workspace_id: "default".to_string(),
+                call_chain: Some(trust_sdk::model::CallChainContext::new(test_trace_id)),
+                ..Default::default()
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = gateway_app.oneshot(propose_req).await.unwrap();
+    let status = resp.status();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    // Triage returned recommend_reject -> Gateway must reject with BAD_REQUEST containing the mitigation note
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body_str.contains("Novel unapproved action denied by cognitive triage."));
+
+    // 4. Verify Triage received envelope with traceparent
+    let captured_tp = received_traceparent.read().await.clone();
+    assert!(captured_tp.contains(test_trace_id), "traceparent header should contain trace_id: {captured_tp}");
+    let captured_env = received_envelope.read().await.clone();
+    assert!(captured_env.is_some(), "Triage received verified envelope");
+    let env = captured_env.unwrap();
+    assert_eq!(env.path, "/v1/triage/evaluate");
+
+    // 5. Query Audit Sink for trace_id
+    let audit_events = audit_sink.get_events_by_trace(test_trace_id).unwrap();
+    assert!(!audit_events.is_empty(), "Audit events must be recorded for trace_id");
+    for event in &audit_events {
+        assert_eq!(event.trace_id, test_trace_id);
+    }
+}
+
+#[tokio::test]
+async fn test_conformance_scenario_7_contract_validation_and_grant_binding() {
+    let (engine, _audit_sink) = setup_test_engine().await;
+
+    // Register a signed contract for claw_weather
+    let seed = [99u8; 32];
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let mut contract = trust_sdk::contracts::SignedContract {
+        contract_id: "contract_weather_v1".to_string(),
+        version: "1.0.0".to_string(),
+        skill_id: "claw_weather".to_string(),
+        author_did: "did:web:weather.org".to_string(),
+        schema_hash: "hash_schema_xyz".to_string(),
+        input_constraints: Some(trust_sdk::contracts::InputConstraints {
+            max_amount_cents: Some(5000),
+            required_fields: Some(vec!["location".to_string()]),
+            forbidden_fields: None,
+            allowed_operations: None,
+        }),
+        mapping_ir_hash: None,
+        created_at: 1730000000,
+        expires_at: 1799999999,
+        signature: String::new(),
+    };
+    contract.sign(&signing_key).unwrap();
+    engine.contract_registry.register_contract(contract).await.unwrap();
+
+    let state = Arc::new(AppState {
+        engine: engine.clone(),
+        start_time: Instant::now(),
+        sse_sessions: Arc::new(RwLock::new(HashMap::new())),
+    });
+    let app = build_app(state, 65536);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/actions/propose")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer sk_test_dev_key")
+        .body(Body::from(
+            serde_json::to_string(&ProposedAction {
+                action_id: "act_contract_valid_1".to_string(),
+                tool_name: "claw_weather".to_string(),
+                arguments: serde_json::json!({ "location": "Tokyo" }),
+                tenant_id: "default".to_string(),
+                workspace_id: "default".to_string(),
+                ..Default::default()
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_conformance_scenario_8_contract_violation_and_drift_audit() {
+    let (engine, audit_sink) = setup_test_engine().await;
+
+    // Register contract requiring max $50.00 (5000 cents)
+    let seed = [99u8; 32];
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let mut contract = trust_sdk::contracts::SignedContract {
+        contract_id: "contract_weather_v2".to_string(),
+        version: "1.0.0".to_string(),
+        skill_id: "claw_weather".to_string(),
+        author_did: "did:web:weather.org".to_string(),
+        schema_hash: "hash_schema_xyz".to_string(),
+        input_constraints: Some(trust_sdk::contracts::InputConstraints {
+            max_amount_cents: Some(5000),
+            required_fields: Some(vec!["location".to_string()]),
+            forbidden_fields: None,
+            allowed_operations: None,
+        }),
+        mapping_ir_hash: None,
+        created_at: 1730000000,
+        expires_at: 1799999999,
+        signature: String::new(),
+    };
+    contract.sign(&signing_key).unwrap();
+    engine.contract_registry.register_contract(contract).await.unwrap();
+
+    let state = Arc::new(AppState {
+        engine: engine.clone(),
+        start_time: Instant::now(),
+        sse_sessions: Arc::new(RwLock::new(HashMap::new())),
+    });
+    let app = build_app(state, 65536);
+
+    let drift_trace_id = "trace_drift_detector_99";
+    // Submit with amount exceeding limit -> 10000 cents
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/actions/propose")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer sk_test_dev_key")
+        .header("x-trace-id", drift_trace_id)
+        .body(Body::from(
+            serde_json::to_string(&ProposedAction {
+                action_id: "act_contract_drift_1".to_string(),
+                tool_name: "claw_weather".to_string(),
+                arguments: serde_json::json!({ "location": "Tokyo", "amount_cents": 10000 }),
+                tenant_id: "default".to_string(),
+                workspace_id: "default".to_string(),
+                ..Default::default()
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    assert!(body_str.contains("Contract violation"));
+
+    // Check drift audit event in SQLite audit trail
+    let events = audit_sink.get_events_by_trace(drift_trace_id).unwrap();
+    assert!(events.iter().any(|e| e.event_type == "contract_drift"));
+}
+
+#[tokio::test]
+async fn test_conformance_scenario_9_contract_registration_and_retrieval_api() {
+    let (engine, _) = setup_test_engine().await;
+
+    let state = Arc::new(AppState {
+        engine: engine.clone(),
+        start_time: Instant::now(),
+        sse_sessions: Arc::new(RwLock::new(HashMap::new())),
+    });
+    let app = build_app(state, 65536);
+
+    let seed = [88u8; 32];
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let mut contract = trust_sdk::contracts::SignedContract {
+        contract_id: "contract_api_endpoint_test".to_string(),
+        version: "1.0.0".to_string(),
+        skill_id: "claw_weather".to_string(),
+        author_did: "did:web:partner.com".to_string(),
+        schema_hash: "hash_999".to_string(),
+        input_constraints: None,
+        mapping_ir_hash: None,
+        created_at: 1730000000,
+        expires_at: 1799999999,
+        signature: String::new(),
+    };
+    contract.sign(&signing_key).unwrap();
+
+    // 1. POST /v1/contracts
+    let post_req = Request::builder()
+        .method("POST")
+        .uri("/v1/contracts")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_string(&contract).unwrap()))
+        .unwrap();
+
+    let post_resp = app.clone().oneshot(post_req).await.unwrap();
+    assert_eq!(post_resp.status(), StatusCode::CREATED);
+
+    // 2. GET /v1/contracts/:id
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/v1/contracts/contract_api_endpoint_test")
+        .body(Body::empty())
+        .unwrap();
+
+    let get_resp = app.oneshot(get_req).await.unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap();
+    let retrieved: trust_sdk::contracts::SignedContract = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(retrieved.contract_id, "contract_api_endpoint_test");
+    assert_eq!(retrieved.signature, contract.signature);
 }

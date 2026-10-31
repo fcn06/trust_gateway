@@ -97,6 +97,46 @@ impl SqliteAuditSink {
         format!("{:x}", hasher.finalize())
     }
 
+    pub fn get_events_by_trace(&self, trace_id: &str) -> Result<Vec<AuditEvent>, EngineError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT event_id, timestamp, event_type, tenant_id, trace_id, action_id, details, prev_hash, hash FROM audit_events WHERE trace_id = ? ORDER BY id ASC;")
+            .map_err(|e| EngineError::StorageError(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([trace_id], |row| {
+                let event_id: String = row.get(0)?;
+                let timestamp: i64 = row.get(1)?;
+                let event_type: String = row.get(2)?;
+                let tenant_id: String = row.get(3)?;
+                let trace_id: String = row.get(4)?;
+                let action_id: Option<String> = row.get(5)?;
+                let details_str: String = row.get(6)?;
+                let details: serde_json::Value = serde_json::from_str(&details_str).unwrap_or_default();
+                let prev_hash: Option<String> = row.get(7).ok();
+                let hash: Option<String> = row.get(8).ok();
+
+                Ok(AuditEvent {
+                    event_id,
+                    timestamp,
+                    event_type,
+                    tenant_id,
+                    trace_id,
+                    action_id,
+                    details,
+                    prev_hash,
+                    hash,
+                })
+            })
+            .map_err(|e| EngineError::StorageError(e.to_string()))?;
+
+        let mut events = Vec::new();
+        for r in rows {
+            events.push(r.map_err(|e| EngineError::StorageError(e.to_string()))?);
+        }
+        Ok(events)
+    }
+
     pub fn verify_chain(&self) -> Result<usize, EngineError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -239,5 +279,14 @@ mod tests {
 
         let verified_count = sink.verify_chain().expect("chain should verify");
         assert_eq!(verified_count, 2);
+
+        // Test trace_id query (OB-INV-11)
+        let trace_events = sink.get_events_by_trace("tr_1").expect("Query must succeed");
+        assert_eq!(trace_events.len(), 2);
+        assert_eq!(trace_events[0].event_id, "ev_1");
+        assert_eq!(trace_events[1].event_id, "ev_2");
+
+        let empty_events = sink.get_events_by_trace("nonexistent_trace").expect("Query must succeed");
+        assert!(empty_events.is_empty());
     }
 }

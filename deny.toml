@@ -1,0 +1,17 @@
+[graph]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[bans]
+multiple-versions = "warn"
+deny = [
+    { name = "tokio", reason = "INV-002: trust-sdk must remain a pure crypto kernel with zero async runtime dependencies" },
+    { name = "axum", reason = "INV-002: trust-sdk must not depend on web server frameworks" },
+    { name = "async-nats", reason = "INV-002: trust-sdk must not depend on message queues" },
+    { name = "reqwest", reason = "INV-002: trust-sdk must not depend on HTTP clients" },
+    { name = "rusqlite", reason = "INV-002: trust-sdk must not depend on database drivers" },
+    { name = "hyper", reason = "INV-002: trust-sdk must not depend on low-level HTTP runtimes" },
+    { name = "sqlx", reason = "INV-002: trust-sdk must not depend on SQL drivers" },
+    { name = "redb", reason = "INV-002: trust-sdk must not depend on embedded database engines" },
+    { name = "dashmap", reason = "INV-002: trust-sdk must not depend on concurrent hash maps" }
+]
+

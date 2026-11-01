@@ -239,6 +239,24 @@ impl ApprovalManager {
         lock.get(approval_id).cloned()
     }
 
+    pub async fn list_all(&self) -> Vec<ApprovalRecord> {
+        let lock = self.records.read().await;
+        let mut list: Vec<ApprovalRecord> = lock.values().cloned().collect();
+        list.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
+        list
+    }
+
+    pub async fn list_pending(&self) -> Vec<ApprovalRecord> {
+        let lock = self.records.read().await;
+        let mut list: Vec<ApprovalRecord> = lock
+            .values()
+            .filter(|r| r.status == ApprovalStatus::Pending)
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
+        list
+    }
+
     pub async fn sweep_expired(&self) -> usize {
         let mut lock = self.records.write().await;
         let now = chrono::Utc::now().timestamp();

@@ -104,10 +104,14 @@ impl TrustEngine {
         .await?;
 
         // Step 2: Tenant resolution (Mono-tenant guard: must be "default" in Single mode)
-        let tenant_id = if !action.tenant_id.is_empty() {
+        let tenant_id = if !action.tenant_id.is_empty() && action.tenant_id != "default" {
+            &action.tenant_id
+        } else if !verified_jwt.tenant_id().is_empty() {
+            verified_jwt.tenant_id()
+        } else if !action.tenant_id.is_empty() {
             &action.tenant_id
         } else {
-            verified_jwt.tenant_id()
+            "default"
         };
 
         match &self.tenancy_mode {

@@ -113,13 +113,42 @@ pub struct SkillManifest {
     pub egress: EgressClassification,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillVisibility {
+    #[default]
+    MarketplacePublic,
+    TenantPrivate,
+    EntitledTenants(Vec<String>),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RemoteSkillPublication {
     pub manifest: SkillManifest,
     pub provider_did: String,
-    pub endpoint_url: String,
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
     pub proof_signature: String,
     pub capabilities_ucan: Option<String>,
+    #[serde(default)]
+    pub visibility: SkillVisibility,
+    #[serde(default)]
+    pub publishing_tenant_id: Option<String>,
+    #[serde(default)]
+    pub price_per_call_minor_units: Option<u64>,
+}
+
+/// Canonical signable envelope for `RemoteSkillPublication` that binds the manifest
+/// together with commercial metadata (`provider_did`, `endpoint_url`, `visibility`,
+/// `publishing_tenant_id`, and `price_per_call_minor_units`) to prevent relay tampering.
+#[derive(Debug, Clone, Serialize)]
+pub struct SignablePublicationEnvelope<'a> {
+    pub manifest: &'a SkillManifest,
+    pub provider_did: &'a str,
+    pub endpoint_url: &'a Option<String>,
+    pub visibility: &'a SkillVisibility,
+    pub publishing_tenant_id: &'a Option<String>,
+    pub price_per_call_minor_units: &'a Option<u64>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -183,13 +212,31 @@ impl RemoteSkillPublication {
     pub fn validate(&self) -> Result<(), ManifestValidationError> {
         self.manifest.validate()?;
 
-        if !self.endpoint_url.starts_with("https://") {
-            return Err(ManifestValidationError::InsecureEndpointUrl(
-                self.endpoint_url.clone(),
-            ));
+        if let Some(ref url) = self.endpoint_url {
+            if !url.starts_with("https://")
+                && !url.starts_with("http://127.0.0.1")
+                && !url.starts_with("http://localhost")
+            {
+                return Err(ManifestValidationError::InsecureEndpointUrl(url.clone()));
+            }
         }
 
         Ok(())
+    }
+
+    /// Computes the RFC 8785 JCS SHA-256 canonical hash (`sha256:<hex>`) of the
+    /// full publication envelope (excluding `proof_signature` and `capabilities_ucan`).
+    pub fn canonical_envelope_hash(&self) -> String {
+        let envelope = SignablePublicationEnvelope {
+            manifest: &self.manifest,
+            provider_did: &self.provider_did,
+            endpoint_url: &self.endpoint_url,
+            visibility: &self.visibility,
+            publishing_tenant_id: &self.publishing_tenant_id,
+            price_per_call_minor_units: &self.price_per_call_minor_units,
+        };
+        let val = serde_json::to_value(&envelope).unwrap_or(serde_json::Value::Null);
+        crate::canonical::canonical_hash(&val)
     }
 }
 
@@ -324,9 +371,12 @@ mod tests {
         let pub_insecure = RemoteSkillPublication {
             manifest: m.clone(),
             provider_did: "did:web:provider.com".to_string(),
-            endpoint_url: "http://insecure.provider.com/call".to_string(),
+            endpoint_url: Some("http://insecure.provider.com/call".to_string()),
             proof_signature: "sig".to_string(),
             capabilities_ucan: None,
+            visibility: SkillVisibility::default(),
+            publishing_tenant_id: None,
+            price_per_call_minor_units: None,
         };
         assert!(matches!(
             pub_insecure.validate(),
@@ -334,13 +384,28 @@ mod tests {
         ));
 
         let pub_secure = RemoteSkillPublication {
-            manifest: m,
+            manifest: m.clone(),
             provider_did: "did:web:provider.com".to_string(),
-            endpoint_url: "https://secure.provider.com/call".to_string(),
+            endpoint_url: Some("https://secure.provider.com/call".to_string()),
             proof_signature: "sig".to_string(),
             capabilities_ucan: None,
+            visibility: SkillVisibility::default(),
+            publishing_tenant_id: None,
+            price_per_call_minor_units: None,
         };
         assert!(pub_secure.validate().is_ok());
+
+        let pub_auto_resolve = RemoteSkillPublication {
+            manifest: m,
+            provider_did: "did:web:provider.com".to_string(),
+            endpoint_url: None,
+            proof_signature: "sig".to_string(),
+            capabilities_ucan: None,
+            visibility: SkillVisibility::default(),
+            publishing_tenant_id: None,
+            price_per_call_minor_units: None,
+        };
+        assert!(pub_auto_resolve.validate().is_ok());
     }
 
     #[test]
@@ -364,5 +429,42 @@ mod tests {
 
         let parsed: Result<SkillManifest, _> = serde_json::from_value(json);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn test_canonical_envelope_hash_binds_metadata() {
+        let m = valid_manifest();
+        let base_pub = RemoteSkillPublication {
+            manifest: m,
+            provider_did: "did:web:provider.com".to_string(),
+            endpoint_url: Some("https://provider.com/v1/skills/execute".to_string()),
+            proof_signature: "sig_a".to_string(),
+            capabilities_ucan: None,
+            visibility: SkillVisibility::MarketplacePublic,
+            publishing_tenant_id: None,
+            price_per_call_minor_units: Some(150),
+        };
+        let h1 = base_pub.canonical_envelope_hash();
+        assert_eq!(h1.len(), 64);
+
+        // Changing proof_signature does not alter envelope hash
+        let mut same_envelope = base_pub.clone();
+        same_envelope.proof_signature = "sig_b".to_string();
+        assert_eq!(h1, same_envelope.canonical_envelope_hash());
+
+        // Tampering with price changes hash
+        let mut tampered_price = base_pub.clone();
+        tampered_price.price_per_call_minor_units = Some(999_999);
+        assert_ne!(h1, tampered_price.canonical_envelope_hash());
+
+        // Tampering with publishing_tenant_id changes hash
+        let mut tampered_tenant = base_pub.clone();
+        tampered_tenant.publishing_tenant_id = Some("tenant_victim".to_string());
+        assert_ne!(h1, tampered_tenant.canonical_envelope_hash());
+
+        // Tampering with visibility changes hash
+        let mut tampered_vis = base_pub.clone();
+        tampered_vis.visibility = SkillVisibility::TenantPrivate;
+        assert_ne!(h1, tampered_vis.canonical_envelope_hash());
     }
 }

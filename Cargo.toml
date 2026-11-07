@@ -7,6 +7,7 @@ members = [
     "crates/trust-mapping",
     "bins/trust-gateway-oss",
     "bins/trustctl",
+    "bins/external-agent-mock",
 ]
 
 [workspace.dependencies]

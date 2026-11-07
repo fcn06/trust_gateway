@@ -43,12 +43,19 @@ impl ReviewPack {
 
         md.push_str("## 1. Executive Summary\n\n");
         md.push_str("| Metric | Value |\n|---|---|\n");
-        md.push_str(&format!("| **Total Mapping Rules** | `{}` |\n", self.rule_set.rules.len()));
+        md.push_str(&format!(
+            "| **Total Mapping Rules** | `{}` |\n",
+            self.rule_set.rules.len()
+        ));
         md.push_str(&format!(
             "| **Deterministic Verification** | `{}/{} passed` ({}) |\n",
             self.verification.passed,
             self.verification.total_vectors,
-            if self.verification.all_passed { "✅ PASSED" } else { "❌ FAILED" }
+            if self.verification.all_passed {
+                "✅ PASSED"
+            } else {
+                "❌ FAILED"
+            }
         ));
         md.push_str(&format!(
             "| **Detected Ambiguities** | `{}` |\n",
@@ -61,7 +68,9 @@ impl ReviewPack {
 
         if !self.diff.ambiguities.is_empty() {
             md.push_str("## 2. ⚠️ Ambiguity Warnings & Unit Discrepancies\n\n");
-            md.push_str("| Type | Source Field | Target Field | Description | Recommended Remediation |\n");
+            md.push_str(
+                "| Type | Source Field | Target Field | Description | Recommended Remediation |\n",
+            );
             md.push_str("|---|---|---|---|---|\n");
             for amb in &self.diff.ambiguities {
                 md.push_str(&format!(

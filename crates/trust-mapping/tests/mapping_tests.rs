@@ -175,17 +175,39 @@ fn test_interpreter_fuel_exhaustion_fails_closed() {
 
 #[test]
 fn test_schema_differ_and_ambiguity_detection() {
-    let source_fields = vec!["vendor_id".to_string(), "amount".to_string(), "user_id".to_string()];
-    let target_fields = vec!["vendor_id".to_string(), "amount_cents".to_string(), "account_id".to_string()];
+    let source_fields = vec![
+        "vendor_id".to_string(),
+        "amount".to_string(),
+        "user_id".to_string(),
+    ];
+    let target_fields = vec![
+        "vendor_id".to_string(),
+        "amount_cents".to_string(),
+        "account_id".to_string(),
+    ];
     let target_required = vec!["vendor_id".to_string(), "amount_cents".to_string()];
     let mapped_target_fields = vec!["vendor_id".to_string()]; // amount_cents is missing from mapped!
 
-    let diff = SchemaDiffer::diff(&source_fields, &target_fields, &target_required, &mapped_target_fields);
+    let diff = SchemaDiffer::diff(
+        &source_fields,
+        &target_fields,
+        &target_required,
+        &mapped_target_fields,
+    );
 
     assert_eq!(diff.missing_target_required, vec!["amount_cents"]);
-    assert!(diff.ambiguities.iter().any(|a| a.ambiguity_type == "missing_required" && a.target_field == "amount_cents"));
-    assert!(diff.ambiguities.iter().any(|a| a.ambiguity_type == "unit_mismatch" && a.target_field == "amount_cents"));
-    assert!(diff.ambiguities.iter().any(|a| a.ambiguity_type == "field_name_divergence" && a.target_field == "account_id"));
+    assert!(diff
+        .ambiguities
+        .iter()
+        .any(|a| a.ambiguity_type == "missing_required" && a.target_field == "amount_cents"));
+    assert!(diff
+        .ambiguities
+        .iter()
+        .any(|a| a.ambiguity_type == "unit_mismatch" && a.target_field == "amount_cents"));
+    assert!(diff
+        .ambiguities
+        .iter()
+        .any(|a| a.ambiguity_type == "field_name_divergence" && a.target_field == "account_id"));
 }
 
 #[test]
@@ -197,7 +219,9 @@ fn test_verification_harness_and_review_pack() {
         target_schema: "out_v1".to_string(),
         rules: vec![MappingRule {
             target_path: "val".to_string(),
-            operation: MappingOp::Copy { from_path: "raw".to_string() },
+            operation: MappingOp::Copy {
+                from_path: "raw".to_string(),
+            },
         }],
     };
 
@@ -212,7 +236,12 @@ fn test_verification_harness_and_review_pack() {
     assert_eq!(report.passed, 2);
     assert_eq!(report.failed, 0);
 
-    let diff = SchemaDiffer::diff(&["raw".to_string()], &["val".to_string()], &["val".to_string()], &["val".to_string()]);
+    let diff = SchemaDiffer::diff(
+        &["raw".to_string()],
+        &["val".to_string()],
+        &["val".to_string()],
+        &["val".to_string()],
+    );
     let pack = ReviewPack::new(rule_set, diff, report);
     let md = pack.to_markdown();
 
@@ -220,4 +249,3 @@ fn test_verification_harness_and_review_pack() {
     assert!(md.contains("✅ PASSED"));
     assert!(md.contains("Canonical IR SHA-256"));
 }
-

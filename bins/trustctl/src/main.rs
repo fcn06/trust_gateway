@@ -109,6 +109,14 @@ enum SkillCommands {
         path: String,
         #[arg(short, long, default_value = "http://127.0.0.1:8080")]
         endpoint: String,
+        #[arg(long)]
+        endpoint_url: Option<String>,
+        #[arg(long)]
+        publishing_tenant_id: Option<String>,
+        #[arg(long)]
+        price_minor_units: Option<u64>,
+        #[arg(long)]
+        ucan_token: Option<String>,
     },
 }
 
@@ -247,17 +255,33 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
                     PathBuf::from(&path)
                 };
                 let content = std::fs::read_to_string(&manifest_path)?;
+                let manifest: SkillManifest = serde_json::from_str(&content)?;
+                manifest.validate()?;
+                let manifest_val = serde_json::to_value(&manifest)?;
+                let canonical_digest = trust_sdk::canonical::canonical_hash(&manifest_val);
+
                 let key_pem = std::fs::read_to_string(&key)?;
                 // Strip PEM headers to obtain raw 32 bytes or parse key
                 let raw_seed = parse_pem_or_hex_key(&key_pem)?;
                 let signing_key = SigningKey::from_bytes(&raw_seed);
-                let signature = signing_key.sign(content.as_bytes());
+                let signature = signing_key.sign(canonical_digest.as_bytes());
                 let sig_hex = hex::encode(signature.to_bytes());
                 let sig_file = manifest_path.parent().unwrap().join("manifest.json.sig");
                 std::fs::write(&sig_file, sig_hex)?;
-                println!("Wrote detached signature to {}", sig_file.display());
+                println!(
+                    "Wrote canonical JCS digest signature ({}) to {}",
+                    canonical_digest,
+                    sig_file.display()
+                );
             }
-            SkillCommands::Publish { path, endpoint } => {
+            SkillCommands::Publish {
+                path,
+                endpoint,
+                endpoint_url,
+                publishing_tenant_id,
+                price_minor_units,
+                ucan_token,
+            } => {
                 let manifest_path = if Path::new(&path).is_dir() {
                     Path::new(&path).join("manifest.json")
                 } else {
@@ -267,12 +291,33 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
                 let manifest: SkillManifest = serde_json::from_str(&content)?;
                 manifest.validate()?;
 
+                let sig_path = manifest_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("manifest.json.sig");
+                let proof_signature = if sig_path.exists() {
+                    std::fs::read_to_string(&sig_path)?.trim().to_string()
+                } else {
+                    String::new()
+                };
+
+                let publication = trust_sdk::manifest::RemoteSkillPublication {
+                    provider_did: manifest.author_did.clone(),
+                    manifest,
+                    endpoint_url,
+                    proof_signature,
+                    capabilities_ucan: ucan_token,
+                    visibility: trust_sdk::manifest::SkillVisibility::MarketplacePublic,
+                    publishing_tenant_id,
+                    price_per_call_minor_units: price_minor_units,
+                };
+
                 let url = format!(
                     "{}/v1/federation/skills/publish",
                     endpoint.trim_end_matches('/')
                 );
                 let client = reqwest::Client::new();
-                let res = client.post(&url).json(&manifest).send().await?;
+                let res = client.post(&url).json(&publication).send().await?;
                 let status = res.status();
                 if status == reqwest::StatusCode::NOT_IMPLEMENTED {
                     let body = res.text().await?;
@@ -356,8 +401,9 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
             if !db_path.exists() {
                 anyhow::bail!("Audit database not found at {}", db_path.display());
             }
-            let sink = trust_engine::local_adapters::sqlite_audit::SqliteAuditSink::from_file(&db_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open audit database: {e}"))?;
+            let sink =
+                trust_engine::local_adapters::sqlite_audit::SqliteAuditSink::from_file(&db_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to open audit database: {e}"))?;
             let events = sink
                 .get_events_by_trace(&trace_id)
                 .map_err(|e| anyhow::anyhow!("Failed to query audit trail: {e}"))?;
@@ -367,10 +413,14 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!(" 🔍 Trust Trace Explanation: {trace_id}");
             println!(" Total Records: {}", events.len());
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
 
             for (idx, ev) in events.iter().enumerate() {
                 let dt = chrono::DateTime::from_timestamp(ev.timestamp, 0)
@@ -423,30 +473,36 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
             }
 
             // 2. Generate Policy Draft
-            let policy_draft = trust_inspect::synthesizer::ArtifactSynthesizer::generate_policy_draft(
-                &ops,
-                &service_name,
-            );
+            let policy_draft =
+                trust_inspect::synthesizer::ArtifactSynthesizer::generate_policy_draft(
+                    &ops,
+                    &service_name,
+                );
             let policy_path = out_dir.join("policy.draft.toml");
             std::fs::write(&policy_path, policy_draft)?;
 
             // 3. Generate Onboarding Report
-            let report = trust_inspect::synthesizer::ArtifactSynthesizer::generate_onboarding_report(
-                &ops,
-                &service_name,
-                &spec_label,
-            );
+            let report =
+                trust_inspect::synthesizer::ArtifactSynthesizer::generate_onboarding_report(
+                    &ops,
+                    &service_name,
+                    &spec_label,
+                );
             let report_path = out_dir.join("onboarding-report.md");
             std::fs::write(&report_path, report)?;
 
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!(" 🛡️ Governed Onboarding Dossier Synthesized for '{service_name}'");
             println!(" Total Endpoints Inspected: {}", ops.len());
             println!(" Artifacts Written to:      {}", out_dir.display());
             println!("   - Manifests Directory:   {}", manifests_dir.display());
             println!("   - Policy Draft:          {}", policy_path.display());
             println!("   - Onboarding Dossier:    {}", report_path.display());
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         Commands::Up {
             port,
@@ -455,9 +511,13 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
             swarm_port,
             check_only,
         } => {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!(" 🌐 Checking Governed Agentic Stack Health & Mesh Topology");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_millis(1500))
                 .build()?;
@@ -465,8 +525,16 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
             let services: [(&str, u16, &[&str]); 5] = [
                 ("Tier 1 Swarm Gateway", swarm_port, &["/healthz", "/health"]),
                 ("Tier 2 Trust Gateway", port, &["/healthz", "/health"]),
-                ("Tier 2 Policy Plane (Triage)", triage_port, &["/healthz", "/health"]),
-                ("Tier 3 Commercial B2B Agent", b2b_port, &["/healthz", "/health", "/agent-card"]),
+                (
+                    "Tier 2 Policy Plane (Triage)",
+                    triage_port,
+                    &["/healthz", "/health"],
+                ),
+                (
+                    "Tier 3 Commercial B2B Agent",
+                    b2b_port,
+                    &["/healthz", "/health", "/agent-card"],
+                ),
                 ("Tier 3 Mapping Agent", 4020, &["/healthz", "/health"]),
             ];
 
@@ -491,7 +559,9 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
                 }
                 println!("  * {:<32} : {:<6} -> {}", name, p, service_status);
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
 
             if check_only {
                 if all_online {
@@ -526,7 +596,11 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
 
                 let out_path = out.unwrap_or(contract);
                 std::fs::write(&out_path, serde_json::to_string_pretty(&c)?)?;
-                println!("Successfully signed contract '{}'. Output: {}", c.contract_id, out_path.display());
+                println!(
+                    "Successfully signed contract '{}'. Output: {}",
+                    c.contract_id,
+                    out_path.display()
+                );
             }
             ContractCommands::Verify { contract, key } => {
                 let raw = std::fs::read_to_string(&contract)?;
@@ -537,7 +611,8 @@ async fn run_command(cmd: Commands) -> anyhow::Result<()> {
                     key
                 };
                 let key_bytes = parse_pem_or_hex_key(&key_str)?;
-                let verifying_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes).verifying_key();
+                let verifying_key =
+                    ed25519_dalek::SigningKey::from_bytes(&key_bytes).verifying_key();
                 c.verify(&verifying_key)
                     .map_err(|e| anyhow::anyhow!("Contract verification failed: {e}"))?;
                 println!("Contract '{}' signature is VALID.", c.contract_id);
@@ -577,7 +652,8 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let db_file = temp_dir.join(format!("test_audit_{}.db", uuid::Uuid::new_v4()));
 
-        let sink = trust_engine::local_adapters::sqlite_audit::SqliteAuditSink::from_file(&db_file).unwrap();
+        let sink = trust_engine::local_adapters::sqlite_audit::SqliteAuditSink::from_file(&db_file)
+            .unwrap();
         let ev = AuditEvent {
             event_id: "evt_123".to_string(),
             timestamp: 1730000000,
@@ -586,7 +662,9 @@ mod tests {
             trace_id: "trace-xyz-999".to_string(),
             action_id: Some("act_1".to_string()),
             details: serde_json::json!({"decision": "allow", "tier": "tier0_auto"}),
-            prev_hash: Some("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
+            prev_hash: Some(
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
             hash: Some("dummyhash".to_string()),
         };
         sink.append(ev).await.unwrap();
@@ -657,7 +735,10 @@ mod tests {
         let out_dir = temp_dir.join(format!("out_demo_{}", uuid::Uuid::new_v4()));
 
         let cmd = Commands::Onboard {
-            openapi: Some(std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../examples/inputs/openapi/stripe_billing_openapi.json"))),
+            openapi: Some(std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../../examples/inputs/openapi/stripe_billing_openapi.json"
+            ))),
             out_dir: out_dir.clone(),
             service_name: "stripe_billing_demo".to_string(),
             author_did: "did:web:stripe.com".to_string(),

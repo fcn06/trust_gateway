@@ -41,7 +41,10 @@ impl OpenApiInspector {
         self.inspect_openapi(&openapi)
     }
 
-    pub fn inspect_openapi(&self, spec: &OpenAPI) -> Result<Vec<ClassifiedOperation>, OpenApiError> {
+    pub fn inspect_openapi(
+        &self,
+        spec: &OpenAPI,
+    ) -> Result<Vec<ClassifiedOperation>, OpenApiError> {
         let mut results = Vec::new();
 
         for (path, item_ref) in &spec.paths.paths {
@@ -80,10 +83,13 @@ impl OpenApiInspector {
         op: &Operation,
         path_item: &PathItem,
     ) -> ClassifiedOperation {
-        let operation_id = op
-            .operation_id
-            .clone()
-            .unwrap_or_else(|| format!("{}_{}", method.to_lowercase(), path.replace(['/', '{', '}', '-'], "_")));
+        let operation_id = op.operation_id.clone().unwrap_or_else(|| {
+            format!(
+                "{}_{}",
+                method.to_lowercase(),
+                path.replace(['/', '{', '}', '-'], "_")
+            )
+        });
 
         let summary = op.summary.clone();
         let description = op.description.clone();
@@ -151,18 +157,18 @@ impl OpenApiInspector {
         // Build mock arguments json from parameter names for deterministic metrics extraction
         let mut mock_args = serde_json::Map::new();
         for param in &param_names {
-            mock_args.insert(param.clone(), serde_json::Value::String("param_placeholder".to_string()));
+            mock_args.insert(
+                param.clone(),
+                serde_json::Value::String("param_placeholder".to_string()),
+            );
         }
         let args_val = serde_json::Value::Object(mock_args);
 
         // Run classifier with composite name: {method}_{operation_id}_{path}
         let composite_name = format!("{}_{}_{}", method, operation_id, path);
-        let mut metrics = self.classifier.inspect(
-            &composite_name,
-            &method.to_lowercase(),
-            &args_val,
-            None,
-        );
+        let mut metrics =
+            self.classifier
+                .inspect(&composite_name, &method.to_lowercase(), &args_val, None);
 
         // --- OpenAPI x-trust Annotations (v0.1) ---
         // If the author has explicitly specified x-trust extensions, incorporate them
@@ -178,7 +184,10 @@ impl OpenApiInspector {
             if let Some(idemp) = x_trust.get("is_idempotent").and_then(|v| v.as_bool()) {
                 metrics.is_idempotent = idemp;
             }
-            if let Some(fin) = x_trust.get("max_financial_exposure").and_then(|v| v.as_u64()) {
+            if let Some(fin) = x_trust
+                .get("max_financial_exposure")
+                .and_then(|v| v.as_u64())
+            {
                 metrics.financial_exposure_cents = fin;
                 metrics.financial_indeterminate = false;
             }
@@ -212,8 +221,13 @@ impl OpenApiInspector {
             metrics.is_idempotent = false;
             metrics.reversibility = "Irreversible".to_string();
             metrics.risk_classification = "Critical".to_string();
-            if !metrics.touched_iam_scopes.contains(&"system:destructive_purge".to_string()) {
-                metrics.touched_iam_scopes.push("system:destructive_purge".to_string());
+            if !metrics
+                .touched_iam_scopes
+                .contains(&"system:destructive_purge".to_string())
+            {
+                metrics
+                    .touched_iam_scopes
+                    .push("system:destructive_purge".to_string());
             }
         }
 
@@ -224,7 +238,10 @@ impl OpenApiInspector {
         } else if metrics.is_mutation
             || metrics.financial_exposure_cents > 0
             || metrics.financial_indeterminate
-            || metrics.touched_iam_scopes.iter().any(|s| s.contains("manage") || s.contains("disburse"))
+            || metrics
+                .touched_iam_scopes
+                .iter()
+                .any(|s| s.contains("manage") || s.contains("disburse"))
         {
             "require_approval".to_string()
         } else {

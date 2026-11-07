@@ -228,7 +228,6 @@ impl TrustEngine {
             let triage_url = self
                 .policy_engine
                 .triage_agent_url()
-                .map(|s| s.to_string())
                 .or_else(|| std::env::var("TRIAGE_AGENT_URL").ok());
 
             if let Some(url) = triage_url {
@@ -257,7 +256,10 @@ impl TrustEngine {
 
                 let now = chrono::Utc::now().timestamp() as u64;
                 let traceparent_header = format!("00-{}-0000000000000001-01", trace_id);
-                let caller_did = format!("did:twin:z{}", hex::encode(self.signing_key_pair.public_key().to_bytes()));
+                let caller_did = format!(
+                    "did:twin:z{}",
+                    hex::encode(self.signing_key_pair.public_key().to_bytes())
+                );
 
                 let envelope_opt = trust_sdk::envelope::ServiceRequestEnvelope::new(
                     caller_did,
@@ -282,7 +284,8 @@ impl TrustEngine {
                             let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
                             envelope.sign(&signing_key);
                             if let Ok(envelope_json) = serde_json::to_string(&envelope) {
-                                req_builder = req_builder.header("x-service-envelope", envelope_json);
+                                req_builder =
+                                    req_builder.header("x-service-envelope", envelope_json);
                             }
                         }
                     }
@@ -372,11 +375,32 @@ impl TrustEngine {
         if effective_tier >= Tier::Tier1RequireHumanApproval {
             let reason = require_approval_reason.unwrap_or(base_decision.reason);
 
-            // Default Manual Escalation path (Standard approval record without triage, or fallback if triage offline)
-            let approval_record = self
-                .approval_manager
-                .create_request(action.clone(), reason.clone())
-                .await?;
+            // If this matched a probationary rule in PolicyEngine, attach the rule metadata
+            // so human confirmation advances probation toward graduation.
+            let matched_probationary_rule = base_decision.matched_rule.as_ref().and_then(|name| {
+                self.policy_engine
+                    .rules()
+                    .into_iter()
+                    .find(|r| {
+                        &r.name == name && r.lifecycle_state.as_deref() == Some("probationary")
+                    })
+                    .and_then(|r| serde_json::to_value(r).ok())
+            });
+
+            let approval_record = if matched_probationary_rule.is_some() {
+                self.approval_manager
+                    .create_enriched_request(
+                        action.clone(),
+                        reason.clone(),
+                        None,
+                        matched_probationary_rule,
+                    )
+                    .await?
+            } else {
+                self.approval_manager
+                    .create_request(action.clone(), reason.clone())
+                    .await?
+            };
             return Err(EngineError::ApprovalRequired {
                 action_id: action.action_id.clone(),
                 approval_id: approval_record.approval_id,
@@ -419,7 +443,11 @@ impl TrustEngine {
             lineage_attestation: None,
         };
 
-        let aud = "executor-host";
+        let aud = if skill.execution.runtime == trust_sdk::manifest::RuntimeType::BoundedHttp {
+            skill.author_did.as_str()
+        } else {
+            "executor-host"
+        };
         let grant_jwt = sign_grant_jwt(&grant, aud, &self.signing_key_pair)?;
 
         self.audit_sink
@@ -451,7 +479,7 @@ impl TrustEngine {
 
         // Step 12: Record tool output into lineage engine on the RAW result first,
         // then run egress PII redaction + structural validation.
-        let raw_outcome = match dispatch_result {
+        let mut raw_outcome = match dispatch_result {
             Ok(res) => {
                 let _ = self
                     .taint_lineage_engine
@@ -469,6 +497,12 @@ impl TrustEngine {
         };
 
         // Step 13: settle_reservation, record_outcome, audit
+        if let Ok(ref mut res) = raw_outcome {
+            if res.provider_idempotency_key.is_none() {
+                res.provider_idempotency_key =
+                    Some(format!("{}|{}", grant.jti, grant.input_hash));
+            }
+        }
         let reservation_id = economic_claim
             .as_ref()
             .map(|c| c.reservation_id.as_str())
@@ -478,7 +512,19 @@ impl TrustEngine {
             .settle_reservation(reservation_id, &raw_outcome)
             .await?;
 
+        if let (Ok(ref mut res), Some(ref rcpt)) = (&mut raw_outcome, &receipt) {
+            if res.receipt.is_none() {
+                res.receipt = serde_json::to_value(rcpt).ok();
+            }
+        }
+
         let success = raw_outcome.is_ok();
+        let has_receipt = receipt.is_some()
+            || raw_outcome
+                .as_ref()
+                .ok()
+                .and_then(|r| r.receipt.as_ref())
+                .is_some();
         let _ = self
             .reputation_evaluator
             .record_outcome(
@@ -500,7 +546,416 @@ impl TrustEngine {
                 action_id: Some(action.action_id.clone()),
                 details: serde_json::json!({
                     "success": success,
-                    "has_receipt": receipt.is_some(),
+                    "has_receipt": has_receipt,
+                }),
+                prev_hash: None,
+                hash: None,
+            })
+            .await?;
+
+        raw_outcome
+    }
+
+    /// Resolves a pending human approval request, synchronizes probation progress with `triage_agent`,
+    /// and hot-reloads the candidate policy rule (`probationary` -> `graduated` or `quarantined`) into `PolicyEngine`.
+    pub async fn resolve_and_sync_triage(
+        &self,
+        approval_id: &str,
+        approved: bool,
+        resolved_by: String,
+        rejection_reason: Option<String>,
+    ) -> Result<(crate::approval::ApprovalRecord, Option<serde_json::Value>), EngineError> {
+        let record = self
+            .approval_manager
+            .resolve(approval_id, approved, resolved_by.clone())
+            .await?;
+
+        let candidate_val = record.candidate_rule.clone().or_else(|| {
+            // Check if a probationary rule already exists for this tool in PolicyEngine
+            self.policy_engine
+                .rules()
+                .into_iter()
+                .find(|r| {
+                    r.lifecycle_state.as_deref() == Some("probationary")
+                        && r.tool_names
+                            .as_ref()
+                            .map(|names| names.contains(&record.proposed_action.tool_name))
+                            .unwrap_or(false)
+                })
+                .and_then(|r| serde_json::to_value(r).ok())
+        });
+
+        let mut sync_summary = None;
+
+        if let Some(cand) = candidate_val {
+            let rule_name = cand
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if !rule_name.is_empty() {
+                let mut policy_rule = crate::policy::PolicyRule {
+                    name: rule_name.clone(),
+                    tool_names: cand
+                        .get("tool_names")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .or_else(|| Some(vec![record.proposed_action.tool_name.clone()])),
+                    operation_kind: cand
+                        .get("operation_kind")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    min_amount_cents: cand.get("min_amount_cents").and_then(|v| v.as_u64()),
+                    min_auth_level: cand
+                        .get("min_auth_level")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u8),
+                    action: "require_approval".to_string(),
+                    priority: cand.get("priority").and_then(|v| v.as_i64()).unwrap_or(15) as i32,
+                    lifecycle_state: Some("probationary".to_string()),
+                    probation_target: cand
+                        .get("probation_target")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32)
+                        .or(Some(5)),
+                    confirmations_count: cand
+                        .get("confirmations_count")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32)
+                        .or(Some(0)),
+                    required_approver_quorum: cand
+                        .get("required_approver_quorum")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32)
+                        .or(Some(2)),
+                    projected_fields: cand
+                        .get("projected_fields")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    escalation_role: cand
+                        .get("escalation_role")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                };
+
+                // Query triage_agent if configured
+                let triage_url = self
+                    .policy_engine
+                    .triage_agent_url()
+                    .or_else(|| std::env::var("TRIAGE_AGENT_URL").ok());
+
+                let mut remote_graduated = false;
+                let mut remote_quarantined = !approved;
+                let mut updated_confirmations = if approved {
+                    policy_rule.confirmations_count.unwrap_or(0) + 1
+                } else {
+                    policy_rule.confirmations_count.unwrap_or(0)
+                };
+
+                if let Some(url) = triage_url {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_millis(2500))
+                        .build()
+                        .unwrap_or_default();
+
+                    let caller_did_req = if !record.proposed_action.actor.requester_did.is_empty() {
+                        record.proposed_action.actor.requester_did.clone()
+                    } else {
+                        record.tenant_id.clone()
+                    };
+
+                    let confirm_payload = serde_json::json!({
+                        "rule_name": rule_name,
+                        "approver_did": resolved_by,
+                        "caller_did": caller_did_req,
+                        "action_id": record.action_id,
+                        "trace_id": format!("tr_{}", record.approval_id),
+                        "approved": approved,
+                        "rejection_reason": rejection_reason,
+                    });
+
+                    let endpoint = format!(
+                        "{}/v1/triage/probation/record_confirmation",
+                        url.trim_end_matches('/')
+                    );
+                    let body_bytes = serde_json::to_vec(&confirm_payload).unwrap_or_default();
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(&body_bytes);
+                    let body_hash = format!("{:x}", hasher.finalize());
+
+                    let now = chrono::Utc::now().timestamp() as u64;
+                    let traceparent_header =
+                        format!("00-{}-0000000000000001-01", record.approval_id);
+                    let gw_did = format!(
+                        "did:twin:z{}",
+                        hex::encode(self.signing_key_pair.public_key().to_bytes())
+                    );
+
+                    let mut req_builder = client
+                        .post(&endpoint)
+                        .header("traceparent", &traceparent_header)
+                        .header("content-type", "application/json");
+
+                    if let Ok(mut envelope) = trust_sdk::envelope::ServiceRequestEnvelope::new(
+                        gw_did,
+                        url.clone(),
+                        "POST",
+                        "/v1/triage/probation/record_confirmation",
+                        body_hash,
+                        now,
+                        now + 25,
+                        format!("jti_{}", uuid::Uuid::new_v4()),
+                        traceparent_header,
+                    ) {
+                        if let Ok(key_bytes) = self.signing_key_pair.to_bytes()[..32].try_into() {
+                            let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+                            envelope.sign(&signing_key);
+                            if let Ok(env_json) = serde_json::to_string(&envelope) {
+                                req_builder = req_builder.header("x-service-envelope", env_json);
+                            }
+                        }
+                    }
+
+                    if let Ok(resp) = req_builder.body(body_bytes).send().await {
+                        if resp.status().is_success() {
+                            if let Ok(body_json) = resp.json::<serde_json::Value>().await {
+                                remote_graduated = body_json
+                                    .get("graduated")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                remote_quarantined = body_json
+                                    .get("quarantined")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(!approved);
+                                if let Some(c) = body_json
+                                    .get("confirmations_count")
+                                    .and_then(|v| v.as_u64())
+                                {
+                                    updated_confirmations = c as u32;
+                                }
+                                sync_summary = Some(body_json);
+                            }
+                        }
+                    }
+                }
+
+                // Hot-reload PolicyEngine based on outcome
+                let new_fp = if remote_quarantined {
+                    self.policy_engine
+                        .quarantine_rule(&rule_name, policy_rule.tool_names.clone())
+                        .ok()
+                } else if remote_graduated {
+                    policy_rule.confirmations_count = Some(updated_confirmations);
+                    let _ = self.policy_engine.upsert_rule(policy_rule);
+                    self.policy_engine
+                        .graduate_rule(&rule_name, updated_confirmations)
+                        .ok()
+                } else {
+                    policy_rule.confirmations_count = Some(updated_confirmations);
+                    self.policy_engine.upsert_rule(policy_rule).ok()
+                };
+
+                let new_state_str = if remote_quarantined {
+                    "quarantined"
+                } else if remote_graduated {
+                    "graduated"
+                } else {
+                    "probationary"
+                };
+
+                if sync_summary.is_none() {
+                    sync_summary = Some(serde_json::json!({
+                        "rule_name": rule_name,
+                        "lifecycle_state": new_state_str,
+                        "confirmations_count": updated_confirmations,
+                        "graduated": remote_graduated,
+                        "quarantined": remote_quarantined,
+                        "policy_fingerprint": new_fp,
+                    }));
+                }
+
+                let _ = self
+                    .audit_sink
+                    .append(AuditEvent {
+                        event_id: format!("ev_{}", uuid::Uuid::new_v4()),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        event_type: "policy_rule_lifecycle_updated".to_string(),
+                        tenant_id: record.tenant_id.clone(),
+                        trace_id: format!("tr_{}", record.approval_id),
+                        action_id: Some(record.action_id.clone()),
+                        details: serde_json::json!({
+                            "rule_name": rule_name,
+                            "lifecycle_state": new_state_str,
+                            "confirmations_count": updated_confirmations,
+                            "resolved_by": resolved_by,
+                            "policy_fingerprint": new_fp,
+                        }),
+                        prev_hash: None,
+                        hash: None,
+                    })
+                    .await;
+            }
+        }
+
+        Ok((record, sync_summary))
+    }
+
+    /// Consumes a human-approved `ApprovalRecord` once and executes the tool with `GrantClearance::HumanApproved`.
+    pub async fn execute_approved_action(
+        &self,
+        approval_id: &str,
+    ) -> Result<ExecutionResult, EngineError> {
+        let record = self.approval_manager.consume_approved(approval_id).await?;
+        let action = &record.proposed_action;
+        let tenant_id = if record.tenant_id.is_empty() {
+            "default"
+        } else {
+            &record.tenant_id
+        };
+        let trace_id = format!("tr_appr_{}", record.approval_id);
+
+        let skill = self
+            .skill_registry
+            .get_skill(tenant_id, &action.tool_name)
+            .await?
+            .ok_or_else(|| EngineError::SkillNotFound(action.tool_name.clone()))?;
+
+        let payer_did = if !action.actor.requester_did.is_empty() {
+            action.actor.requester_did.as_str()
+        } else {
+            tenant_id
+        };
+
+        let economic_claim = self
+            .settlement_engine
+            .reserve_budget(tenant_id, payer_did, &skill)
+            .await?;
+
+        let now = chrono::Utc::now().timestamp();
+        let input_hash = canonical_hash(&action.arguments);
+        let grant_jti = format!("grant_{}", uuid::Uuid::new_v4());
+
+        let grant = ExecutionGrant {
+            jti: grant_jti.clone(),
+            action_id: action.action_id.clone(),
+            tenant_id: tenant_id.to_string(),
+            workspace_id: action.workspace_id.clone(),
+            tool_name: skill.name.clone(),
+            input_hash,
+            iss: "trust_gateway".to_string(),
+            exp: now + 60,
+            policy_fingerprint: self.policy_engine.fingerprint(),
+            clearance: GrantClearance::HumanApproved,
+            economic_claim: economic_claim.clone(),
+            budget: None,
+            contract_id: None,
+            contract_hash: None,
+            source_input_hash: None,
+            lineage_attestation: None,
+        };
+
+        let aud = if skill.execution.runtime == trust_sdk::manifest::RuntimeType::BoundedHttp {
+            skill.author_did.as_str()
+        } else {
+            "executor-host"
+        };
+        let grant_jwt = sign_grant_jwt(&grant, aud, &self.signing_key_pair)?;
+
+        self.audit_sink
+            .append(AuditEvent {
+                event_id: format!("ev_{}", uuid::Uuid::new_v4()),
+                timestamp: now,
+                event_type: "grant_issued".to_string(),
+                tenant_id: tenant_id.to_string(),
+                trace_id: trace_id.clone(),
+                action_id: Some(action.action_id.clone()),
+                details: serde_json::json!({
+                    "jti": grant_jti,
+                    "tool": skill.name,
+                    "clearance": "human_approved",
+                    "approval_id": approval_id,
+                    "approved_by": record.resolved_by,
+                }),
+                prev_hash: None,
+                hash: None,
+            })
+            .await?;
+
+        self.nonce_store
+            .consume_nonce(tenant_id, &grant.jti, 65)
+            .await?;
+
+        let envelope = TrustEnvelope {
+            trace_id: trace_id.clone(),
+            timestamp: now,
+            payload: action.clone(),
+        };
+
+        let dispatch_result = self
+            .dispatcher
+            .dispatch(&skill, &envelope, &grant_jwt)
+            .await;
+
+        let mut raw_outcome = match dispatch_result {
+            Ok(res) => {
+                let _ = self
+                    .taint_lineage_engine
+                    .record_tool_output(tenant_id, &trace_id, &skill, &res.output)
+                    .await;
+                let processed_output = EgressProcessor::process_egress(&res.output, &skill.egress)?;
+                Ok(ExecutionResult {
+                    output: processed_output,
+                    ..res
+                })
+            }
+            Err(e) => Err(e),
+        };
+
+        if let Ok(ref mut res) = raw_outcome {
+            if res.provider_idempotency_key.is_none() {
+                res.provider_idempotency_key =
+                    Some(format!("{}|{}", grant.jti, grant.input_hash));
+            }
+        }
+        let reservation_id = economic_claim
+            .as_ref()
+            .map(|c| c.reservation_id.as_str())
+            .unwrap_or("none");
+        let receipt = self
+            .settlement_engine
+            .settle_reservation(reservation_id, &raw_outcome)
+            .await?;
+
+        if let (Ok(ref mut res), Some(ref rcpt)) = (&mut raw_outcome, &receipt) {
+            if res.receipt.is_none() {
+                res.receipt = serde_json::to_value(rcpt).ok();
+            }
+        }
+
+        let success = raw_outcome.is_ok();
+        let has_receipt = receipt.is_some()
+            || raw_outcome
+                .as_ref()
+                .ok()
+                .and_then(|r| r.receipt.as_ref())
+                .is_some();
+
+        let _ = self
+            .reputation_evaluator
+            .record_outcome(tenant_id, payer_did, &skill.author_did, success)
+            .await;
+
+        self.audit_sink
+            .append(AuditEvent {
+                event_id: format!("ev_{}", uuid::Uuid::new_v4()),
+                timestamp: chrono::Utc::now().timestamp(),
+                event_type: "execution_completed".to_string(),
+                tenant_id: tenant_id.to_string(),
+                trace_id,
+                action_id: Some(action.action_id.clone()),
+                details: serde_json::json!({
+                    "success": success,
+                    "has_receipt": has_receipt,
+                    "approval_id": approval_id,
                 }),
                 prev_hash: None,
                 hash: None,

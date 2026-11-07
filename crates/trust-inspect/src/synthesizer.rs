@@ -1,6 +1,7 @@
 use crate::classifier::ClassifiedOperation;
 use trust_sdk::manifest::{
-    DataOriginTrust, EgressClassification, ExecutionSpec, PolicyDefaults, RuntimeType, SkillManifest,
+    DataOriginTrust, EgressClassification, ExecutionSpec, PolicyDefaults, RuntimeType,
+    SkillManifest,
 };
 
 pub struct ArtifactSynthesizer;
@@ -51,7 +52,11 @@ impl ArtifactSynthesizer {
             }),
             policy_defaults: PolicyDefaults {
                 default_tier: default_tier.to_string(),
-                max_frequency_per_trace: if op.metrics.operation_kind == "destructive" { 0 } else { 10 },
+                max_frequency_per_trace: if op.metrics.operation_kind == "destructive" {
+                    0
+                } else {
+                    10
+                },
                 default_risk_level: op.metrics.risk_classification.to_lowercase(),
                 operation_kind: op.metrics.operation_kind.clone(),
             },
@@ -85,7 +90,10 @@ max_grant_ttl_seconds = 30
             .collect();
 
         if !destructive_ops.is_empty() {
-            let names: Vec<String> = destructive_ops.iter().map(|o| format!("\"{}\"", o.operation_id)).collect();
+            let names: Vec<String> = destructive_ops
+                .iter()
+                .map(|o| format!("\"{}\"", o.operation_id))
+                .collect();
             toml.push_str(&format!(
                 r#"[[rules]]
 name = "Deny all destructive operations ({service_name})"
@@ -102,11 +110,16 @@ priority = 50
         // 2. Mutation & Financial Operations (Require Approval with Probation, Priority 20)
         let mutation_ops: Vec<&ClassifiedOperation> = ops
             .iter()
-            .filter(|o| o.metrics.operation_kind == "mutation" || o.recommended_action == "require_approval")
+            .filter(|o| {
+                o.metrics.operation_kind == "mutation" || o.recommended_action == "require_approval"
+            })
             .collect();
 
         if !mutation_ops.is_empty() {
-            let names: Vec<String> = mutation_ops.iter().map(|o| format!("\"{}\"", o.operation_id)).collect();
+            let names: Vec<String> = mutation_ops
+                .iter()
+                .map(|o| format!("\"{}\"", o.operation_id))
+                .collect();
             toml.push_str(&format!(
                 r#"[[rules]]
 name = "Require approval and probation for state mutations ({service_name})"
@@ -131,7 +144,10 @@ required_approver_quorum = 2
             .collect();
 
         if !read_ops.is_empty() {
-            let names: Vec<String> = read_ops.iter().map(|o| format!("\"{}\"", o.operation_id)).collect();
+            let names: Vec<String> = read_ops
+                .iter()
+                .map(|o| format!("\"{}\"", o.operation_id))
+                .collect();
             toml.push_str(&format!(
                 r#"[[rules]]
 name = "Auto-allow safe read-only queries ({service_name})"
@@ -154,9 +170,18 @@ priority = 10
         spec_source: &str,
     ) -> String {
         let total = ops.len();
-        let destructive_count = ops.iter().filter(|o| o.metrics.operation_kind == "destructive").count();
-        let mutation_count = ops.iter().filter(|o| o.metrics.operation_kind == "mutation").count();
-        let read_count = ops.iter().filter(|o| o.metrics.operation_kind == "read").count();
+        let destructive_count = ops
+            .iter()
+            .filter(|o| o.metrics.operation_kind == "destructive")
+            .count();
+        let mutation_count = ops
+            .iter()
+            .filter(|o| o.metrics.operation_kind == "mutation")
+            .count();
+        let read_count = ops
+            .iter()
+            .filter(|o| o.metrics.operation_kind == "read")
+            .count();
 
         let mut report = String::new();
         report.push_str(&format!(
@@ -169,9 +194,15 @@ priority = 10
         report.push_str("## 1. Executive Summary\n\n");
         report.push_str("| Metric | Value |\n|---|---|\n");
         report.push_str(&format!("| **Total Operations Inspected** | `{total}` |\n"));
-        report.push_str(&format!("| **Safe Read Operations (Tier 0)** | `{read_count}` |\n"));
-        report.push_str(&format!("| **State Mutations (Tier 1 Probation)** | `{mutation_count}` |\n"));
-        report.push_str(&format!("| **Destructive Endpoints (Hard Deny)** | `{destructive_count}` |\n\n"));
+        report.push_str(&format!(
+            "| **Safe Read Operations (Tier 0)** | `{read_count}` |\n"
+        ));
+        report.push_str(&format!(
+            "| **State Mutations (Tier 1 Probation)** | `{mutation_count}` |\n"
+        ));
+        report.push_str(&format!(
+            "| **Destructive Endpoints (Hard Deny)** | `{destructive_count}` |\n\n"
+        ));
 
         report.push_str("## 2. Operation Classification Breakdown\n\n");
         report.push_str("| Method | Path | Operation ID | Kind | Risk | Recommended Action |\n");
@@ -180,7 +211,12 @@ priority = 10
         for op in ops {
             report.push_str(&format!(
                 "| `{}` | `{}` | `{}` | `{}` | `{}` | **`{}`** |\n",
-                op.method, op.path, op.operation_id, op.metrics.operation_kind, op.metrics.risk_classification, op.recommended_action
+                op.method,
+                op.path,
+                op.operation_id,
+                op.metrics.operation_kind,
+                op.metrics.risk_classification,
+                op.recommended_action
             ));
         }
 
@@ -190,17 +226,36 @@ priority = 10
         report.push_str("- **Zero Runtime LLM Bypass:** No LLM is reachable on the execution path (OB-INV-01).\n\n");
 
         report.push_str("## 4. Detected IAM & PII Exposures\n\n");
-        let all_iam: std::collections::BTreeSet<String> = ops.iter().flat_map(|o| o.metrics.touched_iam_scopes.clone()).collect();
-        report.push_str(&format!("- **Touched IAM Scopes:** {}\n", all_iam.into_iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")));
+        let all_iam: std::collections::BTreeSet<String> = ops
+            .iter()
+            .flat_map(|o| o.metrics.touched_iam_scopes.clone())
+            .collect();
+        report.push_str(&format!(
+            "- **Touched IAM Scopes:** {}\n",
+            all_iam
+                .into_iter()
+                .map(|s| format!("`{s}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
 
-        let all_pii: std::collections::BTreeSet<String> = ops.iter().flat_map(|o| o.detected_pii_fields.clone()).collect();
+        let all_pii: std::collections::BTreeSet<String> = ops
+            .iter()
+            .flat_map(|o| o.detected_pii_fields.clone())
+            .collect();
         if all_pii.is_empty() {
             report.push_str("- **Detected PII Fields:** None detected.\n\n");
         } else {
-            report.push_str(&format!("- **Detected PII Fields:** {}\n\n", all_pii.into_iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")));
+            report.push_str(&format!(
+                "- **Detected PII Fields:** {}\n\n",
+                all_pii
+                    .into_iter()
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
 
         report
     }
 }
-

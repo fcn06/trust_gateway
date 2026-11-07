@@ -66,13 +66,10 @@ impl SignedContract {
         Ok(())
     }
 
-    pub fn verify(
-        &self,
-        verifying_key: &ed25519_dalek::VerifyingKey,
-    ) -> Result<(), ContractError> {
+    pub fn verify(&self, verifying_key: &ed25519_dalek::VerifyingKey) -> Result<(), ContractError> {
         let hash = self.compute_canonical_hash()?;
-        let sig_bytes = hex::decode(&self.signature)
-            .map_err(|_| ContractError::InvalidSignature)?;
+        let sig_bytes =
+            hex::decode(&self.signature).map_err(|_| ContractError::InvalidSignature)?;
 
         if sig_bytes.len() != 64 {
             return Err(ContractError::InvalidSignature);
@@ -201,19 +198,27 @@ mod tests {
         // Tamper test
         let mut tampered = contract.clone();
         tampered.version = "1.0.1".to_string();
-        assert_eq!(tampered.verify(&verifying_key), Err(ContractError::InvalidSignature));
+        assert_eq!(
+            tampered.verify(&verifying_key),
+            Err(ContractError::InvalidSignature)
+        );
 
         // Valid input passes
         let valid_args = serde_json::json!({ "location": "Berlin" });
-        assert!(contract.validate_input("claw_weather", &valid_args, 1730000010).is_ok());
+        assert!(contract
+            .validate_input("claw_weather", &valid_args, 1730000010)
+            .is_ok());
 
         // Missing required field fails
         let missing_args = serde_json::json!({ "query": "Berlin" });
-        assert!(contract.validate_input("claw_weather", &missing_args, 1730000010).is_err());
+        assert!(contract
+            .validate_input("claw_weather", &missing_args, 1730000010)
+            .is_err());
 
         // Forbidden field fails
         let forbidden_args = serde_json::json!({ "location": "Berlin", "secret_key": "123" });
-        assert!(contract.validate_input("claw_weather", &forbidden_args, 1730000010).is_err());
+        assert!(contract
+            .validate_input("claw_weather", &forbidden_args, 1730000010)
+            .is_err());
     }
 }
-

@@ -132,6 +132,15 @@ pub fn extract_public_key_from_twin_did(did: &str) -> Result<VerifyingKey, DidEr
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DidService {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    #[serde(rename = "serviceEndpoint")]
+    pub service_endpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DidDocument {
     pub id: String,
     #[serde(default, rename = "verificationMethod")]
@@ -144,6 +153,8 @@ pub struct DidDocument {
         rename = "assertionMethod"
     )]
     pub assertion_method: Option<Vec<String>>,
+    #[serde(default)]
+    pub service: Vec<DidService>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,6 +244,13 @@ impl DidDocument {
         }
         Err(DidError::MissingKey)
     }
+
+    pub fn find_service_endpoint(&self, service_type: &str) -> Option<&str> {
+        self.service
+            .iter()
+            .find(|s| s.service_type == service_type || service_type.is_empty())
+            .map(|s| s.service_endpoint.as_str())
+    }
 }
 
 /// Convert did:web identifier to HTTPS URL.
@@ -262,32 +280,35 @@ pub fn did_web_to_https_url_with_options(
     }
 
     let parts: Vec<&str> = remainder.split(':').collect();
-    let domain = parts[0];
+    let raw_domain = parts[0];
 
     // Check for percent-encoded port injection (%3a or %3A)
-    if domain.to_lowercase().contains("%3a") {
+    if raw_domain.to_lowercase().contains("%3a") && !allow_localhost {
         return Err(DidError::PortInjection);
     }
 
     // Check for explicit port injection in second segment
-    if parts.len() > 1 && parts[1].chars().all(|c| c.is_ascii_digit()) {
+    if parts.len() > 1 && parts[1].chars().all(|c| c.is_ascii_digit()) && !allow_localhost {
         return Err(DidError::PortInjection);
     }
 
+    let decoded_domain = raw_domain.replace("%3A", ":").replace("%3a", ":");
+    let host_only = decoded_domain.split(':').next().unwrap_or(&decoded_domain);
+
     // Check for IP literals
     let is_ipv4 = {
-        let octets: Vec<&str> = domain.split('.').collect();
+        let octets: Vec<&str> = host_only.split('.').collect();
         octets.len() == 4 && octets.iter().all(|o| o.parse::<u8>().is_ok())
     };
-    if is_ipv4 || domain.starts_with('[') || domain.contains("::") {
-        return Err(DidError::IpLiteralForbidden(domain.to_string()));
+    if (is_ipv4 || host_only.starts_with('[') || host_only.contains("::")) && !allow_localhost {
+        return Err(DidError::IpLiteralForbidden(raw_domain.to_string()));
     }
 
     // Check for localhost
-    if (domain.eq_ignore_ascii_case("localhost") || domain.ends_with(".localhost"))
+    if (host_only.eq_ignore_ascii_case("localhost") || host_only.ends_with(".localhost"))
         && !allow_localhost
     {
-        return Err(DidError::LocalhostForbidden(domain.to_string()));
+        return Err(DidError::LocalhostForbidden(raw_domain.to_string()));
     }
 
     // Check path parts
@@ -310,11 +331,23 @@ pub fn did_web_to_https_url_with_options(
         }
     }
 
+    let scheme = if allow_localhost
+        && (host_only == "127.0.0.1"
+            || host_only.eq_ignore_ascii_case("localhost")
+            || host_only == "::1")
+    {
+        "http"
+    } else {
+        "https"
+    };
+
     if path_parts.is_empty() {
-        Ok(format!("https://{domain}/.well-known/did.json"))
+        Ok(format!("{scheme}://{decoded_domain}/.well-known/did.json"))
     } else {
         let joined_path = path_parts.join("/");
-        Ok(format!("https://{domain}/{joined_path}/did.json"))
+        Ok(format!(
+            "{scheme}://{decoded_domain}/{joined_path}/did.json"
+        ))
     }
 }
 
@@ -468,10 +501,18 @@ mod tests {
             }],
             authentication: None,
             assertion_method: None,
+            service: vec![DidService {
+                id: "did:web:example.com#execution".to_string(),
+                service_type: "SkillExecutionService".to_string(),
+                service_endpoint: "https://example.com/api/skills/execute".to_string(),
+            }],
         };
 
         let found = doc.find_ed25519_pubkey().unwrap();
         assert_eq!(found, pubkey_bytes);
+
+        let endpoint = doc.find_service_endpoint("SkillExecutionService").unwrap();
+        assert_eq!(endpoint, "https://example.com/api/skills/execute");
     }
 
     #[test]

@@ -1,3 +1,5 @@
+// INV-003: Capability grants must be Ed25519-verified against RFC 8785 canonical bytes before executing downstream actions.
+// CTR-001: ServiceRequestEnvelope carries caller DID, audience, method, path, body hash, and Ed25519 signature.
 use crate::canonical::canonical_json;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -114,8 +116,9 @@ impl ServiceRequestEnvelope {
         let sig_bytes = hex::decode(&self.signature)
             .map_err(|e| EnvelopeError::SignatureError(format!("Invalid hex signature: {e}")))?;
 
-        let sig = Signature::from_slice(&sig_bytes)
-            .map_err(|e| EnvelopeError::SignatureError(format!("Malformed Ed25519 signature: {e}")))?;
+        let sig = Signature::from_slice(&sig_bytes).map_err(|e| {
+            EnvelopeError::SignatureError(format!("Malformed Ed25519 signature: {e}"))
+        })?;
 
         let payload = self.canonical_signable_payload();
         verifying_key
@@ -184,7 +187,12 @@ mod tests {
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
         );
 
-        assert!(matches!(res, Err(EnvelopeError::TtlExceeded { requested: 31, max: 30 })));
+        assert!(matches!(
+            res,
+            Err(EnvelopeError::TtlExceeded {
+                requested: 31,
+                max: 30
+            })
+        ));
     }
 }
-

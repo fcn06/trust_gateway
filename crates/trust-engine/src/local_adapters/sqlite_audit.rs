@@ -112,7 +112,8 @@ impl SqliteAuditSink {
                 let trace_id: String = row.get(4)?;
                 let action_id: Option<String> = row.get(5)?;
                 let details_str: String = row.get(6)?;
-                let details: serde_json::Value = serde_json::from_str(&details_str).unwrap_or_default();
+                let details: serde_json::Value =
+                    serde_json::from_str(&details_str).unwrap_or_default();
                 let prev_hash: Option<String> = row.get(7).ok();
                 let hash: Option<String> = row.get(8).ok();
 
@@ -281,12 +282,16 @@ mod tests {
         assert_eq!(verified_count, 2);
 
         // Test trace_id query (OB-INV-11)
-        let trace_events = sink.get_events_by_trace("tr_1").expect("Query must succeed");
+        let trace_events = sink
+            .get_events_by_trace("tr_1")
+            .expect("Query must succeed");
         assert_eq!(trace_events.len(), 2);
         assert_eq!(trace_events[0].event_id, "ev_1");
         assert_eq!(trace_events[1].event_id, "ev_2");
 
-        let empty_events = sink.get_events_by_trace("nonexistent_trace").expect("Query must succeed");
+        let empty_events = sink
+            .get_events_by_trace("nonexistent_trace")
+            .expect("Query must succeed");
         assert!(empty_events.is_empty());
     }
 }

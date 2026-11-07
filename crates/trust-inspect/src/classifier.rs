@@ -220,11 +220,13 @@ impl OperationClassifier {
                             }
                         }
                         Value::String(s) => {
-                            let clean =
-                                s.trim_start_matches(['$', '€', '£', '¥', ' ']).replace(',', "");
+                            let clean = s
+                                .trim_start_matches(['$', '€', '£', '¥', ' '])
+                                .replace(',', "");
                             if let Ok(parsed) = clean.parse::<f64>() {
                                 if parsed >= 0.0 {
-                                    total_cents = total_cents.saturating_add((parsed * 100.0) as u64);
+                                    total_cents =
+                                        total_cents.saturating_add((parsed * 100.0) as u64);
                                 } else {
                                     indeterminate = true;
                                 }
@@ -248,9 +250,20 @@ impl OperationClassifier {
         let mut fields = Vec::new();
         if let Value::Object(map) = args {
             let priority_keys = [
-                "vendor_id", "id", "contract_id", "account_id", "user_id",
-                "amount", "amount_cents", "price", "months", "change",
-                "target", "destination", "recipient", "role",
+                "vendor_id",
+                "id",
+                "contract_id",
+                "account_id",
+                "user_id",
+                "amount",
+                "amount_cents",
+                "price",
+                "months",
+                "change",
+                "target",
+                "destination",
+                "recipient",
+                "role",
             ];
 
             for key in priority_keys {

@@ -161,7 +161,8 @@ pub async fn build_engine_from_config(config: &AppConfig) -> anyhow::Result<Arc<
             config.paths.policy_path
         )
     })?;
-    let policy_engine = Arc::new(PolicyEngine::from_toml(&policy_str)?);
+    let policy_engine =
+        Arc::new(PolicyEngine::from_toml(&policy_str)?.with_file_path(&config.paths.policy_path));
 
     let static_registry = Arc::new(StaticSkillRegistry::new(&config.paths.tools_dir, false));
     let _ = static_registry.load_all().await?;
@@ -195,7 +196,9 @@ pub async fn build_engine_from_config(config: &AppConfig) -> anyhow::Result<Arc<
         dispatcher,
         audit_sink,
         approval_manager,
-        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
+        contract_registry: Arc::new(
+            trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new(),
+        ),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec![configured_api_key],
     });
@@ -220,10 +223,16 @@ pub fn build_app(state: Arc<AppState>, request_limit_bytes: usize) -> Router {
             "/v1/approvals/:id/decision",
             post(approval_decision_handler),
         )
+        .route(
+            "/v1/approvals/:id/execute",
+            post(execute_approved_action_handler),
+        )
         .route("/api/ws", get(ws_handler))
         .route("/api/actions", get(actions_list_handler))
         .route("/api/actions/:id", get(action_detail_handler))
         .route("/api/actions/:id/live", get(action_live_handler))
+        .route("/api/policy/rules", get(policy_rules_handler))
+        .route("/v1/policy/rules", get(policy_rules_handler))
         .route(
             "/v1/federation/skills/publish",
             post(federation_publish_handler),
@@ -239,6 +248,72 @@ pub async fn healthz_handler(State(state): State<Arc<AppState>>) -> Json<serde_j
         "status": "ok",
         "uptime_seconds": uptime,
         "mode": "oss_standalone"
+    }))
+}
+
+pub async fn policy_rules_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let rules: Vec<serde_json::Value> = state
+        .engine
+        .policy_engine
+        .rules()
+        .iter()
+        .map(|r| {
+            let amount_str = r
+                .min_amount_cents
+                .map(|c| format!("${:.2}", (c as f64) / 100.0));
+            let display_effect = match r.action.as_str() {
+                "allow" => "Allow",
+                "deny" => "Deny",
+                "require_approval" => "Require Approval",
+                "require_proof" => "Require Verification",
+                other => other,
+            };
+            let tool_name = r.tool_names.as_ref().and_then(|t| t.first()).cloned();
+            let natural_desc = if let Some(ref m) = amount_str {
+                format!("{} if amount is greater than {}", display_effect, m)
+            } else if let Some(ref t) = tool_name {
+                format!("{} for action '{}'", display_effect, t)
+            } else if let Some(ref op) = r.operation_kind {
+                format!("{} for category '{}'", display_effect, op)
+            } else {
+                format!("{} all actions", display_effect)
+            };
+
+            serde_json::json!({
+                "id": r.name,
+                "name": r.name,
+                "priority": r.priority,
+                "effect": r.action,
+                "action": r.action,
+                "reason": format!("Policy rule: {} ({})", r.name, r.action),
+                "description": natural_desc,
+                "operation_kind": r.operation_kind,
+                "categories": r.operation_kind.as_ref().map(|k| vec![k.clone()]),
+                "action_names": r.tool_names.clone().unwrap_or_default(),
+                "tool_names": r.tool_names.clone().unwrap_or_default(),
+                "min_amount": amount_str,
+                "min_amount_cents": r.min_amount_cents,
+                "min_auth_level": r.min_auth_level,
+                "lifecycle_state": r.lifecycle_state,
+                "probation_target": r.probation_target,
+                "confirmations_count": r.confirmations_count,
+                "required_approver_quorum": r.required_approver_quorum,
+                "escalation_role": r.escalation_role,
+            })
+        })
+        .collect();
+
+    let live_cfg = state.engine.policy_engine.config();
+    let gov = &live_cfg.governance;
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "policy_version": gov.policy_version,
+        "default_action": gov.default_action,
+        "triage_agent_url": gov.triage_agent_url,
+        "fingerprint": state.engine.policy_engine.fingerprint(),
+        "rules": rules,
+        "total_rules": rules.len()
     }))
 }
 
@@ -427,12 +502,7 @@ pub async fn propose_action_handler(
     let trace_id = headers
         .get("x-trace-id")
         .and_then(|h| h.to_str().ok())
-        .or_else(|| {
-            action
-                .call_chain
-                .as_ref()
-                .map(|c| c.trace_id.as_str())
-        })
+        .or_else(|| action.call_chain.as_ref().map(|c| c.trace_id.as_str()))
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("tr_{}", uuid::Uuid::new_v4()));
 
@@ -488,7 +558,12 @@ pub async fn register_contract_handler(
     State(state): State<Arc<AppState>>,
     Json(contract): Json<trust_sdk::contracts::SignedContract>,
 ) -> impl IntoResponse {
-    match state.engine.contract_registry.register_contract(contract).await {
+    match state
+        .engine
+        .contract_registry
+        .register_contract(contract)
+        .await
+    {
         Ok(()) => (
             StatusCode::CREATED,
             Json(serde_json::json!({ "status": "registered" })),
@@ -506,7 +581,12 @@ pub async fn get_contract_handler(
     State(state): State<Arc<AppState>>,
     AxumPath(contract_id): AxumPath<String>,
 ) -> impl IntoResponse {
-    match state.engine.contract_registry.get_contract(&contract_id).await {
+    match state
+        .engine
+        .contract_registry
+        .get_contract(&contract_id)
+        .await
+    {
         Ok(Some(contract)) => (StatusCode::OK, Json(contract)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -525,6 +605,47 @@ pub async fn get_contract_handler(
 pub struct ApprovalDecisionPayload {
     pub approved: bool,
     pub resolved_by: String,
+    #[serde(default)]
+    pub rejection_reason: Option<String>,
+}
+
+pub async fn execute_approved_action_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(approval_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let auth_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    if let Err(e) = AuthVerifier::verify_bearer(
+        auth_header,
+        state.engine.token_verifier.as_deref(),
+        &state.engine.configured_api_keys,
+    )
+    .await
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": format!("Authentication failed: {e}") })),
+        )
+            .into_response();
+    }
+
+    match state.engine.execute_approved_action(&approval_id).await {
+        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Err(EngineError::ReplayDetected(msg)) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 pub async fn approval_decision_handler(
@@ -592,11 +713,15 @@ pub async fn approval_decision_handler(
 
     match state
         .engine
-        .approval_manager
-        .resolve(&approval_id, payload.approved, payload.resolved_by)
+        .resolve_and_sync_triage(
+            &approval_id,
+            payload.approved,
+            payload.resolved_by,
+            payload.rejection_reason,
+        )
         .await
     {
-        Ok(record) => {
+        Ok((record, triage_sync)) => {
             if payload.approved {
                 let now = chrono::Utc::now().timestamp();
                 let input_hash =
@@ -634,7 +759,8 @@ pub async fn approval_decision_handler(
                     Json(serde_json::json!({
                         "status": "approved",
                         "record": record,
-                        "grant": grant_jwt
+                        "grant": grant_jwt,
+                        "triage_sync": triage_sync
                     })),
                 )
                     .into_response()
@@ -643,7 +769,8 @@ pub async fn approval_decision_handler(
                     StatusCode::OK,
                     Json(serde_json::json!({
                         "status": "rejected",
-                        "record": record
+                        "record": record,
+                        "triage_sync": triage_sync
                     })),
                 )
                     .into_response()

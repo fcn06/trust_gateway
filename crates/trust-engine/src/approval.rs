@@ -34,6 +34,8 @@ pub struct ApprovalRecord {
     pub triage_dossier: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub candidate_rule: Option<serde_json::Value>,
+    #[serde(default)]
+    pub consumed: bool,
 }
 
 pub struct NoopApprovalNotifier;
@@ -149,6 +151,7 @@ impl ApprovalManager {
             resolved_at: None,
             triage_dossier: None,
             candidate_rule: None,
+            consumed: false,
         };
 
         {
@@ -182,6 +185,7 @@ impl ApprovalManager {
             resolved_at: None,
             triage_dossier,
             candidate_rule,
+            consumed: false,
         };
 
         {
@@ -234,6 +238,38 @@ impl ApprovalManager {
         Ok(updated)
     }
 
+    /// Consumes an already-approved record once for resumed execution, preventing replay.
+    pub async fn consume_approved(&self, approval_id: &str) -> Result<ApprovalRecord, EngineError> {
+        let mut lock = self.records.write().await;
+        let record = lock.get_mut(approval_id).ok_or_else(|| {
+            EngineError::Internal(format!("Approval record not found: {approval_id}"))
+        })?;
+
+        let now = chrono::Utc::now().timestamp();
+        if now > record.expires_at {
+            record.status = ApprovalStatus::Expired;
+            return Err(EngineError::ActionDenied(
+                "Approval record has expired".to_string(),
+            ));
+        }
+
+        if record.status != ApprovalStatus::Approved {
+            return Err(EngineError::ActionDenied(format!(
+                "Approval record '{}' is not approved (current status: {:?})",
+                approval_id, record.status
+            )));
+        }
+
+        if record.consumed {
+            return Err(EngineError::ReplayDetected(format!(
+                "Approval record '{approval_id}' has already been consumed"
+            )));
+        }
+
+        record.consumed = true;
+        Ok(record.clone())
+    }
+
     pub async fn get(&self, approval_id: &str) -> Option<ApprovalRecord> {
         let lock = self.records.read().await;
         lock.get(approval_id).cloned()
@@ -242,7 +278,7 @@ impl ApprovalManager {
     pub async fn list_all(&self) -> Vec<ApprovalRecord> {
         let lock = self.records.read().await;
         let mut list: Vec<ApprovalRecord> = lock.values().cloned().collect();
-        list.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
+        list.sort_by_key(|a| std::cmp::Reverse(a.requested_at));
         list
     }
 
@@ -253,7 +289,7 @@ impl ApprovalManager {
             .filter(|r| r.status == ApprovalStatus::Pending)
             .cloned()
             .collect();
-        list.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
+        list.sort_by_key(|a| std::cmp::Reverse(a.requested_at));
         list
     }
 

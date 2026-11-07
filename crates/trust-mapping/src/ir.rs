@@ -78,4 +78,3 @@ impl MappingRuleSet {
         format!("{:x}", hasher.finalize())
     }
 }
-

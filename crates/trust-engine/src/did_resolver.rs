@@ -10,11 +10,22 @@ use trust_sdk::did::{
 #[async_trait]
 pub trait DidResolver: Send + Sync {
     async fn resolve_ed25519_key(&self, did: &str) -> Result<[u8; 32], EngineError>;
+    async fn resolve_service_endpoint(
+        &self,
+        did: &str,
+        service_type: &str,
+    ) -> Result<String, EngineError> {
+        let _ = (did, service_type);
+        Err(EngineError::AuthError(
+            "Service endpoint resolution not implemented".to_string(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
 struct CachedKey {
     key: [u8; 32],
+    service_endpoint: Option<String>,
     expires_at: i64,
 }
 
@@ -57,17 +68,70 @@ impl CachedDidResolver {
         self
     }
 
+    fn verify_did_web_url_ssrf(&self, url_str: &str) -> Result<(), EngineError> {
+        if self.allow_localhost {
+            return Ok(());
+        }
+        let parsed = reqwest::Url::parse(url_str)
+            .map_err(|e| EngineError::AuthError(format!("Invalid did:web URL: {e}")))?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| EngineError::AuthError("did:web URL missing host".to_string()))?;
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let is_private_or_local = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback()
+                        || v4.is_private()
+                        || v4.is_link_local()
+                        || v4.is_unspecified()
+                }
+                std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+            };
+            if is_private_or_local {
+                return Err(EngineError::AuthError(format!(
+                    "SSRF protection blocked private/loopback IP in did:web resolution: {ip}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Pre-populate cache for tests or known offline DIDs
     pub fn insert_cached_key(&self, did: &str, key: [u8; 32], ttl_secs: i64) {
         let norm_key = did.replace(':', "_");
         let now = chrono::Utc::now().timestamp();
-        self.cache.insert(
-            norm_key,
-            CachedKey {
-                key,
-                expires_at: now + ttl_secs,
-            },
-        );
+        if let Some(mut entry) = self.cache.get_mut(&norm_key) {
+            entry.key = key;
+            entry.expires_at = now + ttl_secs;
+        } else {
+            self.cache.insert(
+                norm_key,
+                CachedKey {
+                    key,
+                    service_endpoint: None,
+                    expires_at: now + ttl_secs,
+                },
+            );
+        }
+    }
+
+    /// Pre-populate cached service endpoint for tests
+    pub fn insert_cached_endpoint(&self, did: &str, endpoint: String, ttl_secs: i64) {
+        let norm_key = did.replace(':', "_");
+        let now = chrono::Utc::now().timestamp();
+        if let Some(mut entry) = self.cache.get_mut(&norm_key) {
+            entry.service_endpoint = Some(endpoint);
+            entry.expires_at = now + ttl_secs;
+        } else {
+            self.cache.insert(
+                norm_key,
+                CachedKey {
+                    key: [0u8; 32],
+                    service_endpoint: Some(endpoint),
+                    expires_at: now + ttl_secs,
+                },
+            );
+        }
     }
 }
 
@@ -92,7 +156,7 @@ impl DidResolver for CachedDidResolver {
             let now = chrono::Utc::now().timestamp();
 
             if let Some(entry) = self.cache.get(&norm_key) {
-                if now < entry.expires_at {
+                if now < entry.expires_at && entry.key != [0u8; 32] {
                     return Ok(entry.key);
                 }
             }
@@ -101,6 +165,7 @@ impl DidResolver for CachedDidResolver {
                 did_web_to_https_url_with_options(did, self.allow_localhost).map_err(|e| {
                     EngineError::AuthError(format!("Invalid did:web url conversion: {e}"))
                 })?;
+            self.verify_did_web_url_ssrf(&url)?;
 
             let res = self.client.get(&url).send().await.map_err(|e| {
                 EngineError::AuthError(format!("Failed to fetch did:web at {url}: {e}"))
@@ -126,10 +191,15 @@ impl DidResolver for CachedDidResolver {
                 EngineError::AuthError(format!("No valid Ed25519 key found in DidDocument: {e}"))
             })?;
 
+            let ep = doc
+                .find_service_endpoint("SkillExecutionService")
+                .map(|s| s.to_string());
+
             self.cache.insert(
                 norm_key,
                 CachedKey {
                     key: pubkey,
+                    service_endpoint: ep,
                     expires_at: now + self.ttl_secs,
                 },
             );
@@ -138,7 +208,78 @@ impl DidResolver for CachedDidResolver {
         }
 
         Err(EngineError::AuthError(format!(
-            "Unsupported DID method in '{did}' (only did:twin and did:web are supported)"
+            "Unsupported DID method: {did}"
+        )))
+    }
+
+    async fn resolve_service_endpoint(
+        &self,
+        did: &str,
+        service_type: &str,
+    ) -> Result<String, EngineError> {
+        if did.starts_with("did:web:") {
+            let norm_key = did.replace(':', "_");
+            let now = chrono::Utc::now().timestamp();
+
+            if let Some(entry) = self.cache.get(&norm_key) {
+                if now < entry.expires_at {
+                    if let Some(ref ep) = entry.service_endpoint {
+                        return Ok(ep.clone());
+                    }
+                }
+            }
+
+            let url =
+                did_web_to_https_url_with_options(did, self.allow_localhost).map_err(|e| {
+                    EngineError::AuthError(format!("Invalid did:web url conversion: {e}"))
+                })?;
+            self.verify_did_web_url_ssrf(&url)?;
+
+            let res = self.client.get(&url).send().await.map_err(|e| {
+                EngineError::AuthError(format!("Failed to fetch did:web at {url}: {e}"))
+            })?;
+
+            if !res.status().is_success() {
+                return Err(EngineError::AuthError(format!(
+                    "did:web endpoint {url} returned HTTP status {}",
+                    res.status()
+                )));
+            }
+
+            let body_bytes = res
+                .bytes()
+                .await
+                .map_err(|e| EngineError::AuthError(format!("Failed to read did:web body: {e}")))?;
+
+            let doc: DidDocument = serde_json::from_slice(&body_bytes).map_err(|e| {
+                EngineError::AuthError(format!("Failed to parse W3C DidDocument: {e}"))
+            })?;
+
+            let ep = doc
+                .find_service_endpoint(service_type)
+                .ok_or_else(|| {
+                    EngineError::SkillValidation(format!(
+                        "No service endpoint of type '{service_type}' found in DID document for {did}"
+                    ))
+                })?
+                .to_string();
+
+            let pubkey = doc.find_ed25519_pubkey().unwrap_or([0u8; 32]);
+
+            self.cache.insert(
+                norm_key,
+                CachedKey {
+                    key: pubkey,
+                    service_endpoint: Some(ep.clone()),
+                    expires_at: now + self.ttl_secs,
+                },
+            );
+
+            return Ok(ep);
+        }
+
+        Err(EngineError::AuthError(format!(
+            "Only did:web supports service endpoint discovery, got: {did}"
         )))
     }
 }

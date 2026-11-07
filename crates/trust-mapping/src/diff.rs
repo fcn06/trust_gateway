@@ -64,8 +64,12 @@ impl SchemaDiffer {
                 ambiguity_type: "missing_required".to_string(),
                 source_field: None,
                 target_field: req.clone(),
-                description: format!("Target required field '{req}' is not populated by the mapping IR."),
-                recommended_action: format!("Add a MappingRule to populate '{req}' via Copy, Constant, or Scale."),
+                description: format!(
+                    "Target required field '{req}' is not populated by the mapping IR."
+                ),
+                recommended_action: format!(
+                    "Add a MappingRule to populate '{req}' via Copy, Constant, or Scale."
+                ),
             });
         }
 

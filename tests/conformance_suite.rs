@@ -110,7 +110,9 @@ priority = 20
         dispatcher,
         audit_sink: audit_sink.clone(),
         approval_manager,
-        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
+        contract_registry: Arc::new(
+            trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new(),
+        ),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec!["sk_test_dev_key".to_string()],
     });
@@ -500,7 +502,9 @@ priority = 100
         dispatcher: Arc::new(LocalSubprocessDispatcher::new(native_tools_dir)),
         audit_sink,
         approval_manager,
-        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
+        contract_registry: Arc::new(
+            trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new(),
+        ),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec![api_key.clone()],
     });
@@ -829,7 +833,9 @@ priority = 10
         dispatcher,
         audit_sink: audit_sink.clone(),
         approval_manager,
-        contract_registry: Arc::new(trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new()),
+        contract_registry: Arc::new(
+            trust_engine::local_adapters::memory_contract::InMemoryContractRegistry::new(),
+        ),
         tracked_call_chains: Arc::new(RwLock::new(HashMap::new())),
         configured_api_keys: vec!["sk_test_trace_key".to_string()],
     });
@@ -865,7 +871,9 @@ priority = 10
 
     let resp = gateway_app.oneshot(propose_req).await.unwrap();
     let status = resp.status();
-    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8_lossy(&body_bytes);
     // Triage returned recommend_reject -> Gateway must reject with BAD_REQUEST containing the mitigation note
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -873,7 +881,10 @@ priority = 10
 
     // 4. Verify Triage received envelope with traceparent
     let captured_tp = received_traceparent.read().await.clone();
-    assert!(captured_tp.contains(test_trace_id), "traceparent header should contain trace_id: {captured_tp}");
+    assert!(
+        captured_tp.contains(test_trace_id),
+        "traceparent header should contain trace_id: {captured_tp}"
+    );
     let captured_env = received_envelope.read().await.clone();
     assert!(captured_env.is_some(), "Triage received verified envelope");
     let env = captured_env.unwrap();
@@ -881,7 +892,10 @@ priority = 10
 
     // 5. Query Audit Sink for trace_id
     let audit_events = audit_sink.get_events_by_trace(test_trace_id).unwrap();
-    assert!(!audit_events.is_empty(), "Audit events must be recorded for trace_id");
+    assert!(
+        !audit_events.is_empty(),
+        "Audit events must be recorded for trace_id"
+    );
     for event in &audit_events {
         assert_eq!(event.trace_id, test_trace_id);
     }
@@ -912,7 +926,11 @@ async fn test_conformance_scenario_7_contract_validation_and_grant_binding() {
         signature: String::new(),
     };
     contract.sign(&signing_key).unwrap();
-    engine.contract_registry.register_contract(contract).await.unwrap();
+    engine
+        .contract_registry
+        .register_contract(contract)
+        .await
+        .unwrap();
 
     let state = Arc::new(AppState {
         engine: engine.clone(),
@@ -968,7 +986,11 @@ async fn test_conformance_scenario_8_contract_violation_and_drift_audit() {
         signature: String::new(),
     };
     contract.sign(&signing_key).unwrap();
-    engine.contract_registry.register_contract(contract).await.unwrap();
+    engine
+        .contract_registry
+        .register_contract(contract)
+        .await
+        .unwrap();
 
     let state = Arc::new(AppState {
         engine: engine.clone(),
@@ -1001,7 +1023,9 @@ async fn test_conformance_scenario_8_contract_violation_and_drift_audit() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8_lossy(&body_bytes);
     assert!(body_str.contains("Contract violation"));
 
@@ -1058,8 +1082,11 @@ async fn test_conformance_scenario_9_contract_registration_and_retrieval_api() {
     let get_resp = app.oneshot(get_req).await.unwrap();
     assert_eq!(get_resp.status(), StatusCode::OK);
 
-    let body_bytes = axum::body::to_bytes(get_resp.into_body(), usize::MAX).await.unwrap();
-    let retrieved: trust_sdk::contracts::SignedContract = serde_json::from_slice(&body_bytes).unwrap();
+    let body_bytes = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let retrieved: trust_sdk::contracts::SignedContract =
+        serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(retrieved.contract_id, "contract_api_endpoint_test");
     assert_eq!(retrieved.signature, contract.signature);
 }

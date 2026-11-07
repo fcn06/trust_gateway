@@ -2,6 +2,7 @@ use crate::canonical::canonical_hash;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -122,6 +123,91 @@ pub fn verify_execution_receipt(
         })
 }
 
+/// Computes the deterministic SHA-256 digest over a provider's execution outcome.
+/// Binds `action_id`, `grant_jti`, `output_hash` (canonical JSON SHA-256), and `status`
+/// separated by ASCII Unit Separator (`0x1f`) to prevent length-extension / concatenation ambiguity.
+pub fn compute_provider_execution_digest(
+    action_id: &str,
+    grant_jti: &str,
+    output_hash: &str,
+    status: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(action_id.as_bytes());
+    hasher.update(b"\x1f");
+    hasher.update(grant_jti.as_bytes());
+    hasher.update(b"\x1f");
+    hasher.update(output_hash.as_bytes());
+    hasher.update(b"\x1f");
+    hasher.update(status.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Signs an external provider's execution outcome (`output` JSON and `status`) bound to `action_id` and `grant_jti`.
+/// Returns the hex-encoded 64-byte Ed25519 signature suitable for the `X-Lianxi-Provider-Signature` HTTP header.
+pub fn sign_provider_execution_outcome(
+    action_id: &str,
+    grant_jti: &str,
+    output: &serde_json::Value,
+    status: &str,
+    signing_key: &SigningKey,
+) -> String {
+    let output_hash = canonical_hash(output);
+    let digest = compute_provider_execution_digest(action_id, grant_jti, &output_hash, status);
+    let sig = signing_key.sign(digest.as_bytes());
+    hex::encode(sig.to_bytes())
+}
+
+/// Verifies an external provider's Ed25519 outcome signature against its resolved `VerifyingKey`.
+pub fn verify_provider_execution_outcome(
+    action_id: &str,
+    grant_jti: &str,
+    output: &serde_json::Value,
+    status: &str,
+    sig_hex: &str,
+    verifying_key: &VerifyingKey,
+) -> Result<(), ReceiptError> {
+    let output_hash = canonical_hash(output);
+    let expected_digest =
+        compute_provider_execution_digest(action_id, grant_jti, &output_hash, status);
+
+    let sig_bytes = hex::decode(sig_hex).map_err(|e| {
+        ReceiptError::InvalidSignature(format!("Invalid provider signature hex: {e}"))
+    })?;
+
+    if sig_bytes.len() != 64 {
+        return Err(ReceiptError::InvalidSignature(
+            "Provider signature must be 64 bytes".to_string(),
+        ));
+    }
+
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|e| ReceiptError::InvalidSignature(format!("Invalid signature slice: {e}")))?;
+
+    verifying_key
+        .verify(expected_digest.as_bytes(), &signature)
+        .map_err(|_| {
+            ReceiptError::InvalidSignature("Provider signature verification failed".to_string())
+        })
+}
+
+/// Extracts the `jti` (grant ID) and `action_id` from an unverified or verified JWT payload
+/// so a provider can bind its response signature to the exact `grant_jti` issued by the gateway.
+pub fn extract_grant_jti_unverified(grant_jwt: &str) -> Option<String> {
+    use base64::Engine;
+    let parts: Vec<&str> = grant_jwt.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .ok()?;
+    let val: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    val.get("jti")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +249,47 @@ mod tests {
         let wrong_key_bytes: [u8; 32] = [88u8; 32];
         let wrong_key = SigningKey::from_bytes(&wrong_key_bytes).verifying_key();
         assert!(verify_execution_receipt(&receipt, &wrong_key).is_err());
+    }
+
+    #[test]
+    fn test_provider_execution_outcome_sign_and_verify() {
+        let signing_key = SigningKey::from_bytes(&[55u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+
+        let action_id = "act_01";
+        let grant_jti = "grant_99";
+        let output = serde_json::json!({
+            "status": "completed",
+            "converted_amount": 2300.0
+        });
+        let status = "success";
+
+        let sig_hex =
+            sign_provider_execution_outcome(action_id, grant_jti, &output, status, &signing_key);
+
+        assert!(verify_provider_execution_outcome(
+            action_id,
+            grant_jti,
+            &output,
+            status,
+            &sig_hex,
+            &verifying_key
+        )
+        .is_ok());
+
+        // Tamper output
+        let tampered_output = serde_json::json!({
+            "status": "completed",
+            "converted_amount": 999999.0
+        });
+        assert!(verify_provider_execution_outcome(
+            action_id,
+            grant_jti,
+            &tampered_output,
+            status,
+            &sig_hex,
+            &verifying_key
+        )
+        .is_err());
     }
 }

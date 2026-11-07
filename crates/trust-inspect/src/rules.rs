@@ -54,4 +54,3 @@ impl ClassificationRules {
         toml::from_str(content)
     }
 }
-

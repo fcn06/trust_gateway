@@ -72,9 +72,9 @@ pub async fn verify_service_request_envelope(
         EngineError::AuthError(format!("Malformed Ed25519 public key from DID: {e}"))
     })?;
 
-    envelope
-        .verify_signature(&verifying_key)
-        .map_err(|e| EngineError::AuthError(format!("Envelope signature verification failed: {e}")))?;
+    envelope.verify_signature(&verifying_key).map_err(|e| {
+        EngineError::AuthError(format!("Envelope signature verification failed: {e}"))
+    })?;
 
     Ok(())
 }
@@ -171,4 +171,3 @@ mod tests {
         assert!(matches!(body_res, Err(EngineError::AuthError(_))));
     }
 }
-

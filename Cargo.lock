@@ -732,6 +732,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "external-agent-mock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bs58",
+ "chrono",
+ "clap",
+ "ed25519-dalek",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "trust-sdk",
+ "uuid",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,3 +1,4 @@
+// INV-004: Schema transformation ASTs must execute under monotonically decreasing fuel budgets to guarantee termination.
 use crate::ir::{CastType, ConcatPart, MappingOp, MappingRule, MappingRuleSet};
 use serde_json::Value;
 use thiserror::Error;
@@ -22,7 +23,9 @@ pub struct Interpreter {
 
 impl Default for Interpreter {
     fn default() -> Self {
-        Self { default_fuel: 10_000 }
+        Self {
+            default_fuel: 10_000,
+        }
     }
 }
 
@@ -87,7 +90,10 @@ impl Interpreter {
                 }
                 Some(Value::String(out))
             }
-            MappingOp::Cast { from_path, target_type } => {
+            MappingOp::Cast {
+                from_path,
+                target_type,
+            } => {
                 let source_val = self.get_path(source, from_path);
                 if let Some(val) = source_val {
                     Some(self.cast_value(val, *target_type)?)
@@ -143,10 +149,13 @@ impl Interpreter {
                     default_value.clone()
                 }
             }
-            MappingOp::ArrayMap { from_path, sub_rules } => {
-                let source_array = self.get_path(source, from_path).ok_or_else(|| {
-                    InterpreterError::PathNotFound(from_path.clone())
-                })?;
+            MappingOp::ArrayMap {
+                from_path,
+                sub_rules,
+            } => {
+                let source_array = self
+                    .get_path(source, from_path)
+                    .ok_or_else(|| InterpreterError::PathNotFound(from_path.clone()))?;
 
                 match source_array {
                     Value::Array(items) => {
@@ -252,7 +261,11 @@ impl Interpreter {
                     .trim()
                     .parse::<i64>()
                     .map(|i| Value::Number(i.into()))
-                    .or_else(|_| s.trim().parse::<f64>().map(|f| Value::Number((f as i64).into())))
+                    .or_else(|_| {
+                        s.trim()
+                            .parse::<f64>()
+                            .map(|f| Value::Number((f as i64).into()))
+                    })
                     .map_err(|_| InterpreterError::CastFailed {
                         from: val.to_string(),
                         target: "integer".to_string(),
@@ -313,4 +326,3 @@ impl Interpreter {
         }
     }
 }
-

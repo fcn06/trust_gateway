@@ -221,7 +221,7 @@ Trust Gateway serves as **Tier 2 (Execution Egress Firewall)** within enterprise
 * **Inference Ingress (Tier 1):** Governs intelligence generation (prompt routing, token quotas, model switching) via proxies like LiteLLM or Swarm Gateway.
 * **Execution Egress (Tier 2 - Trust Gateway):** Governs real-world action execution, secret insulation, taint tracking, and auditable tool access.
 
-> **Note:** Only **Tier 2 (Marketplace Trust Gateway)** is open-sourced in this repository; Tiers 1, 3, and 4 remain private enterprise components.
+> **Note:** Only **Tier 1 (Swarm Gateway)** and **Tier 2 (Marketplace Trust Gateway)** are open-sourced; Tiers 3 and 4 remain private enterprise components.
 
 ---
 

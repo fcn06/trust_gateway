@@ -80,10 +80,7 @@ impl CachedDidResolver {
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             let is_private_or_local = match ip {
                 std::net::IpAddr::V4(v4) => {
-                    v4.is_loopback()
-                        || v4.is_private()
-                        || v4.is_link_local()
-                        || v4.is_unspecified()
+                    v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
                 }
                 std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
             };

@@ -499,8 +499,7 @@ impl TrustEngine {
         // Step 13: settle_reservation, record_outcome, audit
         if let Ok(ref mut res) = raw_outcome {
             if res.provider_idempotency_key.is_none() {
-                res.provider_idempotency_key =
-                    Some(format!("{}|{}", grant.jti, grant.input_hash));
+                res.provider_idempotency_key = Some(format!("{}|{}", grant.jti, grant.input_hash));
             }
         }
         let reservation_id = economic_claim
@@ -912,8 +911,7 @@ impl TrustEngine {
 
         if let Ok(ref mut res) = raw_outcome {
             if res.provider_idempotency_key.is_none() {
-                res.provider_idempotency_key =
-                    Some(format!("{}|{}", grant.jti, grant.input_hash));
+                res.provider_idempotency_key = Some(format!("{}|{}", grant.jti, grant.input_hash));
             }
         }
         let reservation_id = economic_claim
